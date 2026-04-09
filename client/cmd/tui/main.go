@@ -1,6 +1,7 @@
 package main
 
 import (
+	"client/internal/tui"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,13 +35,13 @@ func main() {
 		// }),
 		wish.WithMiddleware(
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				return AppModel(), []tea.ProgramOption{
+				return tui.AppModel(), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),
+			lm.Middleware(),
+			activeterm.Middleware(),
 		),
-		lm.Middleware(),
-		activeterm.Middleware(),
 	)
 	if err != nil {
 		log.Fatalf("server: error while setting up wish ssh server: %v ", err)
