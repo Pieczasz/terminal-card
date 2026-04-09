@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"strings"
+
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	lg "github.com/charmbracelet/lipgloss"
 )
 
 type currentState uint
@@ -42,22 +44,59 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	// Main box setup
+	maxWidth := m.width * 5 / 6
 	title := StyleTitle.Render("Play card games in your terminal")
-
-	// Box Content
-	content := "Press 'q' to disconnect."
-
-	boxWidth := m.width * 5 / 6
-
-	boxStyle := StyleBox.Width(boxWidth)
-	box := boxStyle.Render(
-		lipgloss.JoinVertical(lipgloss.Center, title, content),
+	boxStyle := StyleBox.Width(maxWidth).Align(lg.Center)
+	mainBox := boxStyle.Render(
+		lg.JoinVertical(lg.Center, title),
 	)
 
-	// Center the box in the terminal
-	return lipgloss.Place(
+	rawActions := []string{
+		"n - Create new game",
+		"j - Join game",
+		"p - Your Profile",
+		"q - Quit",
+	}
+
+	var renderedActions []string
+	var totalActionsWidth int
+
+	for i, action := range rawActions {
+		style := StyleHomePageActionsText
+		if i == len(rawActions)-1 {
+			style = style.PaddingRight(0)
+		}
+
+		r := style.Render(action)
+		renderedActions = append(renderedActions, r)
+		totalActionsWidth += lg.Width(r)
+	}
+
+	// "space-between"
+	numItems := len(renderedActions)
+	numGaps := numItems - 1
+
+	var gapSize int
+	if numGaps > 0 {
+		gapSize = (maxWidth - totalActionsWidth) / numGaps
+	}
+	if gapSize < 0 {
+		gapSize = 0
+	}
+
+	spacer := strings.Repeat(" ", gapSize)
+	homePageActions := strings.Join(renderedActions, spacer)
+
+	uiStack := lg.JoinVertical(
+		lg.Center,
+		mainBox,
+		lg.NewStyle().MarginTop(1).Render(homePageActions),
+	)
+
+	return lg.Place(
 		m.width, m.height,
-		lipgloss.Center, lipgloss.Center,
-		box,
+		lg.Center, lg.Center,
+		uiStack,
 	)
 }
