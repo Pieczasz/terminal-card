@@ -12,6 +12,6 @@ func main() {
 	}
 
 	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("server: starting server error: %v", err)
+		log.Fatalf("server: starting ssh server error: %v", err)
 	}
 }
