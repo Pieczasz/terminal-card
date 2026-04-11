@@ -1,0 +1,44 @@
+version: "2"
+
+run:
+  tests: false
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - revive
+    - godot
+    - misspell
+    - gomoddirectives
+    - goprintffuncname
+    - noctx
+    - nilerr
+    - rowserrcheck
+    - sqlclosecheck
+    - wrapcheck
+
+  exclusions:
+    generated: lax
+    presets:
+      - common-false-positives
+    rules:
+      - text: '(slog|log)\.\w+'
+        linters:
+          - noctx
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  exclusions:
+    generated: lax
+
