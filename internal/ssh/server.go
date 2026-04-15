@@ -19,12 +19,12 @@ import (
 func SetupServer() (*ssh.Server, error) {
 	key, err := keygen.New(filepath.Join(".wishlist", "server"), keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
-		return nil, fmt.Errorf("server: generating a keygen pair error: %v ", err)
+		return nil, fmt.Errorf("generating a keygen pair error: %w ", err)
 	}
 
 	if !key.KeyPairExists() {
 		if err := key.WriteKeys(); err != nil {
-			return nil, fmt.Errorf("server: error while saving keypair to disk: %v", err)
+			return nil, fmt.Errorf("error while saving keypair to disk: %w", err)
 		}
 	}
 
@@ -46,7 +46,7 @@ func SetupServer() (*ssh.Server, error) {
 		),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("server: error while setting up wish ssh server: %v ", err)
+		return nil, fmt.Errorf("error while setting up wish ssh server: %w", err)
 	}
 
 	return server, err
