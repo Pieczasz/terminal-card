@@ -8,7 +8,7 @@ import (
 func main() {
 	server, err := ssh.SetupServer()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("error while setting up the server: %v ", err)
 	}
 
 	if err := server.ListenAndServe(); err != nil {
