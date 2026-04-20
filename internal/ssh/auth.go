@@ -1,8 +1,11 @@
 package ssh
 
 import (
+	"bufio"
 	"errors"
+	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"client/internal/db"
@@ -28,7 +31,6 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 	}
 
 	fingerprint := cryptossh.FingerprintSHA256(publicKey)
-	sshUsername := s.User()
 
 	var dbKey db.PublicKey
 	var currentUser db.User
@@ -36,8 +38,20 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 	err := database.Where("fingerprint = ?", fingerprint).Preload("User").First(&dbKey).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			fmt.Fprint(s, "Welcome! It looks like you are new here.\r\nPlease enter your desired username: ")
+
+			scanner := bufio.NewScanner(s)
+			var desiredUsername string
+			if scanner.Scan() {
+				desiredUsername = strings.TrimSpace(scanner.Text())
+			}
+
+			if desiredUsername == "" {
+				desiredUsername = s.User() // fallback to system user if empty
+			}
+
 			currentUser = db.User{
-				Username:   sshUsername,
+				Username:   desiredUsername,
 				LastSeenAt: time.Now(),
 			}
 

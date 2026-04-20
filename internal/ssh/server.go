@@ -32,7 +32,7 @@ func SetupServer(database *gorm.DB) (*ssh.Server, error) {
 	}
 
 	server, err := wish.NewServer(
-		wish.WithAddress("localhost:6969"),
+		wish.WithAddress("0.0.0.0:6969"),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
