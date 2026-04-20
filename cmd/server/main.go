@@ -27,7 +27,7 @@ func main() {
 		host = "db"
 	}
 
-	dsn := fmt.Sprintf("host=%s user=postgres password=%s dbname=example port=5432 sslmode=disable TimeZone=UTC", host, password)
+	dsn := fmt.Sprintf("host=%s user=postgres password=%s dbname=terminal_card port=5432 sslmode=disable TimeZone=UTC", host, password)
 
 	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
