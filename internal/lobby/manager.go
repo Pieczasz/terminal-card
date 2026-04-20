@@ -5,12 +5,13 @@ package lobby
 
 import (
 	"math/rand"
+	"client/internal/db"
 )
 
 // Lobby contains all information related to a lobby.
 type Lobby struct {
-	leader   *Player
-	guests   []*Player
+	leader   *db.User
+	guests   []*db.User
 	options  *lobbyOptions
 	gameCode string
 }
@@ -22,7 +23,7 @@ type lobbyOptions struct {
 }
 
 // NewLobby returns a new Lobby with the leader, default options, and a random code.
-func NewLobby(leader *Player, game Game) *Lobby {
+func NewLobby(leader *db.User, game Game) *Lobby {
 	defaultOptions := &lobbyOptions{
 		cardGame:   game,
 		maxPlayers: 4,
@@ -31,7 +32,7 @@ func NewLobby(leader *Player, game Game) *Lobby {
 
 	return &Lobby{
 		leader:   leader,
-		guests:   make([]*Player, 3),
+		guests:   make([]*db.User, 3),
 		options:  defaultOptions,
 		gameCode: generateGameCode(6),
 	}

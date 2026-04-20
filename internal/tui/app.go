@@ -1,10 +1,12 @@
 package tui
 
 import (
+	"client/internal/db"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"gorm.io/gorm"
 )
 
 type currentState uint
@@ -19,7 +21,7 @@ type model struct {
 	height int
 }
 
-func AppModel() tea.Model {
+func AppModel(user db.User, database *gorm.DB) tea.Model {
 	return model{
 		state: homepage,
 	}

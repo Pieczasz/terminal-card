@@ -20,6 +20,7 @@ type PublicKey struct {
 	Name        string
 	LastUsedAt  time.Time
 	UserID      uint
+	User        User `gorm:"foreignKey:UserID"`
 }
 
 type Ranking struct {
