@@ -2,7 +2,7 @@ package ssh
 
 import (
 	"errors"
-	"log"
+	"log/slog"
 	"time"
 
 	"client/internal/db"
@@ -42,7 +42,7 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 			}
 
 			if err := database.Create(&currentUser).Error; err != nil {
-				log.Printf("failed to create user: %v", err)
+				slog.Error("failed to create user: %v", err)
 				return nil, ErrInternal
 			}
 
@@ -54,21 +54,21 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 			}
 
 			if err := database.Create(&dbKey).Error; err != nil {
-				log.Printf("failed to create public key: %v", err)
+				slog.Error("failed to create public key: %v", err)
 				return nil, ErrInternal
 			}
 		} else {
-			log.Printf("database error while retrieving key: %v", err)
+			slog.Error("database error while retrieving key: %v", err)
 			return nil, ErrInternal
 		}
 	} else {
 		currentUser = dbKey.User
 
 		if err := database.Model(&currentUser).Update("LastSeenAt", time.Now()).Error; err != nil {
-			log.Printf("failed to update user last seen timestamp: %v", err)
+			slog.Error("failed to update user last seen timestamp: %v", err)
 		}
 		if err := database.Model(&dbKey).Update("LastUsedAt", time.Now()).Error; err != nil {
-			log.Printf("failed to update key last used timestamp: %v", err)
+			slog.Error("failed to update key last used timestamp: %v", err)
 		}
 	}
 

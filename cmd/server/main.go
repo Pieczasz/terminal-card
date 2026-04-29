@@ -1,25 +1,44 @@
 package main
 
 import (
-	"fmt"
-	"log"
-	"os"
-	"strings"
-
 	"client/internal/db"
 	"client/internal/ssh"
+	"fmt"
+	"log/slog"
+	"os"
+	"strings"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
 func main() {
+	database, err := setupDatabase()
+	if err != nil {
+		slog.Error("failed to setup database: %v", err)
+		panic(err)
+	}
+
+	server, err := ssh.SetupServer(database)
+	if err != nil {
+		slog.Error("error while setting up the server: %v", err)
+		panic(err)
+	}
+
+	if err := server.ListenAndServe(); err != nil {
+		slog.Error("server: starting ssh server error: %v", err)
+		panic(err)
+	}
+}
+
+func setupDatabase() (*gorm.DB, error) {
 	passwordBytes, err := os.ReadFile("/run/secrets/backend-password")
 	var password string
 	if err == nil {
 		password = strings.TrimSpace(string(passwordBytes))
 	} else {
-		log.Fatalf("Could not read secret file %v", err)
+		slog.Error("could not read secret file %v", err)
+		return nil, err
 	}
 
 	host := os.Getenv("DB_HOST")
@@ -31,21 +50,14 @@ func main() {
 
 	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		log.Fatalf("failed to connect to the database: %v", err)
+		slog.Error("failed to connect to the database: %v", err)
+		return nil, err
 	}
-	log.Println("Successfully connected to the database.")
 
 	if err := database.AutoMigrate(&db.User{}, &db.PublicKey{}); err != nil {
-		log.Fatalf("failed to run database migrations: %v", err)
+		slog.Error("failed to run database migrations: %v", err)
+		return nil, err
 	}
 
-	server, err := ssh.SetupServer(database)
-	if err != nil {
-		log.Fatalf("error while setting up the server: %v", err)
-	}
-
-	log.Printf("Starting SSH server...")
-	if err := server.ListenAndServe(); err != nil {
-		log.Fatalf("server: starting ssh server error: %v", err)
-	}
+	return database, nil
 }

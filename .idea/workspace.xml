@@ -4,14 +4,37 @@
     <option name="autoReloadType" value="ALL" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="2cda6cf7-a6e7-4798-9ed5-0636b85c11f7" name="Changes" comment="" />
+    <list default="true" id="2cda6cf7-a6e7-4798-9ed5-0636b85c11f7" name="Changes" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/game/crazyeight/actions.go" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/game/crazyeight/game.go" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/game/crazyeight/rules.go" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/internal/game/crazyeight/state.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/cmd/server/main.go" beforeDir="false" afterPath="$PROJECT_DIR$/cmd/server/main.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/app/messages.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/app/router.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/game/crazy_eight/actions.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/game/crazy_eight/game.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/game/crazy_eight/rules.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/game/crazy_eight/state.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/game/engine.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/game/engine.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/lobby/matchmaking.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/lobby/matchmaking.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/lobby/room.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/player/repository.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/player/player.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/player/service.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/ssh/auth.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/ssh/auth.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/ssh/server.go" beforeDir="false" afterPath="$PROJECT_DIR$/internal/ssh/server.go" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/store/redis/presence.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/store/redis/pubsub.go" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/internal/store/redis/rooms.go" beforeDir="false" />
+    </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="1976" />
+    <option name="cachedIndexableFilesCount" value="34" />
     <option name="fileBasedEmbeddingIndicesEnabled" value="true" />
   </component>
   <component name="FileTemplateManagerImpl">
@@ -51,6 +74,9 @@
   &quot;fromUser&quot;: false
 }</component>
   <component name="ProjectId" id="3Co9lhPCQcjumKONqj0YCPeYRaa" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
   <component name="ProjectViewState">
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
