@@ -47,7 +47,7 @@ func SetupServer(database *gorm.DB) (*ssh.Server, error) {
 					return nil, nil
 				}
 
-				return tui.AppModel(*user, database), []tea.ProgramOption{
+				return tui.Model(*user, database), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),

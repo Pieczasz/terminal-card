@@ -21,7 +21,7 @@ type model struct {
 	height int
 }
 
-func AppModel(user db.User, database *gorm.DB) tea.Model {
+func Model(user db.User, database *gorm.DB) tea.Model {
 	return model{
 		state: homepage,
 	}

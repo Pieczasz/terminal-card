@@ -21,9 +21,9 @@ type Broadcaster struct {
 	nextId      int
 }
 
-func New() *Broadcaster {
+func New(maxSubscribers int) *Broadcaster {
 	return &Broadcaster{
-		subscribers: make(map[int]*subscriber),
+		subscribers: make(map[int]*subscriber, maxSubscribers),
 	}
 }
 
@@ -60,5 +60,15 @@ func (b *Broadcaster) Broadcast(msg Message) {
 		default:
 			// TODO: handle retransmitting?
 		}
+	}
+}
+
+func (b *Broadcaster) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for id, sub := range b.subscribers {
+		close(sub.ch)
+		delete(b.subscribers, id)
 	}
 }

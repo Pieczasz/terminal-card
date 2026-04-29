@@ -13,14 +13,10 @@ import (
 )
 
 var (
-	// ErrNoPublicKey is returned when the SSH session does not provide a public key.
 	ErrNoPublicKey = errors.New("SSH key authentication is required")
-	// ErrInternal is a generic error returned to the user to avoid leaking sensitive information.
-	ErrInternal = errors.New("internal server error")
+	ErrInternal    = errors.New("internal server error")
 )
 
-// AuthenticateAndLoadUser authenticates the user based on their SSH public key.
-// It creates a new user and key record if they do not exist or updates their last seen timestamps.
 func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error) {
 	publicKey := s.PublicKey()
 	if publicKey == nil {
@@ -42,7 +38,7 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 			}
 
 			if err := database.Create(&currentUser).Error; err != nil {
-				slog.Error("failed to create user: %v", err)
+				slog.Error("failed to create user", "error", err)
 				return nil, ErrInternal
 			}
 
@@ -54,21 +50,21 @@ func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error)
 			}
 
 			if err := database.Create(&dbKey).Error; err != nil {
-				slog.Error("failed to create public key: %v", err)
+				slog.Error("failed to create public key", "error", err)
 				return nil, ErrInternal
 			}
 		} else {
-			slog.Error("database error while retrieving key: %v", err)
+			slog.Error("database error while retrieving key", "error", err)
 			return nil, ErrInternal
 		}
 	} else {
 		currentUser = dbKey.User
 
 		if err := database.Model(&currentUser).Update("LastSeenAt", time.Now()).Error; err != nil {
-			slog.Error("failed to update user last seen timestamp: %v", err)
+			slog.Error("failed to update user last seen timestamp", "error", err)
 		}
 		if err := database.Model(&dbKey).Update("LastUsedAt", time.Now()).Error; err != nil {
-			slog.Error("failed to update key last used timestamp: %v", err)
+			slog.Error("failed to update key last used timestamp", "error", err)
 		}
 	}
 

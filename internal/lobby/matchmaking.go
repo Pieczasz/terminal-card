@@ -4,6 +4,7 @@
 package lobby
 
 import (
+	"client/internal/broadcaster"
 	"client/internal/db"
 	"client/internal/player"
 	"crypto/rand"
@@ -15,12 +16,13 @@ import (
 )
 
 type Lobby struct {
-	mu      sync.RWMutex
-	leader  *player.Player
-	guests  []*player.Player
-	options *options
-	code    string
-	state   state
+	mu          sync.RWMutex
+	broadcaster *broadcaster.Broadcaster
+	leader      *player.Player
+	guests      []*player.Player
+	options     *options
+	code        string
+	state       state
 }
 
 type state uint
@@ -97,10 +99,11 @@ func (m *Manager) NewLobby(leader *player.Player, opts ...Option) (*Lobby, error
 	}
 
 	lobby := &Lobby{
-		leader:  leader,
-		guests:  make([]*player.Player, 0, options.maxPlayers-1),
-		options: options,
-		code:    code,
+		leader:      leader,
+		guests:      make([]*player.Player, 0, options.maxPlayers-1),
+		options:     options,
+		code:        code,
+		broadcaster: broadcaster.New(options.maxPlayers),
 	}
 
 	m.lobbies[code] = lobby
@@ -153,6 +156,19 @@ func (l *Lobby) RemovePlayer(player *player.Player) bool {
 func (m *Manager) RemoveLobby(code string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	l, exists := m.lobbies[code]
+	if !exists {
+		return
+	}
+
+	l.mu.Lock()
+	if l.broadcaster != nil {
+		l.broadcaster.Close()
+		l.broadcaster = nil
+	}
+	l.mu.Unlock()
+
 	delete(m.lobbies, code)
 }
 

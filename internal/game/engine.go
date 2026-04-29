@@ -2,12 +2,16 @@
 // handling different rules, player seats, connections, state and turns.
 package game
 
-import "client/internal/player"
+import (
+	"client/internal/broadcaster"
+	"client/internal/player"
+)
 
 type Game struct {
-	players []*player.Player
-	broadcaster
-	state state
+	players     []*player.Player
+	winner      *player.Player
+	broadcaster *broadcaster.Broadcaster
+	state       state
 }
 
 type state uint
@@ -17,10 +21,11 @@ const (
 	Finished
 )
 
-func NewGame(players []*player.Player) *Game {
+func New(players []*player.Player) *Game {
 	game := &Game{
-		players: players,
-		state:   InProgress,
+		players:     players,
+		state:       InProgress,
+		broadcaster: broadcaster.New(len(players)),
 	}
 
 	return game
