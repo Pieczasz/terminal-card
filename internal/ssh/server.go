@@ -1,4 +1,4 @@
-// Package ssh contains implementation for setting up ssh auth, middleware and
+// Package ssh contains implementation for setting up ssh auth, middleware, and
 // server setup.
 package ssh
 

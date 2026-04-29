@@ -20,7 +20,7 @@ var (
 )
 
 // AuthenticateAndLoadUser authenticates the user based on their SSH public key.
-// It creates a new user and key record if they do not exist, or updates their last seen timestamps.
+// It creates a new user and key record if they do not exist or updates their last seen timestamps.
 func AuthenticateAndLoadUser(database *gorm.DB, s ssh.Session) (*db.User, error) {
 	publicKey := s.PublicKey()
 	if publicKey == nil {
