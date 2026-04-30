@@ -4,6 +4,7 @@ package game
 
 import (
 	"client/internal/broadcaster"
+	"client/internal/deck"
 	"client/internal/player"
 )
 
@@ -12,6 +13,7 @@ type Game struct {
 	winner      *player.Player
 	broadcaster *broadcaster.Broadcaster
 	state       state
+	deck        *deck.Pile
 }
 
 type state uint
@@ -21,11 +23,13 @@ const (
 	Finished
 )
 
-func New(players []*player.Player) *Game {
+func New(players []*player.Player, cards []deck.Card) *Game {
 	game := &Game{
 		players:     players,
-		state:       InProgress,
+		winner:      nil,
 		broadcaster: broadcaster.New(len(players)),
+		state:       InProgress,
+		deck:        deck.New(cards),
 	}
 
 	return game

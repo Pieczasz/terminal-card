@@ -4,43 +4,75 @@ package deck
 
 import (
 	"math/rand/v2"
+	"slices"
 )
 
-type Deck struct {
-	cards []*Card
+type Pile struct {
+	cards []Card
 }
 
-func New(cards []*Card) *Deck {
-	deck := &Deck{
+func New(cards []Card) *Pile {
+	pile := &Pile{
 		cards: cards,
 	}
-	deck.Shuffle()
+	pile.Shuffle()
 
-	return deck
+	return pile
 }
 
-func (d *Deck) Shuffle() {
-	rand.Shuffle(len(d.cards), func(i, j int) {
-		d.cards[i], d.cards[j] = d.cards[j], d.cards[i]
+func (p *Pile) Shuffle() {
+	rand.Shuffle(len(p.cards), func(i, j int) {
+		p.cards[i], p.cards[j] = p.cards[j], p.cards[i]
 	})
 }
 
-func (d *Deck) CheckTop() *Card {
-	if len(d.cards) < 1 {
-		return nil
+func (p *Pile) Peak() (Card, bool) {
+	if len(p.cards) < 1 {
+		return Card{}, false
 	}
-	return d.cards[0]
+	return p.cards[0], true
 }
 
-func (d *Deck) PickTop() *Card {
-	if len(d.cards) < 1 {
-		return nil
+func (p *Pile) Draw() (Card, bool) {
+	if len(p.cards) < 1 {
+		return Card{}, false
 	}
-	topCard := d.cards[0]
-	d.cards = d.cards[1:]
-	return topCard
+
+	topCard := p.cards[0]
+	p.cards = p.cards[1:]
+	return topCard, true
 }
 
-func (d *Deck) AddCards(cards []*Card) {
-	d.cards = append(d.cards, cards...)
+func (p *Pile) DrawNCards(cardsToDraw int) ([]Card, bool) {
+	if cardsToDraw > len(p.cards) {
+		return nil, false
+	}
+
+	nCards := p.cards[0:cardsToDraw]
+	p.cards = p.cards[cardsToDraw+1:]
+	return nCards, true
+}
+
+func (p *Pile) AddCard(cards ...Card) {
+	p.cards = append(p.cards, cards...)
+}
+
+func (p *Pile) AddAllCards(cards []Card) {
+	p.cards = append(p.cards, cards...)
+}
+
+func (p *Pile) Size() int {
+	return len(p.cards)
+}
+
+func (p *Pile) IsEmpty() bool {
+	return len(p.cards) < 1
+}
+
+func (p *Pile) Cards() []Card {
+	return p.cards
+}
+
+func (p *Pile) Contains(card Card) bool {
+	return slices.Contains(p.cards, card)
 }

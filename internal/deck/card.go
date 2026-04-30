@@ -1,15 +1,14 @@
 package deck
 
 type Card struct {
-	Rank rank
-	Suit suit
+	Rank Rank
+	Suit Suit
 }
 
-type rank uint
+type Rank uint8
 
 const (
-	Ace rank = iota
-	One
+	Ace Rank = iota
 	Two
 	Three
 	Four
@@ -25,11 +24,12 @@ const (
 	Joker
 )
 
-type suit uint
+type Suit uint8
 
 const (
-	Spades suit = iota
+	Spades Suit = iota
 	Hearts
 	Diamonds
 	Clubs
+	NoSuit
 )
