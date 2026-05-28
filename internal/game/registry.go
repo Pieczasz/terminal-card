@@ -1,6 +1,9 @@
 package game
 
-import "sync"
+import (
+	"errors"
+	"sync"
+)
 
 type Registry struct {
 	mu    sync.RWMutex
@@ -8,7 +11,9 @@ type Registry struct {
 }
 
 func NewRegistry() *Registry {
-	return &Registry{}
+	return &Registry{
+		games: make(map[string]func() Rules),
+	}
 }
 
 func (r *Registry) Register(name string, factory func() Rules) {
@@ -18,9 +23,20 @@ func (r *Registry) Register(name string, factory func() Rules) {
 }
 
 func (r *Registry) GameNames() []string {
-	gameNames := make([]string, len(r.games))
+	gameNames := make([]string, 0, len(r.games))
 	for game := range r.games {
 		gameNames = append(gameNames, game)
 	}
 	return gameNames
+}
+
+func (r *Registry) Create(name string) (Rules, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	factory, ok := r.games[name]
+	if !ok {
+		return nil, errors.New("game not found in registry")
+	}
+	return factory(), nil
 }

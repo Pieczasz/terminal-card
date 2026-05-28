@@ -12,17 +12,16 @@ type Action struct {
 type ActionType uint8
 
 const (
-	PlayCard ActionType = iota
-	DrawCard
-	PickSuit
-	Pass
-	Special
+	ActionPlayCard ActionType = iota
+	ActionDrawCard
+	ActionPickSuit
+	ActionPass
 )
 
 type Event struct {
 	Sequence int64
 	Type     EventType
-	PlayerId string
+	PlayerID string
 	Action   Action
 	State    StateSnapshot
 }
@@ -30,13 +29,18 @@ type Event struct {
 type EventType uint8
 
 const (
-	PlayCard ActionType = iota
-	DrawCard
-	PickSuit
-	Pass
-	GameFinished
-	Special
+	EventCardPlayed EventType = iota
+	EventCardDrawn
+	EventSuitPicked
+	EventTurnAdvanced
+	EventGameEnded
+	EventGameStarted
 )
+
+type PlayerSnapshot struct {
+	ID       string
+	HandSize int
+}
 
 type StateSnapshot struct {
 	Phase         Phase

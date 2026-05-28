@@ -3,7 +3,6 @@
 package game
 
 import (
-	"client/internal/broadcaster"
 	"client/internal/deck"
 	"client/internal/player"
 	"sync"
@@ -17,11 +16,10 @@ type State struct {
 	Phase       Phase
 	Winner      *player.Player
 
-	Broadcaster *broadcaster.Broadcaster
-
 	Deck    *deck.Pile
 	Discard *deck.Pile
 	Rules   Rules
+	Extra   any
 }
 
 type Phase uint8
@@ -35,20 +33,12 @@ const (
 
 func NewState(players []*player.Player, cards []deck.Card) *State {
 	state := &State{
-		Players:     players,
-		Winner:      nil,
-		Broadcaster: broadcaster.New(len(players)),
-		Phase:       Waiting,
-		Deck:        deck.New(cards),
+		Players: players,
+		Winner:  nil,
+		Phase:   Waiting,
+		Deck:    deck.New(cards),
 	}
 
 	return state
 }
 
-func (e *Engine) Start() error {
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
-
-	return nil
-
-}

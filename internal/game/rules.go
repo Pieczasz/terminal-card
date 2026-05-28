@@ -2,7 +2,6 @@ package game
 
 import (
 	"client/internal/deck"
-	"client/internal/player"
 )
 
 type Rules interface {

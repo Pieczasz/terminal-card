@@ -1,2 +1,4 @@
 .wishlist/
 *password*
+.DS_Store
+.gocache

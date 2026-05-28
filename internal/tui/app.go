@@ -2,6 +2,10 @@ package tui
 
 import (
 	"client/internal/db"
+	"client/internal/game"
+	"client/internal/lobby"
+	"client/internal/player"
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,17 +17,33 @@ type currentState uint
 
 const (
 	homepage currentState = iota
+	inLobby
+	inGame
 )
 
 type model struct {
 	state  currentState
 	width  int
 	height int
+
+	user         db.User
+	database     *gorm.DB
+	lobbyManager *lobby.Manager
+	gameRegistry *game.Registry
+
+	currentLobby *lobby.Lobby
+	currentGame  *game.Engine
+	lobbyChan    <-chan lobby.LobbyEvent
+	gameChan     <-chan game.Event
 }
 
-func Model(user db.User, database *gorm.DB) tea.Model {
+func Model(user db.User, database *gorm.DB, lobbyManager *lobby.Manager, gameRegistry *game.Registry) tea.Model {
 	return model{
-		state: homepage,
+		state:        homepage,
+		user:         user,
+		database:     database,
+		lobbyManager: lobbyManager,
+		gameRegistry: gameRegistry,
 	}
 }
 
@@ -40,9 +60,68 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
+		case "n":
+			if m.state == homepage {
+				p := &player.Player{Id: fmt.Sprint(m.user.ID), DatabaseUser: &m.user}
+				gameOpt := lobby.WithCardGame(&db.Game{Name: "Crazy Eights"})
+				l, err := m.lobbyManager.NewLobby(p, gameOpt)
+				if err == nil {
+					m.currentLobby = l
+					m.state = inLobby
+					m.lobbyChan = l.Broadcaster().Subscribe()
+					return m, listenToLobbyBroadcaster(m.lobbyChan)
+				}
+			}
+		case "s":
+			if m.state == inLobby {
+				engine, err := m.currentLobby.StartGame(m.gameRegistry)
+				if err == nil {
+					m.currentGame = engine
+					m.state = inGame
+				}
+			}
 		}
+	case lobbyMsg:
+		// A message from the lobby broadcaster
+		if msg.Type == "GAME_STARTED" {
+			// Start listening to the game broadcaster instead
+			// Note: Realistically we need the engine instance, but StartGame was already triggered by leader.
+		}
+		return m, listenToLobbyBroadcaster(m.lobbyChan)
+	case gameMsg:
+		// Update game UI state
+		return m, listenToGameBroadcaster(m.gameChan)
 	}
 	return m, nil
+}
+
+type lobbyMsg lobby.LobbyEvent
+type gameMsg game.Event
+
+func listenToLobbyBroadcaster(ch <-chan lobby.LobbyEvent) tea.Cmd {
+	return func() tea.Msg {
+		if ch == nil {
+			return nil
+		}
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return lobbyMsg(msg)
+	}
+}
+
+func listenToGameBroadcaster(ch <-chan game.Event) tea.Cmd {
+	return func() tea.Msg {
+		if ch == nil {
+			return nil
+		}
+		msg, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return gameMsg(msg)
+	}
 }
 
 func (m model) View() string {
@@ -95,6 +174,19 @@ func (m model) View() string {
 		mainBox,
 		lg.NewStyle().MarginTop(1).Render(homePageActions),
 	)
+
+	if m.state == inLobby {
+		uiStack = lg.JoinVertical(lg.Center,
+			StyleTitle.Render(fmt.Sprintf("Lobby Code: %s", m.currentLobby.Code())),
+			"Waiting for players...",
+			"s - Start Game",
+		)
+	} else if m.state == inGame {
+		uiStack = lg.JoinVertical(lg.Center,
+			StyleTitle.Render("Game Started!"),
+			"(Game UI would be here)",
+		)
+	}
 
 	return lg.Place(
 		m.width, m.height,

@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"client/internal/game"
+	"client/internal/lobby"
 	"client/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -19,7 +21,7 @@ import (
 	"gorm.io/gorm"
 )
 
-func SetupServer(database *gorm.DB) (*ssh.Server, error) {
+func SetupServer(database *gorm.DB, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
 	key, err := keygen.New(filepath.Join(".wishlist", "server"), keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
 		return nil, fmt.Errorf("generating a keygen pair error: %w", err)
@@ -47,7 +49,7 @@ func SetupServer(database *gorm.DB) (*ssh.Server, error) {
 					return nil, nil
 				}
 
-				return tui.Model(*user, database), []tea.ProgramOption{
+				return tui.Model(*user, database, lobbyManager, gameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),

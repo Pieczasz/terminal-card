@@ -27,8 +27,13 @@ func Connect() (*gorm.DB, error) {
 
 	dsn := fmt.Sprintf("host=%s user=postgres password=%s dbname=terminal_card port=5432 sslmode=disable TimeZone=UTC", host, password)
 
+	logMode := logger.Info
+	if os.Getenv("ENV") == "prod" {
+		logMode = logger.Warn
+	}
+
 	database, err := gorm.Open(postgres.Open(dsn), &gorm.Config{
-		Logger: logger.Default.LogMode(logger.Info), // TODO: change it to Warn in prod
+		Logger: logger.Default.LogMode(logMode),
 	})
 	if err != nil {
 		slog.Error("failed to connect to the database: %v", "error", err)

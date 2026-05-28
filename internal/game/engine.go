@@ -15,7 +15,7 @@ type Engine struct {
 	mu          sync.Mutex
 	state       *State
 	turnManager *TurnManager
-	broadcaster *broadcaster.Broadcaster
+	broadcaster *broadcaster.Broadcaster[Event]
 	registry    *Registry
 }
 
@@ -23,9 +23,17 @@ func NewGameEngine(rules Rules, players []*player.Player, cards []deck.Card) *En
 	return &Engine{
 		state:       NewState(players, cards),
 		turnManager: NewTurnManager(len(players)),
-		broadcaster: broadcaster.New(len(players)),
+		broadcaster: broadcaster.New[Event](len(players)),
 		registry:    NewRegistry(),
 	}
+}
+
+func (e *Engine) CurrentPlayer() *player.Player {
+	return e.state.Players[e.turnManager.Current()]
+}
+
+func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
+	return e.broadcaster
 }
 
 func (e *Engine) Start() error {
@@ -67,8 +75,8 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 		return errors.New("game not in playing phase")
 	}
 
-	// TODO: refactor this sphagetti?
-	if e.state.Players[e.turnManager.Current()].Id != playerId {
+	currentPlayer := e.CurrentPlayer()
+	if currentPlayer.Id != playerId {
 		return errors.New("wait for your turn to perform an action")
 	}
 
@@ -77,17 +85,31 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	}
 
 	e.state.Rules.ApplyAction(e.state, action)
-	// TODO: broadcast
+
+	e.broadcaster.Broadcast(Event{
+		Sequence: int64(e.turnManager.Current()), // Basic sequence for now
+		Type:     EventCardPlayed,
+		PlayerID: playerId,
+		Action:   action,
+		// State snapshot could be built here
+	})
 
 	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
-		// TODO: slog this and trace it, maybe revert the action
+		// this can mean cheating, we should detect that and prevent it
+		fmt.Printf("ERROR: Post condition failed after action: %v\n", err)
 		return fmt.Errorf("post condition doesn't hold %w", err)
 	}
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		// TODO: check if this won't interfere with defer calls
-		finishGame(e.state.Players[e.turnManager.Current()].Id)
+		e.state.Phase = Finished
+		e.state.Winner = currentPlayer
+		e.broadcaster.Broadcast(Event{
+			Type:     EventGameEnded,
+			PlayerID: currentPlayer.Id,
+		})
+		return nil
 	}
+
 	e.turnManager.Next()
 
 	return nil

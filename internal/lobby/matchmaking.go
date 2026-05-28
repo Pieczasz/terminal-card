@@ -6,18 +6,25 @@ package lobby
 import (
 	"client/internal/broadcaster"
 	"client/internal/db"
+	"client/internal/game"
 	"client/internal/player"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
 	"slices"
 	"sync"
 )
 
+type LobbyEvent struct {
+	Type string
+	Data any
+}
+
 type Lobby struct {
 	mu          sync.RWMutex
-	broadcaster *broadcaster.Broadcaster
+	broadcaster *broadcaster.Broadcaster[LobbyEvent]
 	leader      *player.Player
 	guests      []*player.Player
 	options     *options
@@ -103,7 +110,7 @@ func (m *Manager) NewLobby(leader *player.Player, opts ...Option) (*Lobby, error
 		guests:      make([]*player.Player, 0, options.maxPlayers-1),
 		options:     options,
 		code:        code,
-		broadcaster: broadcaster.New(options.maxPlayers),
+		broadcaster: broadcaster.New[LobbyEvent](options.maxPlayers),
 	}
 
 	m.lobbies[code] = lobby
@@ -195,6 +202,10 @@ func (l *Lobby) Code() string {
 	return l.code
 }
 
+func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[LobbyEvent] {
+	return l.broadcaster
+}
+
 const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 // generateLobbyCode creates a random string of the specified length.
@@ -206,4 +217,37 @@ func generateLobbyCode(length int) string {
 		code[i] = charset[n.Int64()]
 	}
 	return string(code)
+}
+
+func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	if l.state != Waiting {
+		return nil, errors.New("lobby is not in waiting state")
+	}
+
+	rules, err := registry.Create(l.options.cardGame.Name)
+	if err != nil {
+		return nil, err
+	}
+
+	totalPlayers := len(l.guests) + 1
+	if totalPlayers < rules.MinPlayers() {
+		return nil, fmt.Errorf("need at least %d players to start", rules.MinPlayers())
+	}
+	if totalPlayers > rules.MaxPlayers() {
+		return nil, fmt.Errorf("too many players for this game")
+	}
+
+	players := append([]*player.Player{l.leader}, l.guests...)
+	engine := game.NewGameEngine(rules, players, rules.InitialDeck())
+
+	l.state = InGame
+
+	l.broadcaster.Broadcast(LobbyEvent{
+		Type: "GAME_STARTED",
+	})
+
+	return engine, nil
 }

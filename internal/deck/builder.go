@@ -1,12 +1,12 @@
 package deck
 
 func StandardDeck() []Card {
-	cards := make([]Card, 52)
-	for _, suit := range Suit - 1 {
-		for _, rank := range Rank - 1 {
+	cards := make([]Card, 0, 52)
+	for s := Spades; s <= Clubs; s++ {
+		for r := Ace; r <= King; r++ {
 			cards = append(cards, Card{
-				Suit: suit,
-				Rank: rank,
+				Suit: s,
+				Rank: r,
 			})
 		}
 	}

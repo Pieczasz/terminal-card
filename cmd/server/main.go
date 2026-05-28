@@ -2,14 +2,12 @@ package main
 
 import (
 	"client/internal/db"
+	"client/internal/game"
+	"client/internal/game/crazyeight"
 	"client/internal/lobby"
 	"client/internal/ssh"
 	"log/slog"
 )
-
-func init() {
-	lobbyManager := lobby.NewManager()
-}
 
 func main() {
 	database, err := db.Connect()
@@ -18,7 +16,11 @@ func main() {
 		panic(err)
 	}
 
-	server, err := ssh.SetupServer(database)
+	lobbyManager := lobby.NewManager()
+	gameRegistry := game.NewRegistry()
+	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
+
+	server, err := ssh.SetupServer(database, lobbyManager, gameRegistry)
 	if err != nil {
 		slog.Error("error while setting up the server", "error", err)
 		panic(err)
