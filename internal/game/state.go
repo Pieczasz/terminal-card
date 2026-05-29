@@ -41,4 +41,3 @@ func NewState(players []*player.Player, cards []deck.Card) *State {
 
 	return state
 }
-

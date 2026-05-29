@@ -40,7 +40,7 @@ func Connect() (*gorm.DB, error) {
 		return nil, err
 	}
 
-	if err := database.AutoMigrate(&User{}, &PublicKey{}); err != nil {
+	if err := database.AutoMigrate(&User{}, &PublicKey{}, &Game{}, &Ranking{}); err != nil {
 		slog.Error("failed to run database migrations:", "error", err)
 		return nil, err
 	}

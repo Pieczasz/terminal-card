@@ -8,6 +8,7 @@ import (
 	"client/internal/player"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 )
 
@@ -77,6 +78,7 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 
 	currentPlayer := e.CurrentPlayer()
 	if currentPlayer.Id != playerId {
+		//TODO: cheating?
 		return errors.New("wait for your turn to perform an action")
 	}
 
@@ -95,8 +97,9 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	})
 
 	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
+		//TODO:
 		// this can mean cheating, we should detect that and prevent it
-		fmt.Printf("ERROR: Post condition failed after action: %v\n", err)
+		slog.Error("post condition doesn't hold for a game, cheating?", "error", err)
 		return fmt.Errorf("post condition doesn't hold %w", err)
 	}
 

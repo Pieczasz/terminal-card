@@ -251,3 +251,27 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 
 	return engine, nil
 }
+
+func (l *Lobby) GameName() string { return l.options.cardGame.Name }
+func (l *Lobby) MaxPlayers() int { return l.options.maxPlayers }
+func (l *Lobby) CurrentPlayers() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return 1 + len(l.guests)
+}
+func (l *Lobby) Leader() *player.Player { return l.leader }
+func (l *Lobby) IsPrivate() bool { return l.options.isPrivate }
+
+func (m *Manager) GetPublicLobbies() []*Lobby {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	
+	var publicLobbies []*Lobby
+	for _, l := range m.lobbies {
+		if !l.IsPrivate() && l.state == Waiting {
+			publicLobbies = append(publicLobbies, l)
+		}
+	}
+	return publicLobbies
+}
+

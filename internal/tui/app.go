@@ -3,194 +3,56 @@ package tui
 import (
 	"client/internal/db"
 	"client/internal/game"
-	"client/internal/lobby"
-	"client/internal/player"
-	"fmt"
-	"strings"
+	internal_lobby "client/internal/lobby"
+	"client/internal/tui/router"
+	gameview "client/internal/tui/views/game"
+	"client/internal/tui/views/home"
+	"client/internal/tui/views/lobby"
+	"client/internal/tui/views/profile"
 
 	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
 	"gorm.io/gorm"
 )
 
-type currentState uint
-
-const (
-	homepage currentState = iota
-	inLobby
-	inGame
-)
-
-type model struct {
-	state  currentState
-	width  int
-	height int
-
-	user         db.User
-	database     *gorm.DB
-	lobbyManager *lobby.Manager
-	gameRegistry *game.Registry
-
-	currentLobby *lobby.Lobby
-	currentGame  *game.Engine
-	lobbyChan    <-chan lobby.LobbyEvent
-	gameChan     <-chan game.Event
-}
-
-func Model(user db.User, database *gorm.DB, lobbyManager *lobby.Manager, gameRegistry *game.Registry) tea.Model {
-	return model{
-		state:        homepage,
-		user:         user,
-		database:     database,
-		lobbyManager: lobbyManager,
-		gameRegistry: gameRegistry,
-	}
-}
-
-func (m model) Init() tea.Cmd {
-	return nil
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.width = msg.Width
-		m.height = msg.Height
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
-		case "n":
-			if m.state == homepage {
-				p := &player.Player{Id: fmt.Sprint(m.user.ID), DatabaseUser: &m.user}
-				gameOpt := lobby.WithCardGame(&db.Game{Name: "Crazy Eights"})
-				l, err := m.lobbyManager.NewLobby(p, gameOpt)
-				if err == nil {
-					m.currentLobby = l
-					m.state = inLobby
-					m.lobbyChan = l.Broadcaster().Subscribe()
-					return m, listenToLobbyBroadcaster(m.lobbyChan)
-				}
-			}
-		case "s":
-			if m.state == inLobby {
-				engine, err := m.currentLobby.StartGame(m.gameRegistry)
-				if err == nil {
-					m.currentGame = engine
-					m.state = inGame
-				}
-			}
-		}
-	case lobbyMsg:
-		// A message from the lobby broadcaster
-		if msg.Type == "GAME_STARTED" {
-			// Start listening to the game broadcaster instead
-			// Note: Realistically we need the engine instance, but StartGame was already triggered by leader.
-		}
-		return m, listenToLobbyBroadcaster(m.lobbyChan)
-	case gameMsg:
-		// Update game UI state
-		return m, listenToGameBroadcaster(m.gameChan)
-	}
-	return m, nil
-}
-
-type lobbyMsg lobby.LobbyEvent
-type gameMsg game.Event
-
-func listenToLobbyBroadcaster(ch <-chan lobby.LobbyEvent) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return lobbyMsg(msg)
-	}
-}
-
-func listenToGameBroadcaster(ch <-chan game.Event) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return gameMsg(msg)
-	}
-}
-
-func (m model) View() string {
-	// Main box setup
-	maxWidth := m.width * 5 / 6
-	title := StyleTitle.Render("Play card games in your terminal")
-	boxStyle := StyleBox.Width(maxWidth).Align(lg.Center)
-	mainBox := boxStyle.Render(
-		lg.JoinVertical(lg.Center, title),
-	)
-
-	rawActions := []string{
-		"n - Create new game",
-		"j - Join game",
-		"p - Your Profile",
-		"q - Quit",
+func Model(user db.User, database *gorm.DB, lobbyManager *internal_lobby.Manager, gameRegistry *game.Registry) tea.Model {
+	global := router.GlobalContext{
+		User:         user,
+		Queries:      db.NewQueries(database),
+		LobbyManager: lobbyManager,
+		GameRegistry: gameRegistry,
 	}
 
-	var renderedActions []string
-	var totalActionsWidth int
+	r := router.New(global)
 
-	for i, action := range rawActions {
-		style := StyleHomePageActionsText
-		if i == len(rawActions)-1 {
-			style = style.PaddingRight(0)
-		}
+	r.Register("home", func(g router.GlobalContext, _ any) tea.Model {
+		return home.New(g)
+	})
 
-		r := style.Render(action)
-		renderedActions = append(renderedActions, r)
-		totalActionsWidth += lg.Width(r)
-	}
+	r.Register("profile", func(g router.GlobalContext, _ any) tea.Model {
+		return profile.New(g)
+	})
 
-	// "space-between"
-	numItems := len(renderedActions)
-	numGaps := numItems - 1
+	r.Register("lobby_create", func(g router.GlobalContext, _ any) tea.Model {
+		return lobby.NewCreate(g)
+	})
 
-	var gapSize int
-	if numGaps > 0 {
-		gapSize = (maxWidth - totalActionsWidth) / numGaps
-	}
-	if gapSize < 0 {
-		gapSize = 0
-	}
+	r.Register("lobby_join", func(g router.GlobalContext, _ any) tea.Model {
+		return lobby.NewJoin(g)
+	})
 
-	spacer := strings.Repeat(" ", gapSize)
-	homePageActions := strings.Join(renderedActions, spacer)
+	r.Register("lobby", func(g router.GlobalContext, ctx any) tea.Model {
+		// ctx should be the *lobby.Lobby
+		l, _ := ctx.(*internal_lobby.Lobby)
+		return lobby.New(g, l)
+	})
 
-	uiStack := lg.JoinVertical(
-		lg.Center,
-		mainBox,
-		lg.NewStyle().MarginTop(1).Render(homePageActions),
-	)
+	r.Register("game", func(g router.GlobalContext, ctx any) tea.Model {
+		// ctx should be the *game.Engine
+		e, _ := ctx.(*game.Engine)
+		return gameview.New(g, e)
+	})
 
-	if m.state == inLobby {
-		uiStack = lg.JoinVertical(lg.Center,
-			StyleTitle.Render(fmt.Sprintf("Lobby Code: %s", m.currentLobby.Code())),
-			"Waiting for players...",
-			"s - Start Game",
-		)
-	} else if m.state == inGame {
-		uiStack = lg.JoinVertical(lg.Center,
-			StyleTitle.Render("Game Started!"),
-			"(Game UI would be here)",
-		)
-	}
+	r.Goto("home", nil)
 
-	return lg.Place(
-		m.width, m.height,
-		lg.Center, lg.Center,
-		uiStack,
-	)
+	return r
 }
