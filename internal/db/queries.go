@@ -1,6 +1,11 @@
 package db
 
-import "gorm.io/gorm"
+import (
+	"errors"
+	"time"
+
+	"gorm.io/gorm"
+)
 
 // Queries provides abstraction layer for database operations
 type Queries struct {
@@ -33,4 +38,48 @@ func (q *Queries) GetUserProfile(userID uint) (*User, error) {
 		return nil, err
 	}
 	return &user, nil
+}
+
+// AuthenticateAndLoadUser loads a user by SSH key fingerprint, creating them if they don't exist.
+func (q *Queries) AuthenticateAndLoadUser(fingerprint, sshUsername string) (*User, error) {
+	var dbKey PublicKey
+	var currentUser User
+
+	err := q.db.Where("fingerprint = ?", fingerprint).Preload("User").First(&dbKey).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			currentUser = User{
+				Username:   sshUsername,
+				LastSeenAt: time.Now(),
+			}
+
+			if err := q.db.Create(&currentUser).Error; err != nil {
+				return nil, err
+			}
+
+			dbKey = PublicKey{
+				Fingerprint: fingerprint,
+				Name:        "Auto-generated Key",
+				UserID:      currentUser.ID,
+				LastUsedAt:  time.Now(),
+			}
+
+			if err := q.db.Create(&dbKey).Error; err != nil {
+				return nil, err
+			}
+		} else {
+			return nil, err
+		}
+	} else {
+		currentUser = dbKey.User
+
+		if err := q.db.Model(&currentUser).Update("LastSeenAt", time.Now()).Error; err != nil {
+			// Ignore update errors for last seen
+		}
+		if err := q.db.Model(&dbKey).Update("LastUsedAt", time.Now()).Error; err != nil {
+			// Ignore update errors for last seen
+		}
+	}
+
+	return &currentUser, nil
 }

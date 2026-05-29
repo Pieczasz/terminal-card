@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"client/internal/db"
 	"client/internal/game"
 	"client/internal/lobby"
 	"client/internal/tui"
@@ -17,11 +18,9 @@ import (
 	"github.com/charmbracelet/wish/activeterm"
 	bm "github.com/charmbracelet/wish/bubbletea"
 	lm "github.com/charmbracelet/wish/logging"
-
-	"gorm.io/gorm"
 )
 
-func SetupServer(database *gorm.DB, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
+func SetupServer(queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
 	key, err := keygen.New(filepath.Join(".wishlist", "server"), keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
 		return nil, fmt.Errorf("generating a keygen pair error: %w", err)
@@ -43,13 +42,13 @@ func SetupServer(database *gorm.DB, lobbyManager *lobby.Manager, gameRegistry *g
 
 		wish.WithMiddleware(
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				user, err := AuthenticateAndLoadUser(database, s)
+				user, err := AuthenticateAndLoadUser(queries, s)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
 				}
 
-				return tui.Model(*user, database, lobbyManager, gameRegistry), []tea.ProgramOption{
+				return tui.Model(*user, queries, lobbyManager, gameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),

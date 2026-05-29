@@ -11,13 +11,12 @@ import (
 	"client/internal/tui/views/profile"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"gorm.io/gorm"
 )
 
-func Model(user db.User, database *gorm.DB, lobbyManager *internal_lobby.Manager, gameRegistry *game.Registry) tea.Model {
+func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manager, gameRegistry *game.Registry) tea.Model {
 	global := router.GlobalContext{
 		User:         user,
-		Queries:      db.NewQueries(database),
+		Queries:      queries,
 		LobbyManager: lobbyManager,
 		GameRegistry: gameRegistry,
 	}
