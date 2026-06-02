@@ -4,8 +4,8 @@ package ssh
 
 import (
 	"fmt"
-	"path/filepath"
 
+	"client/internal/config"
 	"client/internal/db"
 	"client/internal/game"
 	"client/internal/lobby"
@@ -20,8 +20,8 @@ import (
 	lm "github.com/charmbracelet/wish/logging"
 )
 
-func SetupServer(queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
-	key, err := keygen.New(filepath.Join(".wishlist", "server"), keygen.WithKeyType(keygen.Ed25519))
+func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
+	key, err := keygen.New(cfg.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
 		return nil, fmt.Errorf("generating a keygen pair error: %w", err)
 	}
@@ -33,7 +33,7 @@ func SetupServer(queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry 
 	}
 
 	server, err := wish.NewServer(
-		wish.WithAddress("0.0.0.0:6969"),
+		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", cfg.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {

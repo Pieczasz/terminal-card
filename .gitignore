@@ -2,3 +2,4 @@
 *password*
 .DS_Store
 .gocache
+.env

@@ -4,6 +4,14 @@ services:
       context: .
       dockerfile: cmd/server/Dockerfile
       target: builder
+    environment:
+      - ENV=production
+      - SERVER_PORT=6969
+      - DB_HOST=db
+      - DB_PORT=5432
+      - DB_USER=postgres
+      - DB_NAME=terminal_card
+      - DB_PASSWORD_FILE=/run/secrets/backend-password
     secrets:
       - backend-password
     depends_on:

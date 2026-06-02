@@ -1,6 +1,7 @@
 package main
 
 import (
+	"client/internal/config"
 	"client/internal/db"
 	"client/internal/game"
 	"client/internal/game/crazyeight"
@@ -14,7 +15,14 @@ import (
 
 func main() {
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	database, err := db.Connect()
+	
+	cfg, err := config.Load()
+	if err != nil {
+		slog.Error("failed to load configuration", "error", err)
+		panic(err)
+	}
+
+	database, err := db.Connect(cfg)
 	if err != nil {
 		slog.Error("failed to setup database", "error", err)
 		panic(err)
@@ -25,7 +33,7 @@ func main() {
 	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
 
 	queries := db.NewQueries(database)
-	server, err := ssh.SetupServer(queries, lobbyManager, gameRegistry)
+	server, err := ssh.SetupServer(cfg, queries, lobbyManager, gameRegistry)
 	if err != nil {
 		slog.Error("error while setting up the server", "error", err)
 		panic(err)
