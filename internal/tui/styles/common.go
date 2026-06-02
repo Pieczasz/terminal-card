@@ -17,27 +17,27 @@ func RenderMainBox(width, height int, content string) string {
 func RenderMainLayout(width, height int, header, content, footer string) string {
 	boxWidth := width * 5 / 6
 	boxHeight := height * 5 / 7
-	
+
 	innerWidth := boxWidth - 6
 	innerHeight := boxHeight - 4
 
-	// Strip trailing newlines from go-figure which throw off calculations
+	// Strip trailing newlines from go-figure which throw off calculations (for centering)
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
 	hHeader := lg.Height(header)
 	hFooter := lg.Height(footer)
-	
+
 	hContent := innerHeight - hHeader - hFooter
-	
-	// Optical centering: by adding two invisible lines to the bottom of the content block, 
+
+	// Optical centering: by adding two invisible lines to the bottom of the content block,
 	// lipgloss's math pushes the visible text exactly 1 line UP, which feels more natural to the eye.
 	content = strings.TrimRight(content, "\r\n") + "\n\n"
-	
+
 	headerArea := lg.Place(innerWidth, hHeader, lg.Center, lg.Top, header)
 	footerArea := lg.Place(innerWidth, hFooter, lg.Center, lg.Bottom, footer)
 	contentArea := lg.Place(innerWidth, hContent, lg.Center, lg.Center, content)
-	
+
 	stacked := lg.JoinVertical(lg.Center, headerArea, contentArea, footerArea)
 	return Box.Width(boxWidth).Height(boxHeight).Render(stacked)
 }
@@ -74,4 +74,22 @@ var (
 	Welcome = lg.NewStyle().
 		Bold(true).
 		Foreground(lg.Color("#00FFFF"))
+
+	LobbyCode = lg.NewStyle().
+			Foreground(lg.Color("#FFA500")).
+			Bold(true)
+
+	PlayerItem = lg.NewStyle().
+			Padding(0, 1)
+
+	PlayerItemSelected = lg.NewStyle().
+				Foreground(lg.Color("205")).
+				Padding(0, 1)
+
+	HostTag = lg.NewStyle().
+		Foreground(lg.Color("#FFD700")).
+		Bold(true)
+
+	GuestTag = lg.NewStyle().
+			Foreground(lg.Color("#A9A9A9"))
 )

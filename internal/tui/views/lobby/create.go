@@ -123,7 +123,7 @@ func (m createModel) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public "
+	vis := "Public " // TODO: make this display properly instead of this hack.
 	if m.isPrivate {
 		vis = "Private"
 	}
@@ -152,10 +152,10 @@ func (m createModel) View() string {
 
 	titleText := figure.NewFigure("Create New Lobby", "small", true).String()
 	header := styles.Title.Render(titleText)
-	
+
 	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
-	
+
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,

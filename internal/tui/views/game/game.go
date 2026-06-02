@@ -5,9 +5,9 @@ import (
 	"client/internal/tui/router"
 	"client/internal/tui/styles"
 
-	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 )
 
 type gameMsg game.Event

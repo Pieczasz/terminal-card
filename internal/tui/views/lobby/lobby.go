@@ -7,9 +7,9 @@ import (
 	"client/internal/tui/styles"
 	"fmt"
 
-	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 )
 
 type lobbyMsg lobby.LobbyEvent
@@ -18,6 +18,13 @@ type model struct {
 	global       router.GlobalContext
 	currentLobby *lobby.Lobby
 	lobbyChan    <-chan lobby.LobbyEvent
+
+	cursor           int
+	gameOptions      []string
+	gameIndex        int
+	isPrivate        bool
+	maxPlayers       int
+	showLeaveConfirm bool
 }
 
 func listenToLobbyBroadcaster(ch <-chan lobby.LobbyEvent) tea.Cmd {
@@ -40,11 +47,30 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 		global:       global,
 		currentLobby: activeLobby,
 		lobbyChan:    ch,
+		cursor:       0,
+		gameOptions:  []string{activeLobby.GameName()},
+		gameIndex:    0,
+		isPrivate:    activeLobby.IsPrivate(),
+		maxPlayers:   activeLobby.MaxPlayers(),
 	}
 }
 
 func (m model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
+}
+
+// TODO: better elo retrieving system?
+func (m model) getElo(p *player.Player) uint32 {
+	if p == nil || p.DatabaseUser == nil {
+		return 1000
+	}
+	gameName := m.currentLobby.GameName()
+	for _, r := range p.DatabaseUser.Rankings {
+		if r.Game.Name == gameName {
+			return r.Elo
+		}
+	}
+	return 1000
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -53,34 +79,117 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.global.Width = msg.Width
 		m.global.Height = msg.Height
 	case tea.KeyMsg:
+		if m.showLeaveConfirm {
+			switch msg.String() {
+			case "y", "Y":
+				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+				if m.currentLobby != nil {
+					if m.currentLobby.RemovePlayer(p) {
+						m.global.LobbyManager.RemoveLobby(m.currentLobby.Code())
+					}
+				}
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+			case "n", "N", "esc":
+				m.showLeaveConfirm = false
+			}
+			return m, nil
+		}
+
+		isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
+
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "s":
-			engine, err := m.currentLobby.StartGame(m.global.GameRegistry)
-			if err == nil {
-				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
-			}
-		case "esc":
-			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
-			if m.currentLobby != nil {
-				if m.currentLobby.RemovePlayer(p) {
-					m.global.LobbyManager.RemoveLobby(m.currentLobby.Code())
-				}
-			}
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		case "esc", "x":
+			m.showLeaveConfirm = true
+			return m, nil
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
 		case "f":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+		case "s":
+			if isLeader {
+				engine, err := m.currentLobby.StartGame(m.global.GameRegistry)
+				if err == nil {
+					return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
+				}
+			}
+		case "up", "k":
+			if isLeader && m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			maxCursor := 2 + len(m.currentLobby.Guests())
+			if isLeader && m.cursor < maxCursor {
+				m.cursor++
+			}
+		case "left", "h":
+			if isLeader {
+				switch m.cursor {
+				case 1:
+					if m.maxPlayers > 2 {
+						m.maxPlayers--
+						m.currentLobby.SetMaxPlayers(m.maxPlayers)
+					}
+				case 2:
+					m.isPrivate = !m.isPrivate
+					m.currentLobby.SetPrivate(m.isPrivate)
+				}
+			}
+		case "right", "l":
+			if isLeader {
+				switch m.cursor {
+				case 1:
+					if m.maxPlayers < 8 {
+						m.maxPlayers++
+						m.currentLobby.SetMaxPlayers(m.maxPlayers)
+					}
+				case 2:
+					m.isPrivate = !m.isPrivate
+					m.currentLobby.SetPrivate(m.isPrivate)
+				}
+			}
+		case "enter":
+			if isLeader && m.cursor > 2 {
+				guestIdx := m.cursor - 3
+				guests := m.currentLobby.Guests()
+				if guestIdx < len(guests) {
+					m.currentLobby.RemovePlayer(guests[guestIdx])
+				}
+			}
 		}
+
 	case lobbyMsg:
 		if msg.Type == "GAME_STARTED" {
-			// Actually need the engine, which is awkward if we are not the leader.
-			// To be solved fully later, for now we will assume the Context holds the engine.
-			// Or the leader triggered the state transition.
+			// TODO: implemented later; the engine state needs to be distributed.
+			// For now, assume leader starts it.
+		}
+		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
+			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+
+			// Check if we got kicked
+			if !m.currentLobby.Leader().Compare(p) {
+				found := false
+				for _, g := range m.currentLobby.Guests() {
+					if g.Compare(p) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+				}
+			}
+
+			m.isPrivate = m.currentLobby.IsPrivate()
+			m.maxPlayers = m.currentLobby.MaxPlayers()
+
+			maxCursor := 2 + len(m.currentLobby.Guests())
+			if m.cursor > maxCursor {
+				m.cursor = maxCursor
+			}
 		}
 		return m, listenToLobbyBroadcaster(m.lobbyChan)
 	}
@@ -92,17 +201,92 @@ func (m model) View() string {
 		return "No active lobby."
 	}
 
-	titleText := figure.NewFigure(fmt.Sprintf("Lobby Code: %s", m.currentLobby.Code()), "small", true).String()
+	titleText := figure.NewFigure("Lobby", "small", true).String()
 	header := styles.Title.Render(titleText)
-	
-	footerActions := append([]string{"s - Start Game"}, styles.GlobalActions...)
+
+	isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
+
+	var footerActions []string
+	footerActions = append(footerActions, "x - Leave Lobby")
+	if isLeader {
+		footerActions = append(footerActions, "s - Start Game")
+	}
+	footerActions = append(footerActions, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
-	
-	content := "Waiting for players..."
-	
+
+	if m.showLeaveConfirm {
+		redYes := lg.NewStyle().Foreground(lg.Color("#FF4444")).Bold(true).Render("Yes")
+		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
+
+		return lg.Place(
+			m.global.Width, m.global.Height,
+			lg.Center, lg.Center,
+			styles.RenderMainLayout(m.global.Width, m.global.Height, header, popupText, footer),
+		)
+	}
+
+	renderOption := func(idx int, label, value string) string {
+		cursor := "  "
+		if isLeader && m.cursor == idx {
+			cursor = "> "
+			label = lg.NewStyle().Foreground(lg.Color("205")).Render(label)
+			value = lg.NewStyle().Foreground(lg.Color("205")).Render(value)
+		}
+		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
+	}
+
+	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
+	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
+
+	vis := "Public " // TODO: fix that hack
+	if m.isPrivate {
+		vis = "Private"
+	}
+	visStr := renderOption(2, "Visibility", vis)
+
+	var playerList []string
+	playerList = append(playerList, "\nPlayers")
+
+	leader := m.currentLobby.Leader()
+	leaderElo := m.getElo(leader)
+	playerList = append(playerList, fmt.Sprintf("    %s %s (Elo: %d)", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo))
+
+	guests := m.currentLobby.Guests()
+	for i, g := range guests {
+		cursor := "  "
+		itemStyle := styles.PlayerItem
+		if isLeader && m.cursor == i+3 {
+			cursor = "> "
+			itemStyle = styles.PlayerItemSelected
+		}
+		guestElo := m.getElo(g)
+		row := fmt.Sprintf("%s%s %s (Elo: %d)", cursor, styles.GuestTag.Render("[Guest] "), g.DatabaseUser.Username, guestElo)
+		playerList = append(playerList, itemStyle.Render(row))
+	}
+
+	codeDisplay := fmt.Sprintf("Lobby Code: %s", styles.LobbyCode.Render(m.currentLobby.Code()))
+
+	settingsStack := lg.JoinVertical(lg.Left,
+		codeDisplay,
+		"",
+		gameStr,
+		playersStr,
+		visStr,
+	)
+
+	playersStack := lg.JoinVertical(lg.Left, playerList...)
+
+	// Split the layout equally
+	colWidth := (m.global.Width * 5 / 6 / 2) - 4
+
+	settingsCol := lg.NewStyle().Width(colWidth).Align(lg.Center).Render(settingsStack)
+	playersCol := lg.NewStyle().Width(colWidth).Align(lg.Center).Render(playersStack)
+
+	form := lg.JoinHorizontal(lg.Top, settingsCol, playersCol)
+
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, form, footer),
 	)
 }

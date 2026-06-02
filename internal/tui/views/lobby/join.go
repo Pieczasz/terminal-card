@@ -7,10 +7,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/common-nighthawk/go-figure"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 )
 
 type joinModel struct {
@@ -41,7 +41,7 @@ func (m joinModel) Init() tea.Cmd {
 
 func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	lobbies := m.global.LobbyManager.GetPublicLobbies()
+	lobbies := m.global.LobbyManager.GetPublicLobbies() // TODO: pagination, caching, filtering, retriving lobbies close to user interest.
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -68,7 +68,6 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				lobby, _ := m.global.LobbyManager.FindLobbyByCode(code)
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: lobby} }
 			default:
-				// Ensure uppercase
 				m.textInput, cmd = m.textInput.Update(msg)
 				m.textInput.SetValue(strings.ToUpper(m.textInput.Value()))
 				return m, cmd
@@ -159,14 +158,12 @@ func (m joinModel) View() string {
 		content += lg.NewStyle().Foreground(lg.Color("9")).Render(fmt.Sprintf("\nError: %v", m.err))
 	}
 
-
-
 	titleText := figure.NewFigure("Join Game", "small", true).String()
 	header := styles.Title.Render(titleText)
-	
+
 	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
-	
+
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
