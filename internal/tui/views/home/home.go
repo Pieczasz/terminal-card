@@ -3,8 +3,9 @@ package home
 import (
 	"client/internal/tui/router"
 	"client/internal/tui/styles"
-	"strings"
+	"fmt"
 
+	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -32,7 +33,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
-		case "j":
+		case "f":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
@@ -42,58 +43,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	maxWidth := m.global.Width * 5 / 6
-	title := styles.Title.Render("Play card games in your terminal")
-	boxStyle := styles.Box.Width(maxWidth).Align(lg.Center)
-	mainBox := boxStyle.Render(
-		lg.JoinVertical(lg.Center, title),
-	)
+	titleFig := figure.NewFigure("Terminal Cards", "slant", true).String()
+	titleText := styles.Title.Render(titleFig)
 
-	rawActions := []string{
-		"n - Create new game",
-		"j - Join game",
-		"p - Your Profile",
-		"q - Quit",
-	}
+	welcomeUser := fmt.Sprintf("Welcome %s", m.global.User.Username)
+	welcomeFig := figure.NewFigure(welcomeUser, "small", true).String()
+	welcomeText := styles.Welcome.Render(welcomeFig)
 
-	var renderedActions []string
-	var totalActionsWidth int
-
-	for i, action := range rawActions {
-		style := styles.ActionsText
-		if i == len(rawActions)-1 {
-			style = style.PaddingRight(0)
-		}
-
-		r := style.Render(action)
-		renderedActions = append(renderedActions, r)
-		totalActionsWidth += lg.Width(r)
-	}
-
-	// "space-between"
-	numItems := len(renderedActions)
-	numGaps := numItems - 1
-
-	var gapSize int
-	if numGaps > 0 {
-		gapSize = (maxWidth - totalActionsWidth) / numGaps
-	}
-	if gapSize < 0 {
-		gapSize = 0
-	}
-
-	spacer := strings.Repeat(" ", gapSize)
-	homePageActions := strings.Join(renderedActions, spacer)
-
-	uiStack := lg.JoinVertical(
-		lg.Center,
-		mainBox,
-		lg.NewStyle().MarginTop(1).Render(homePageActions),
-	)
+	homePageActions := styles.RenderActionFooter(styles.GlobalActions)
 
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions),
 	)
 }

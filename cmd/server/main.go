@@ -7,9 +7,13 @@ import (
 	"client/internal/lobby"
 	"client/internal/ssh"
 	"log/slog"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 )
 
 func main() {
+	lipgloss.SetColorProfile(termenv.TrueColor)
 	database, err := db.Connect()
 	if err != nil {
 		slog.Error("failed to setup database", "error", err)

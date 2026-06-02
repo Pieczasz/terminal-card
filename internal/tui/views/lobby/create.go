@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 )
 
 type createModel struct {
@@ -48,6 +49,12 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		case "n":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+		case "f":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+		case "p":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -116,7 +123,7 @@ func (m createModel) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public"
+	vis := "Public "
 	if m.isPrivate {
 		vis = "Private"
 	}
@@ -138,20 +145,20 @@ func (m createModel) View() string {
 		submitStr,
 	)
 
-	content := "Use arrows (or hjkl) to navigate and change values.\n\n" + form
-
+	content := form
 	if m.err != nil {
 		content += fmt.Sprintf("\n\nError: %v", m.err)
 	}
 
-	uiStack := lg.JoinVertical(lg.Center,
-		styles.Title.Render("Create New Lobby"),
-		content,
-	)
-
+	titleText := figure.NewFigure("Create New Lobby", "small", true).String()
+	header := styles.Title.Render(titleText)
+	
+	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
+	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
+	
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
 	)
 }

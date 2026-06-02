@@ -6,6 +6,7 @@ import (
 	"client/internal/tui/styles"
 	"fmt"
 
+	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -50,6 +51,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		case "n":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+		case "f":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+		case "p":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		}
 	}
 	return m, nil
@@ -66,15 +73,13 @@ func (m model) View() string {
 			m.userProfile.Username, m.userProfile.ID)
 	}
 
-	uiStack := lg.JoinVertical(lg.Center,
-		styles.Title.Render("User Profile"),
-		content,
-		"\n\nesc - Back to Home",
-	)
+	titleText := figure.NewFigure("User Profile", "small", true).String()
+	header := styles.Title.Render(titleText)
+	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
 
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
 	)
 }

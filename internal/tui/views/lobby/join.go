@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/common-nighthawk/go-figure"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -78,6 +79,12 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			case "esc":
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+			case "n":
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+			case "f":
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+			case "p":
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
@@ -114,9 +121,10 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m joinModel) View() string {
 	lobbies := m.global.LobbyManager.GetPublicLobbies()
 
-	publicLobbiesStr := "Public Lobbies:\n"
+	var publicLobbiesStr strings.Builder
+	publicLobbiesStr.WriteString("Public Lobbies:\n")
 	if len(lobbies) == 0 {
-		publicLobbiesStr += "No public lobbies available right now.\n"
+		publicLobbiesStr.WriteString("No public lobbies available right now.\n")
 	} else {
 		for i, l := range lobbies {
 			if i >= 10 {
@@ -132,7 +140,7 @@ func (m joinModel) View() string {
 			if !m.writingCode && m.cursor == i {
 				itemStr = lg.NewStyle().Foreground(lg.Color("205")).Render(itemStr)
 			}
-			publicLobbiesStr += itemStr + "\n"
+			publicLobbiesStr.WriteString(itemStr + "\n")
 		}
 	}
 
@@ -142,7 +150,7 @@ func (m joinModel) View() string {
 	}
 
 	content := lg.JoinVertical(lg.Left,
-		publicLobbiesStr,
+		publicLobbiesStr.String(),
 		codeInputStr,
 		m.textInput.View(),
 	)
@@ -151,18 +159,17 @@ func (m joinModel) View() string {
 		content += lg.NewStyle().Foreground(lg.Color("9")).Render(fmt.Sprintf("\nError: %v", m.err))
 	}
 
-	if !m.writingCode {
-		content += "\n\n(esc to return home, c to enter code)"
-	}
 
-	uiStack := lg.JoinVertical(lg.Center,
-		styles.Title.Render("Join Game"),
-		content,
-	)
 
+	titleText := figure.NewFigure("Join Game", "small", true).String()
+	header := styles.Title.Render(titleText)
+	
+	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)
+	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
+	
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
 	)
 }

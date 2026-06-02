@@ -5,6 +5,7 @@ import (
 	"client/internal/tui/router"
 	"client/internal/tui/styles"
 
+	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -58,6 +59,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		case "n":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+		case "f":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+		case "p":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		}
 	case gameMsg:
 		return m, listenToGameBroadcaster(m.gameChan)
@@ -66,15 +73,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	uiStack := lg.JoinVertical(lg.Center,
-		styles.Title.Render("Active Game"),
-		"(Game UI and board go here)",
-		"\n\nesc - Leave Game",
-	)
+	titleText := figure.NewFigure("Active Game", "small", true).String()
+	header := styles.Title.Render(titleText)
+	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
+	content := "(Game UI and board go here)"
 
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
 	)
 }

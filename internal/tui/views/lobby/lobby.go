@@ -7,6 +7,7 @@ import (
 	"client/internal/tui/styles"
 	"fmt"
 
+	"github.com/common-nighthawk/go-figure"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -68,6 +69,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		case "n":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+		case "f":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+		case "p":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		}
 	case lobbyMsg:
 		if msg.Type == "GAME_STARTED" {
@@ -85,16 +92,17 @@ func (m model) View() string {
 		return "No active lobby."
 	}
 
-	uiStack := lg.JoinVertical(lg.Center,
-		styles.Title.Render(fmt.Sprintf("Lobby Code: %s", m.currentLobby.Code())),
-		"Waiting for players...",
-		"s - Start Game",
-		"esc - Leave",
-	)
-
+	titleText := figure.NewFigure(fmt.Sprintf("Lobby Code: %s", m.currentLobby.Code()), "small", true).String()
+	header := styles.Title.Render(titleText)
+	
+	footerActions := append([]string{"s - Start Game"}, styles.GlobalActions...)
+	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
+	
+	content := "Waiting for players..."
+	
 	return lg.Place(
 		m.global.Width, m.global.Height,
 		lg.Center, lg.Center,
-		uiStack,
+		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
 	)
 }
