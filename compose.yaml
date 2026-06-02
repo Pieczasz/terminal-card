@@ -12,6 +12,7 @@ services:
       - DB_USER=postgres
       - DB_NAME=terminal_card
       - DB_PASSWORD_FILE=/run/secrets/backend-password
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
     secrets:
       - backend-password
     depends_on:
@@ -47,6 +48,39 @@ services:
       - 22:22
     depends_on:
       - backend
+
+  alloy:
+    image: grafana/alloy:latest
+    volumes:
+      - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - /etc/alloy/config.alloy
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+    depends_on:
+      - loki
+
+  loki:
+    image: grafana/loki:latest
+    command: -config.file=/etc/loki/local-config.yaml
+    ports:
+      - "3100:3100"
+
+  grafana:
+    image: grafana/grafana:latest
+    volumes:
+      - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    ports:
+      - "3000:3000"
+    depends_on:
+      - loki
 
 volumes:
   db-data:

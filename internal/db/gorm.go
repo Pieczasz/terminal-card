@@ -18,12 +18,12 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		Logger: logger.Default.LogMode(logMode),
 	})
 	if err != nil {
-		slog.Error("failed to connect to the database: %v", "error", err)
+		slog.Error("failed to connect to the database", "error", err)
 		return nil, err
 	}
 
 	if err := database.AutoMigrate(&User{}, &PublicKey{}, &Game{}, &Ranking{}); err != nil {
-		slog.Error("failed to run database migrations:", "error", err)
+		slog.Error("failed to run database migrations", "error", err)
 		return nil, err
 	}
 

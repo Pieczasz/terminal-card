@@ -41,9 +41,9 @@ const (
 )
 
 type Manager struct {
-	mu           sync.RWMutex
-	lobbies      map[string]*Lobby
-	playerLobby  map[string]*Lobby
+	mu          sync.RWMutex
+	lobbies     map[string]*Lobby
+	playerLobby map[string]*Lobby
 }
 
 type Option func(*options)
@@ -205,7 +205,7 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 func (l *Lobby) HasPlayer(p *player.Player) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	
+
 	if l.leader.Compare(p) {
 		return true
 	}

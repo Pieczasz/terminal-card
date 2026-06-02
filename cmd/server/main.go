@@ -6,20 +6,38 @@ import (
 	"client/internal/game"
 	"client/internal/game/crazyeight"
 	"client/internal/lobby"
+	"client/internal/observability"
 	"client/internal/ssh"
+	"context"
 	"log/slog"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"
+	"go.opentelemetry.io/contrib/bridges/otelslog"
 )
 
 func main() {
 	lipgloss.SetColorProfile(termenv.TrueColor)
-	
+
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
 		panic(err)
+	}
+
+	ctx := context.Background()
+	otelShutdown, err := observability.SetupOTel(ctx, cfg)
+	if err != nil {
+		slog.Error("failed to setup OpenTelemetry", "error", err)
+	} else {
+		defer func() {
+			if err := otelShutdown(ctx); err != nil {
+				slog.Error("failed to shutdown OpenTelemetry", "error", err)
+			}
+		}()
+
+		otelLogger := otelslog.NewLogger("terminal-card-server")
+		slog.SetDefault(otelLogger)
 	}
 
 	database, err := db.Connect(cfg)

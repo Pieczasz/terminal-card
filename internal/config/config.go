@@ -10,15 +10,16 @@ import (
 )
 
 type Config struct {
-	Env              string
-	ServerPort       int
-	SSHKeyPath       string
-	DBHost           string
-	DBPort           int
-	DBUser           string
-	DBName           string
-	DBPassword       string
-	DBPasswordFile   string
+	Env            string
+	ServerPort     int
+	SSHKeyPath     string
+	DBHost         string
+	DBPort         int
+	DBUser         string
+	DBName         string
+	DBPassword     string
+	DBPasswordFile string
+	OTelEndpoint   string
 }
 
 func Load() (*Config, error) {
@@ -27,15 +28,16 @@ func Load() (*Config, error) {
 	_ = godotenv.Load()
 
 	cfg := &Config{
-		Env:              getEnv("ENV", "development"),
-		ServerPort:       getEnvAsInt("SERVER_PORT", 6969),
-		SSHKeyPath:       getEnv("SSH_KEY_PATH", ".wishlist/server"),
-		DBHost:           getEnv("DB_HOST", "localhost"),
-		DBPort:           getEnvAsInt("DB_PORT", 5432),
-		DBUser:           getEnv("DB_USER", "postgres"),
-		DBName:           getEnv("DB_NAME", "terminal_card"),
-		DBPassword:       getEnv("DB_PASSWORD", ""),
-		DBPasswordFile:   getEnv("DB_PASSWORD_FILE", ""),
+		Env:            getEnv("ENV", "development"),
+		ServerPort:     getEnvAsInt("SERVER_PORT", 6969),
+		SSHKeyPath:     getEnv("SSH_KEY_PATH", ".wishlist/server"),
+		DBHost:         getEnv("DB_HOST", "localhost"),
+		DBPort:         getEnvAsInt("DB_PORT", 5432),
+		DBUser:         getEnv("DB_USER", "postgres"),
+		DBName:         getEnv("DB_NAME", "terminal_card"),
+		DBPassword:     getEnv("DB_PASSWORD", ""),
+		DBPasswordFile: getEnv("DB_PASSWORD_FILE", ""),
+		OTelEndpoint:   getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
 	}
 
 	// Read password from file if the file is provided (e.g. Docker secrets)
