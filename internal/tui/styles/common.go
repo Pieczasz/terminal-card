@@ -2,12 +2,43 @@ package styles
 
 import (
 	lg "github.com/charmbracelet/lipgloss"
+	"github.com/common-nighthawk/go-figure"
 	"strings"
 )
 
+func GetBoxWidth(screenWidth int) int {
+	if screenWidth < 100 {
+		return screenWidth - 4
+	}
+	return screenWidth * 5 / 6
+}
+
+func GetBoxHeight(screenHeight int) int {
+	if screenHeight < 30 {
+		return screenHeight - 2
+	}
+	return screenHeight * 5 / 7
+}
+
+func GetInnerWidth(screenWidth int) int {
+	return GetBoxWidth(screenWidth) - 6
+}
+
+func RenderFigureAscii(text string, maxWidth int) string {
+	fonts := []string{"slant", "small", "mini"}
+	for _, font := range fonts {
+		fig := figure.NewFigure(text, font, true).String()
+		if lg.Width(fig) <= maxWidth {
+			return fig
+		}
+	}
+	// Fallback to pure string if even mini is too large
+	return text
+}
+
 func RenderMainBox(width, height int, content string) string {
-	boxWidth := width * 5 / 6
-	boxHeight := height * 5 / 7
+	boxWidth := GetBoxWidth(width)
+	boxHeight := GetBoxHeight(height)
 
 	// 4 for horizontal borders/padding, 4 for vertical borders/padding
 	placedContent := lg.Place(boxWidth-6, boxHeight-4, lg.Center, lg.Center, content)
@@ -15,8 +46,8 @@ func RenderMainBox(width, height int, content string) string {
 }
 
 func RenderMainLayout(width, height int, header, content, footer string) string {
-	boxWidth := width * 5 / 6
-	boxHeight := height * 5 / 7
+	boxWidth := GetBoxWidth(width)
+	boxHeight := GetBoxHeight(height)
 
 	innerWidth := boxWidth - 6
 	innerHeight := boxHeight - 4
@@ -47,7 +78,8 @@ func RenderActionFooter(actions []string) string {
 	for _, action := range actions {
 		renderedActions = append(renderedActions, ActionsText.Render(action))
 	}
-	return strings.Join(renderedActions, "   |   ")
+	// Use a compact pipe separator
+	return strings.Join(renderedActions, " | ")
 }
 
 var GlobalActions = []string{
@@ -61,8 +93,7 @@ var (
 	Box = lg.NewStyle().
 		Border(lg.RoundedBorder()).
 		BorderForeground(lg.Color("#FFFFFF")).
-		Padding(1, 2).
-		Align(lg.Center)
+		Padding(1, 2)
 
 	Title = lg.NewStyle().
 		Bold(true).

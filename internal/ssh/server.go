@@ -9,6 +9,7 @@ import (
 	"client/internal/db"
 	"client/internal/game"
 	"client/internal/lobby"
+	"client/internal/player"
 	"client/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,6 +42,17 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 		}),
 
 		wish.WithMiddleware(
+			func(sh ssh.Handler) ssh.Handler {
+				return func(s ssh.Session) {
+					sh(s)
+
+					user, err := AuthenticateAndLoadUser(queries, s)
+					if err == nil {
+						p := &player.Player{Id: fmt.Sprint(user.ID), DatabaseUser: user}
+						lobbyManager.LeaveLobby(p)
+					}
+				}
+			},
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 				user, err := AuthenticateAndLoadUser(queries, s)
 				if err != nil {

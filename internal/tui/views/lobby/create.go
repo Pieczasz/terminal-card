@@ -10,7 +10,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type createModel struct {
@@ -150,7 +149,9 @@ func (m createModel) View() string {
 		content += fmt.Sprintf("\n\nError: %v", m.err)
 	}
 
-	titleText := figure.NewFigure("Create New Lobby", "small", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+	titleFig := styles.RenderFigureAscii("Create New Lobby", innerWidth)
+	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 
 	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)

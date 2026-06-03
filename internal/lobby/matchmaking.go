@@ -181,15 +181,17 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	if l.leader.Compare(p) {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
-			l.guests[0] = nil
 			l.guests = l.guests[1:]
-		} else {
-			return true
+			if l.broadcaster != nil {
+				l.broadcaster.Broadcast(LobbyEvent{Type: "PLAYERS_UPDATED"})
+			}
+			return false
 		}
+
 		if l.broadcaster != nil {
-			l.broadcaster.Broadcast(LobbyEvent{Type: "PLAYERS_UPDATED"})
+			l.broadcaster.Broadcast(LobbyEvent{Type: "LOBBY_CLOSED"})
 		}
-		return false
+		return true
 	}
 
 	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
@@ -258,9 +260,29 @@ func (m *Manager) RemoveLobby(code string) {
 		l.broadcaster.Close()
 		l.broadcaster = nil
 	}
+
+	delete(m.playerLobby, l.leader.Id)
+	for _, g := range l.guests {
+		delete(m.playerLobby, g.Id)
+	}
 	l.mu.Unlock()
 
 	delete(m.lobbies, code)
+}
+
+func (m *Manager) LeaveLobby(p *player.Player) {
+	l := m.FindLobbyByPlayer(p)
+	if l == nil {
+		return
+	}
+
+	if l.RemovePlayer(p) {
+		m.RemoveLobby(l.Code())
+	} else {
+		m.mu.Lock()
+		delete(m.playerLobby, p.Id)
+		m.mu.Unlock()
+	}
 }
 
 func (l *Lobby) addGuest(player *player.Player) error {
@@ -295,7 +317,6 @@ func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[LobbyEvent] {
 
 const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-// generateLobbyCode creates a random string of the specified length.
 func generateLobbyCode(length int) string {
 	code := make([]byte, length)
 	charsetLen := big.NewInt(int64(len(charset)))

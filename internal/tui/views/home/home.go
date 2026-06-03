@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type model struct {
@@ -43,11 +42,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	titleFig := figure.NewFigure("Terminal Cards", "slant", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+
+	titleFig := styles.RenderFigureAscii("Terminal Cards", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 
 	welcomeUser := fmt.Sprintf("Welcome %s", m.global.User.Username)
-	welcomeFig := figure.NewFigure(welcomeUser, "small", true).String()
+	welcomeFig := styles.RenderFigureAscii(welcomeUser, innerWidth)
 	welcomeText := styles.Welcome.Render(welcomeFig)
 
 	homePageActions := styles.RenderActionFooter(styles.GlobalActions)

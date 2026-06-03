@@ -8,7 +8,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type model struct {
@@ -73,7 +72,9 @@ func (m model) View() string {
 			m.userProfile.Username, m.userProfile.ID)
 	}
 
-	titleText := figure.NewFigure("User Profile", "small", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+	titleFig := styles.RenderFigureAscii("User Profile", innerWidth)
+	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
 

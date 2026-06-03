@@ -9,7 +9,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type lobbyMsg lobby.LobbyEvent
@@ -83,11 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			switch msg.String() {
 			case "y", "Y":
 				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
-				if m.currentLobby != nil {
-					if m.currentLobby.RemovePlayer(p) {
-						m.global.LobbyManager.RemoveLobby(m.currentLobby.Code())
-					}
-				}
+				m.global.LobbyManager.LeaveLobby(p)
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n", "N", "esc":
 				m.showLeaveConfirm = false
@@ -162,6 +157,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 	case lobbyMsg:
+		if msg.Type == "LOBBY_CLOSED" {
+			// TODO: show user some message
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		}
 		if msg.Type == "GAME_STARTED" {
 			// TODO: implemented later; the engine state needs to be distributed.
 			// For now, assume leader starts it.
@@ -201,7 +200,9 @@ func (m model) View() string {
 		return "No active lobby."
 	}
 
-	titleText := figure.NewFigure("Lobby", "small", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+	titleFig := styles.RenderFigureAscii("Lobby", innerWidth)
+	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 
 	isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
@@ -245,11 +246,11 @@ func (m model) View() string {
 	visStr := renderOption(2, "Visibility", vis)
 
 	var playerList []string
-	playerList = append(playerList, "\nPlayers")
+	playerList = append(playerList, "  "+lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true).Render("Players"))
 
 	leader := m.currentLobby.Leader()
 	leaderElo := m.getElo(leader)
-	playerList = append(playerList, fmt.Sprintf("    %s %s (Elo: %d)", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo))
+	playerList = append(playerList, fmt.Sprintf("  %s %s (Elo: %d)", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo))
 
 	guests := m.currentLobby.Guests()
 	for i, g := range guests {
@@ -264,11 +265,11 @@ func (m model) View() string {
 		playerList = append(playerList, itemStyle.Render(row))
 	}
 
-	codeDisplay := fmt.Sprintf("Lobby Code: %s", styles.LobbyCode.Render(m.currentLobby.Code()))
+	codeDisplay := fmt.Sprintf("  Lobby Code: %s", styles.LobbyCode.Render(m.currentLobby.Code()))
 
 	settingsStack := lg.JoinVertical(lg.Left,
+		"  "+lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true).Render("Settings"),
 		codeDisplay,
-		"",
 		gameStr,
 		playersStr,
 		visStr,
@@ -276,13 +277,21 @@ func (m model) View() string {
 
 	playersStack := lg.JoinVertical(lg.Left, playerList...)
 
-	// Split the layout equally
-	colWidth := (m.global.Width * 5 / 6 / 2) - 4
+	settingsWidth := lg.Width(settingsStack)
+	playersWidth := lg.Width(playersStack)
 
-	settingsCol := lg.NewStyle().Width(colWidth).Align(lg.Center).Render(settingsStack)
-	playersCol := lg.NewStyle().Width(colWidth).Align(lg.Center).Render(playersStack)
-
-	form := lg.JoinHorizontal(lg.Top, settingsCol, playersCol)
+	var form string
+	if settingsWidth+playersWidth+4 > innerWidth {
+		// Stack vertically to avoid lipgloss word-wrapping chaos
+		settingsCol := lg.NewStyle().Align(lg.Left).Render(settingsStack)
+		playersCol := lg.NewStyle().Align(lg.Left).MarginTop(2).Render(playersStack)
+		form = lg.JoinVertical(lg.Left, settingsCol, playersCol)
+	} else {
+		// Render side by side with a natural gap, we wrap the form in a centered block to center it as a whole
+		settingsCol := lg.NewStyle().Align(lg.Left).MarginRight(6).Render(settingsStack)
+		playersCol := lg.NewStyle().Align(lg.Left).Render(playersStack)
+		form = lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
+	}
 
 	return lg.Place(
 		m.global.Width, m.global.Height,

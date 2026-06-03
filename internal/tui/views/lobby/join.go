@@ -10,7 +10,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type joinModel struct {
@@ -158,7 +157,9 @@ func (m joinModel) View() string {
 		content += lg.NewStyle().Foreground(lg.Color("9")).Render(fmt.Sprintf("\nError: %v", m.err))
 	}
 
-	titleText := figure.NewFigure("Join Game", "small", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+	titleFig := styles.RenderFigureAscii("Join Game", innerWidth)
+	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 
 	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)

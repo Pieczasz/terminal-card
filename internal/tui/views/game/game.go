@@ -7,7 +7,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
-	"github.com/common-nighthawk/go-figure"
 )
 
 type gameMsg game.Event
@@ -73,7 +72,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	titleText := figure.NewFigure("Active Game", "small", true).String()
+	innerWidth := styles.GetInnerWidth(m.global.Width)
+	titleFig := styles.RenderFigureAscii("Active Game", innerWidth)
+	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
 	content := "(Game UI and board go here)"
