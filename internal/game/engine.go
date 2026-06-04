@@ -37,6 +37,14 @@ func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
 	return e.broadcaster
 }
 
+// WithState allows thread-safe read access to the game state.
+// The provided function is executed while holding the state lock.
+func (e *Engine) WithState(fn func(state *State)) {
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	fn(e.state)
+}
+
 func (e *Engine) Start() error {
 	e.mu.Lock()
 	e.state.mu.Lock()

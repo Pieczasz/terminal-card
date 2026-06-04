@@ -82,7 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showLeaveConfirm {
 			switch msg.String() {
 			case "y", "Y":
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				m.global.LobbyManager.LeaveLobby(p)
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n", "N", "esc":
@@ -169,7 +169,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
 		}
 		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
-			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 
 			// Check if we got kicked
 			if !m.currentLobby.Leader().Compare(p) {

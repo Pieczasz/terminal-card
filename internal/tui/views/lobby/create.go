@@ -91,7 +91,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.cursor == 3 {
 				// Submit Create
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				gameOpt := lobby.WithCardGame(&db.Game{Name: m.gameOptions[m.gameIndex]})
 				maxOpt := lobby.WithMaxPlayers(m.maxPlayers)
 				privOpt := lobby.WithPrivate(m.isPrivate)

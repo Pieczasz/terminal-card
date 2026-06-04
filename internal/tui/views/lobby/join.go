@@ -58,7 +58,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if code == "" {
 					return m, nil
 				}
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				err := m.global.LobbyManager.JoinLobbyByCode(code, p)
 				if err != nil {
 					m.err = err
@@ -98,7 +98,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter", " ":
 				if len(lobbies) > 0 && m.cursor < len(lobbies) {
 					l := lobbies[m.cursor]
-					p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
+					p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 					err := m.global.LobbyManager.JoinLobbyByCode(l.Code(), p)
 					if err != nil {
 						m.err = err

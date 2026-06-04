@@ -17,7 +17,7 @@ import (
 
 func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manager, gameRegistry *game.Registry) tea.Model {
 	global := router.GlobalContext{
-		User:         user,
+		User:         &user,
 		Queries:      queries,
 		LobbyManager: lobbyManager,
 		GameRegistry: gameRegistry,
@@ -34,7 +34,7 @@ func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manag
 	})
 
 	r.Register("lobby_create", func(g router.GlobalContext, _ any) tea.Model {
-		p := &player.Player{Id: fmt.Sprint(g.User.ID), DatabaseUser: &g.User}
+		p := &player.Player{Id: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
 		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
 			return lobby.New(g, l)
 		}
@@ -42,7 +42,7 @@ func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manag
 	})
 
 	r.Register("lobby_join", func(g router.GlobalContext, _ any) tea.Model {
-		p := &player.Player{Id: fmt.Sprint(g.User.ID), DatabaseUser: &g.User}
+		p := &player.Player{Id: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
 		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
 			return lobby.New(g, l)
 		}

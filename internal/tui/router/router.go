@@ -16,7 +16,7 @@ type ChangeViewMsg struct {
 
 // GlobalContext holds shared dependencies and state for all views.
 type GlobalContext struct {
-	User         db.User
+	User         *db.User
 	Queries      *db.Queries
 	LobbyManager *lobby.Manager
 	GameRegistry *game.Registry

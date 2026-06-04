@@ -25,7 +25,8 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	ch := make(chan T, 10)
+	// TODO: calculate optimal size / think of better idea
+	ch := make(chan T, 1000)
 	b.subscribers[b.nextId] = &subscriber[T]{ch: ch, id: b.nextId}
 	b.nextId++
 	return ch
@@ -54,6 +55,7 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 		default:
 			// Channel is full. We drop the message rather than blocking the broadcaster.
 			// TODO: check if there is something else we can do.
+			// TODO: think of this and measure overhead of dropping vs blocking/disconnecting.
 		}
 	}
 }

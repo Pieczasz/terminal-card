@@ -9,7 +9,7 @@ import (
 type User struct {
 	gorm.Model
 	LastSeenAt time.Time
-	Username   string
+	Username   string `gorm:"uniqueIndex"`
 	PublicKeys []PublicKey
 	Rankings   []Ranking
 }

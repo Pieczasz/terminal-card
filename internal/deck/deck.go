@@ -30,7 +30,7 @@ func (p *Pile) Peak() (Card, bool) {
 	if len(p.cards) < 1 {
 		return Card{}, false
 	}
-	return p.cards[0], true
+	return p.cards[len(p.cards)-1], true
 }
 
 func (p *Pile) Draw() (Card, bool) {
@@ -38,8 +38,9 @@ func (p *Pile) Draw() (Card, bool) {
 		return Card{}, false
 	}
 
-	topCard := p.cards[0]
-	p.cards = p.cards[1:]
+	lastIdx := len(p.cards) - 1
+	topCard := p.cards[lastIdx]
+	p.cards = p.cards[:lastIdx]
 	return topCard, true
 }
 
@@ -48,8 +49,12 @@ func (p *Pile) DrawNCards(cardsToDraw int) ([]Card, bool) {
 		return nil, false
 	}
 
-	nCards := p.cards[0:cardsToDraw]
-	p.cards = p.cards[cardsToDraw+1:]
+	splitIdx := len(p.cards) - cardsToDraw
+	nCards := make([]Card, cardsToDraw)
+	copy(nCards, p.cards[splitIdx:])
+	p.cards = p.cards[:splitIdx]
+	
+	slices.Reverse(nCards)
 	return nCards, true
 }
 

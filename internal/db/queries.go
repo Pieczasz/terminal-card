@@ -48,6 +48,13 @@ func (q *Queries) AuthenticateAndLoadUser(fingerprint, sshUsername string) (*Use
 	err := q.db.Where("fingerprint = ?", fingerprint).Preload("User").First(&dbKey).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
+			var existingUser User
+			if err := q.db.Where("username = ?", sshUsername).First(&existingUser).Error; err == nil {
+				return nil, errors.New("Username already taken, please choose another via ssh config")
+			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil, err
+			}
+
 			currentUser = User{
 				Username:   sshUsername,
 				LastSeenAt: time.Now(),

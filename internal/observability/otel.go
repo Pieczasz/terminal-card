@@ -56,7 +56,7 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 
 func newResource() (*resource.Resource, error) {
 	return resource.Merge(resource.Default(),
-		resource.NewWithAttributes(semconv.SchemaURL,
+		resource.NewWithAttributes(resource.Default().SchemaURL(),
 			semconv.ServiceName("terminal-card-server"),
 			semconv.ServiceVersion("1.0.0"),
 		))

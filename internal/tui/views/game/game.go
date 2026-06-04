@@ -35,7 +35,9 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 	// Normally we would subscribe here if we haven't already.
 	// For now we mock the subscription or assume it's passed.
 	var ch <-chan game.Event
-	// if engine != nil { ch = engine.Broadcaster().Subscribe() }
+	if engine != nil {
+		ch = engine.Broadcaster().Subscribe()
+	}
 	return model{
 		global:   global,
 		engine:   engine,
