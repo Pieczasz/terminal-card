@@ -110,12 +110,8 @@ var (
 			Foreground(lg.Color("#FFA500")).
 			Bold(true)
 
-	PlayerItem = lg.NewStyle().
-			Padding(0, 1)
-
 	PlayerItemSelected = lg.NewStyle().
-				Foreground(lg.Color("205")).
-				Padding(0, 1)
+				Foreground(lg.Color("205"))
 
 	HostTag = lg.NewStyle().
 		Foreground(lg.Color("#FFD700")).

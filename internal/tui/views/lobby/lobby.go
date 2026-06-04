@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"client/internal/game"
 	"client/internal/lobby"
 	"client/internal/player"
 	"client/internal/tui/router"
@@ -106,9 +107,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		case "s":
 			if isLeader {
-				engine, err := m.currentLobby.StartGame(m.global.GameRegistry)
+				_, err := m.currentLobby.StartGame(m.global.GameRegistry)
 				if err == nil {
-					return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
+					// The broadcast from StartGame will symmetrically trigger GAME_STARTED 
+					// for both the leader and the guests via the lobby channel listener.
+					return m, nil
 				}
 			}
 		case "up", "k":
@@ -162,8 +165,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		}
 		if msg.Type == "GAME_STARTED" {
-			// TODO: implemented later; the engine state needs to be distributed.
-			// For now, assume leader starts it.
+			engine := msg.Payload.(*game.Engine)
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
 		}
 		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
 			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: &m.global.User}
@@ -255,14 +258,16 @@ func (m model) View() string {
 	guests := m.currentLobby.Guests()
 	for i, g := range guests {
 		cursor := "  "
-		itemStyle := styles.PlayerItem
-		if isLeader && m.cursor == i+3 {
+		isSelected := isLeader && m.cursor == i+3
+		if isSelected {
 			cursor = "> "
-			itemStyle = styles.PlayerItemSelected
 		}
 		guestElo := m.getElo(g)
 		row := fmt.Sprintf("%s%s %s (Elo: %d)", cursor, styles.GuestTag.Render("[Guest] "), g.DatabaseUser.Username, guestElo)
-		playerList = append(playerList, itemStyle.Render(row))
+		if isSelected {
+			row = styles.PlayerItemSelected.Render(row)
+		}
+		playerList = append(playerList, row)
 	}
 
 	codeDisplay := fmt.Sprintf("  Lobby Code: %s", styles.LobbyCode.Render(m.currentLobby.Code()))

@@ -18,8 +18,8 @@ import (
 )
 
 type LobbyEvent struct {
-	Type string
-	Data any
+	Type    string
+	Payload any
 }
 
 type Lobby struct {
@@ -354,7 +354,8 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 	l.state = InGame
 
 	l.broadcaster.Broadcast(LobbyEvent{
-		Type: "GAME_STARTED",
+		Type:    "GAME_STARTED",
+		Payload: engine,
 	})
 
 	return engine, nil

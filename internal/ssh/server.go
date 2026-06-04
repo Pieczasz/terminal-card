@@ -4,6 +4,7 @@ package ssh
 
 import (
 	"fmt"
+	"sync"
 
 	"client/internal/config"
 	"client/internal/db"
@@ -21,6 +22,33 @@ import (
 	lm "github.com/charmbracelet/wish/logging"
 )
 
+type SessionTracker struct {
+	mu     sync.Mutex
+	active map[uint]bool
+}
+
+func NewSessionTracker() *SessionTracker {
+	return &SessionTracker{
+		active: make(map[uint]bool),
+	}
+}
+
+func (t *SessionTracker) TryConnect(userID uint) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.active[userID] {
+		return false
+	}
+	t.active[userID] = true
+	return true
+}
+
+func (t *SessionTracker) Disconnect(userID uint) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.active, userID)
+}
+
 func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
 	key, err := keygen.New(cfg.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
@@ -32,6 +60,8 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 			return nil, fmt.Errorf("error while saving keypair to disk: %w", err)
 		}
 	}
+
+	tracker := NewSessionTracker()
 
 	server, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", cfg.ServerPort)),
@@ -47,7 +77,8 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 					sh(s)
 
 					user, err := AuthenticateAndLoadUser(queries, s)
-					if err == nil {
+					if err == nil && s.Context().Value("owns_connection") == true {
+						tracker.Disconnect(user.ID)
 						p := &player.Player{Id: fmt.Sprint(user.ID), DatabaseUser: user}
 						lobbyManager.LeaveLobby(p)
 					}
@@ -59,6 +90,13 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
 				}
+
+				if !tracker.TryConnect(user.ID) {
+					wish.Fatalf(s, "Account '%s' is already connected from another session.\n", user.Username)
+					return nil, nil
+				}
+
+				s.Context().SetValue("owns_connection", true)
 
 				return tui.Model(*user, queries, lobbyManager, gameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
