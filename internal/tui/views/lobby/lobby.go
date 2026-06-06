@@ -12,12 +12,12 @@ import (
 	lg "github.com/charmbracelet/lipgloss"
 )
 
-type lobbyMsg lobby.LobbyEvent
+type lobbyMsg lobby.Event
 
 type model struct {
 	global       router.GlobalContext
 	currentLobby *lobby.Lobby
-	lobbyChan    <-chan lobby.LobbyEvent
+	lobbyChan    <-chan lobby.Event
 
 	cursor           int
 	gameOptions      []string
@@ -27,7 +27,7 @@ type model struct {
 	showLeaveConfirm bool
 }
 
-func listenToLobbyBroadcaster(ch <-chan lobby.LobbyEvent) tea.Cmd {
+func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
 	return func() tea.Msg {
 		if ch == nil {
 			return nil
@@ -109,7 +109,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if isLeader {
 				_, err := m.currentLobby.StartGame(m.global.GameRegistry)
 				if err == nil {
-					// The broadcast from StartGame will symmetrically trigger GAME_STARTED 
+					// The broadcast from StartGame will symmetrically trigger GAME_STARTED
 					// for both the leader and the guests via the lobby channel listener.
 					return m, nil
 				}

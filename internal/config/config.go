@@ -51,7 +51,6 @@ func Load() (*Config, error) {
 	return cfg, nil
 }
 
-// DSN generates the PostgreSQL connection string
 func (c *Config) DSN() string {
 	// TODO: change sslmode=disable to require or verify-full for production
 	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",

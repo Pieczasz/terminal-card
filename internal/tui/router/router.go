@@ -8,13 +8,11 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// ChangeViewMsg is sent by views to switch to another view.
 type ChangeViewMsg struct {
 	ViewName string
 	Context  any
 }
 
-// GlobalContext holds shared dependencies and state for all views.
 type GlobalContext struct {
 	User         *db.User
 	Queries      *db.Queries

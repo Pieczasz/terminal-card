@@ -22,6 +22,7 @@ import (
 	lm "github.com/charmbracelet/wish/logging"
 )
 
+// TODO: add more tracking? GDPR? legal analytics?
 type SessionTracker struct {
 	mu     sync.Mutex
 	active map[uint]bool
@@ -33,7 +34,7 @@ func NewSessionTracker() *SessionTracker {
 	}
 }
 
-func (t *SessionTracker) TryConnect(userID uint) bool {
+func (t *SessionTracker) Connect(userID uint) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.active[userID] {
@@ -49,6 +50,7 @@ func (t *SessionTracker) Disconnect(userID uint) {
 	delete(t.active, userID)
 }
 
+// TODO: maybe create a struct out of these 4 parameters/context like
 func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
 	key, err := keygen.New(cfg.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
@@ -64,18 +66,16 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 	tracker := NewSessionTracker()
 
 	server, err := wish.NewServer(
+		// TODO: refactor to normal address instead of localhost
 		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", cfg.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
-
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
 			return true
 		}),
-
 		wish.WithMiddleware(
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
 					sh(s)
-
 					user, err := AuthenticateAndLoadUser(queries, s)
 					if err == nil && s.Context().Value("owns_connection") == true {
 						tracker.Disconnect(user.ID)
@@ -84,14 +84,16 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 					}
 				}
 			},
+
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+				// TODO: refactor getting user multiple times?
 				user, err := AuthenticateAndLoadUser(queries, s)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
 				}
 
-				if !tracker.TryConnect(user.ID) {
+				if !tracker.Connect(user.ID) {
 					wish.Fatalf(s, "Account '%s' is already connected from another session.\n", user.Username)
 					return nil, nil
 				}

@@ -96,7 +96,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				maxOpt := lobby.WithMaxPlayers(m.maxPlayers)
 				privOpt := lobby.WithPrivate(m.isPrivate)
 
-				l, err := m.global.LobbyManager.NewLobby(p, gameOpt, maxOpt, privOpt)
+				l, err := m.global.LobbyManager.New(p, gameOpt, maxOpt, privOpt)
 				if err != nil {
 					m.err = err
 					return m, nil

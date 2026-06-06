@@ -31,12 +31,13 @@ const (
 	Finished
 )
 
-func NewState(players []*player.Player, cards []deck.Card) *State {
+func NewState(rules Rules, players []*player.Player, cards []deck.Card) *State {
 	state := &State{
 		Players: players,
 		Winner:  nil,
 		Phase:   Waiting,
 		Deck:    deck.New(cards),
+		Rules:   rules,
 	}
 
 	return state

@@ -40,7 +40,7 @@ func (m joinModel) Init() tea.Cmd {
 
 func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	lobbies := m.global.LobbyManager.GetPublicLobbies() // TODO: pagination, caching, filtering, retriving lobbies close to user interest.
+	lobbies := m.global.LobbyManager.PublicLobbies() // TODO: pagination, caching, filtering, retriving lobbies close to user interest.
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -117,7 +117,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m joinModel) View() string {
-	lobbies := m.global.LobbyManager.GetPublicLobbies()
+	lobbies := m.global.LobbyManager.PublicLobbies()
 
 	var publicLobbiesStr strings.Builder
 	publicLobbiesStr.WriteString("Public Lobbies:\n")

@@ -12,6 +12,8 @@ type Rules interface {
 	InitialDeck() []deck.Card
 	InitialDealCount() int
 
+	OnGameStart(state *State) error
+
 	PreActionCondition(state *State, action Action) error
 	PostActionCondition(state *State, action Action) error
 	ApplyAction(state *State, action Action)

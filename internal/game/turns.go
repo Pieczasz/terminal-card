@@ -23,5 +23,9 @@ func (tm *TurnManager) Next() {
 }
 
 func (tm *TurnManager) Reverse() {
-	tm.direction = -1
+	tm.direction = -tm.direction
+}
+
+func (tm *TurnManager) SetCurrent(current int) {
+	tm.current = current
 }

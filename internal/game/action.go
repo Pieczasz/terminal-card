@@ -16,6 +16,8 @@ const (
 	ActionDrawCard
 	ActionPickSuit
 	ActionPass
+	ActionBet
+	ActionFold
 )
 
 type Event struct {

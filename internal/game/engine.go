@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand/v2"
 	"sync"
 )
 
@@ -22,7 +23,7 @@ type Engine struct {
 
 func NewGameEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine {
 	return &Engine{
-		state:       NewState(players, cards),
+		state:       NewState(rules, players, cards),
 		turnManager: NewTurnManager(len(players)),
 		broadcaster: broadcaster.New[Event](len(players)),
 		registry:    NewRegistry(),
@@ -50,26 +51,31 @@ func (e *Engine) Start() error {
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
-
-	if len(e.state.Players) > e.state.Rules.MaxPlayers() {
-		return errors.New("number of players in lobby exceeds maximum number of players for this game")
-	}
-	if len(e.state.Players) < e.state.Rules.MinPlayers() {
-		return errors.New("number of players in lobby is less then minimum number of players for this game")
-	}
-
 	e.state.Phase = Dealing
 
 	deck := deck.New(e.state.Rules.InitialDeck())
 	for playerIdx := range e.state.Players {
 		cards, ok := deck.DrawNCards(e.state.Rules.InitialDealCount())
 		if !ok {
+			slog.Error("miscalculated maximum number of players/some bug with dealing happen", "engine", e)
 			return errors.New("insufficient number of cards to deal for all players")
 		}
 		e.state.Players[playerIdx].Cards = cards
 	}
 
 	e.state.Phase = Playing
+	e.turnManager.SetCurrent(rand.IntN(len(e.state.Players)))
+	e.state.CurrentTurn = e.turnManager.Current()
+
+	if err := e.state.Rules.OnGameStart(e.state); err != nil {
+		slog.Error("failed to setup game", "error", err)
+		return fmt.Errorf("failed to setup game: %w", err)
+	}
+
+	e.broadcaster.Broadcast(Event{
+		Sequence: 0,
+		Type:     EventGameStarted,
+	})
 
 	return nil
 }
@@ -96,9 +102,17 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 
 	e.state.Rules.ApplyAction(e.state, action)
 
+	eventType := EventCardPlayed
+	switch action.Type {
+	case ActionDrawCard:
+		eventType = EventCardDrawn
+	case ActionPickSuit:
+		eventType = EventSuitPicked
+	}
+
 	e.broadcaster.Broadcast(Event{
 		Sequence: int64(e.turnManager.Current()), // Basic sequence for now
-		Type:     EventCardPlayed,
+		Type:     eventType,
 		PlayerID: playerId,
 		Action:   action,
 		// State snapshot could be built here
@@ -122,6 +136,12 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	}
 
 	e.turnManager.Next()
+	e.state.CurrentTurn = e.turnManager.Current()
+
+	e.broadcaster.Broadcast(Event{
+		Sequence: int64(e.turnManager.Current()),
+		Type:     EventTurnAdvanced,
+	})
 
 	return nil
 }

@@ -2,6 +2,7 @@ package db
 
 import (
 	"errors"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
@@ -41,6 +42,7 @@ func (q *Queries) GetUserProfile(userID uint) (*User, error) {
 }
 
 // AuthenticateAndLoadUser loads a user by SSH key fingerprint, creating them if they don't exist.
+// TODO: make this split this into two functions
 func (q *Queries) AuthenticateAndLoadUser(fingerprint, sshUsername string) (*User, error) {
 	var dbKey PublicKey
 	var currentUser User
@@ -81,10 +83,10 @@ func (q *Queries) AuthenticateAndLoadUser(fingerprint, sshUsername string) (*Use
 		currentUser = dbKey.User
 
 		if err := q.db.Model(&currentUser).Update("LastSeenAt", time.Now()).Error; err != nil {
-			// Ignore update errors for last seen
+			slog.Error("unexpected error while trying to update LastSeenAt filed", "user", currentUser, "error", err)
 		}
 		if err := q.db.Model(&dbKey).Update("LastUsedAt", time.Now()).Error; err != nil {
-			// Ignore update errors for last seen
+			slog.Error("unexpected error while trying to update LastUsedAT filed", "user", currentUser, "error", err)
 		}
 	}
 

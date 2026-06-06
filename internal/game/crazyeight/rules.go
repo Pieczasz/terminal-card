@@ -4,6 +4,7 @@ import (
 	"client/internal/deck"
 	"client/internal/game"
 	"errors"
+	"log/slog"
 	"slices"
 )
 
@@ -21,6 +22,28 @@ func (r *CrazyEightsRules) InitialDeck() []deck.Card {
 
 func (r *CrazyEightsRules) InitialDealCount() int {
 	return 7
+}
+
+func (r *CrazyEightsRules) OnGameStart(state *game.State) error {
+	state.Extra = &State{
+		Direction:   1,
+		SkipNext:    false,
+		DrawStack:   0,
+		CurrentSuit: deck.NoSuit,
+	}
+
+	state.Discard = deck.New([]deck.Card{})
+
+	firstCard, ok := state.Deck.Draw()
+	if !ok {
+		return errors.New("not enough cards to start the game")
+	}
+	state.Discard.AddCard(firstCard)
+
+	extra := state.Extra.(*State)
+	extra.CurrentSuit = firstCard.Suit
+
+	return nil
 }
 
 func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Action) error {
@@ -42,7 +65,7 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		card := action.Cards[0]
 
 		if !slices.Contains(state.Players[state.CurrentTurn].Cards, card) {
-			// TODO: log it? someone is cheating?
+			slog.Warn("someone tried to play a card without having it on his hand", "player", state.Players[state.CurrentTurn])
 			return errors.New("you don't have that card")
 		}
 

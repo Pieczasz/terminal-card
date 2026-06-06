@@ -22,6 +22,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		return nil, err
 	}
 
+	// TODO: automate this instead of passing every table manually
 	if err := database.AutoMigrate(&User{}, &PublicKey{}, &Game{}, &Ranking{}); err != nil {
 		slog.Error("failed to run database migrations", "error", err)
 		return nil, err

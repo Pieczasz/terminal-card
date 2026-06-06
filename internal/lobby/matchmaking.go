@@ -17,19 +17,19 @@ import (
 	"sync"
 )
 
-type LobbyEvent struct {
-	Type    string
-	Payload any
-}
-
 type Lobby struct {
 	mu          sync.RWMutex
-	broadcaster *broadcaster.Broadcaster[LobbyEvent]
+	broadcaster *broadcaster.Broadcaster[Event]
 	leader      *player.Player
 	guests      []*player.Player
 	options     *options
 	code        string
 	state       state
+}
+
+type Event struct {
+	Type    string
+	Payload any
 }
 
 type state uint
@@ -52,6 +52,7 @@ type options struct {
 	cardGame   *db.Game
 	maxPlayers int
 	isPrivate  bool
+	isRanked   bool
 }
 
 func WithCardGame(game *db.Game) Option {
@@ -72,6 +73,39 @@ func WithPrivate(isPrivate bool) Option {
 	}
 }
 
+func WithRanked(isRanked bool) Option {
+	return func(o *options) {
+		o.isRanked = isRanked
+	}
+}
+
+func (l *Lobby) SetPrivate(isPrivate bool) {
+	l.mu.Lock()
+	l.options.isPrivate = isPrivate
+	l.mu.Unlock()
+	if l.broadcaster != nil {
+		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	}
+}
+
+func (l *Lobby) SetMaxPlayers(max int) {
+	l.mu.Lock()
+	l.options.maxPlayers = max
+	l.mu.Unlock()
+	if l.broadcaster != nil {
+		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	}
+}
+
+func (l *Lobby) SetCardGame(game *db.Game) {
+	l.mu.Lock()
+	l.options.cardGame = game
+	l.mu.Unlock()
+	if l.broadcaster != nil {
+		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	}
+}
+
 func NewManager() *Manager {
 	return &Manager{
 		lobbies:     make(map[string]*Lobby),
@@ -79,15 +113,12 @@ func NewManager() *Manager {
 	}
 }
 
-func (m *Manager) NewLobby(leader *player.Player, opts ...Option) (*Lobby, error) {
+func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	if m.FindLobbyByPlayer(leader) != nil {
 		return nil, errors.New("player is already in a lobby")
 	}
 
-	options := &options{
-		maxPlayers: 4,
-		isPrivate:  false,
-	}
+	options := setupDefaultOptions()
 
 	for _, opt := range opts {
 		opt(options)
@@ -96,27 +127,13 @@ func (m *Manager) NewLobby(leader *player.Player, opts ...Option) (*Lobby, error
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	var code string
-	maxRetries := 10
-	for range maxRetries {
-		code = generateLobbyCode(6)
-		if _, exists := m.lobbies[code]; !exists {
-			break
-		}
-		code = ""
-	}
-
-	if code == "" {
-		slog.Error("failed to generate unique lobby code after maximum retries, how tf we ended up here")
-		return nil, errors.New("unexpected error happen, please try again")
-	}
-
+	code := m.generateLobbyCode()
 	lobby := &Lobby{
 		leader:      leader,
 		guests:      make([]*player.Player, 0, options.maxPlayers-1),
 		options:     options,
 		code:        code,
-		broadcaster: broadcaster.New[LobbyEvent](options.maxPlayers),
+		broadcaster: broadcaster.New[Event](options.maxPlayers),
 	}
 
 	m.lobbies[code] = lobby
@@ -124,35 +141,67 @@ func (m *Manager) NewLobby(leader *player.Player, opts ...Option) (*Lobby, error
 	return lobby, nil
 }
 
-func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
+func setupDefaultOptions() *options {
+	return &options{
+		maxPlayers: 4,
+		isPrivate:  true,
+		isRanked:   true,
+	}
+}
+
+const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+
+// TODO: make sure that we won't end up in infinite loop
+func (m *Manager) generateLobbyCode() string {
+	var code string
+	for {
+		rawCode := make([]byte, 6)
+		charsetLen := big.NewInt(int64(len(charset)))
+		for i := range code {
+			n, _ := rand.Int(rand.Reader, charsetLen)
+			rawCode[i] = charset[n.Int64()]
+		}
+		code = string(code)
+		if _, exists := m.lobbies[code]; !exists {
+			break
+		}
+	}
+	return code
+}
+
+func (l *Lobby) Code() string                                 { return l.code }
+func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[Event] { return l.broadcaster }
+func (l *Lobby) GameName() string                             { return l.options.cardGame.Name }
+func (l *Lobby) MaxPlayers() int                              { return l.options.maxPlayers }
+func (l *Lobby) IsPrivate() bool                              { return l.options.isPrivate }
+func (l *Lobby) Leader() *player.Player                       { return l.leader }
+
+func (l *Lobby) Guests() []*player.Player {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	guests := make([]*player.Player, len(l.guests))
+	copy(guests, l.guests)
+	return guests
+}
+
+func (l *Lobby) CurrentPlayers() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return 1 + len(l.guests)
+}
+
+// TODO: optimize this
+func (m *Manager) PublicLobbies() []*Lobby {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	lobby, exists := m.lobbies[code]
-	if !exists {
-		return nil, errors.New("lobby not found")
-	}
-
-	return lobby, nil
-}
-
-func (m *Manager) FindLobbyByPlayer(player *player.Player) *Lobby {
-	m.mu.RLock()
-	lobby, exists := m.playerLobby[player.Id]
-	m.mu.RUnlock()
-
-	if exists {
-		if lobby.HasPlayer(player) {
-			return lobby
+	var publicLobbies []*Lobby
+	for _, l := range m.lobbies {
+		if !l.IsPrivate() && l.state == Waiting {
+			publicLobbies = append(publicLobbies, l)
 		}
-		// Lazy cleanup if player was removed (e.g. kicked)
-		m.mu.Lock()
-		if m.playerLobby[player.Id] == lobby {
-			delete(m.playerLobby, player.Id)
-		}
-		m.mu.Unlock()
 	}
-	return nil
+	return publicLobbies
 }
 
 func (m *Manager) JoinLobbyByCode(code string, player *player.Player) error {
@@ -174,34 +223,23 @@ func (m *Manager) JoinLobbyByCode(code string, player *player.Player) error {
 	return err
 }
 
-func (l *Lobby) RemovePlayer(p *player.Player) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+func (m *Manager) FindLobbyByPlayer(player *player.Player) *Lobby {
+	m.mu.RLock()
+	lobby, exists := m.playerLobby[player.Id]
+	m.mu.RUnlock()
 
-	if l.leader.Compare(p) {
-		if len(l.guests) > 0 {
-			l.leader = l.guests[0]
-			l.guests = l.guests[1:]
-			if l.broadcaster != nil {
-				l.broadcaster.Broadcast(LobbyEvent{Type: "PLAYERS_UPDATED"})
-			}
-			return false
+	if exists {
+		if lobby.HasPlayer(player) {
+			return lobby
 		}
-
-		if l.broadcaster != nil {
-			l.broadcaster.Broadcast(LobbyEvent{Type: "LOBBY_CLOSED"})
+		// Lazy cleanup if player was removed (e.g. kicked)
+		m.mu.Lock()
+		if m.playerLobby[player.Id] == lobby {
+			delete(m.playerLobby, player.Id)
 		}
-		return true
+		m.mu.Unlock()
 	}
-
-	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
-		l.guests = slices.Delete(l.guests, idx, idx+1)
-		if l.broadcaster != nil {
-			l.broadcaster.Broadcast(LobbyEvent{Type: "PLAYERS_UPDATED"})
-		}
-	}
-
-	return false
+	return nil
 }
 
 func (l *Lobby) HasPlayer(p *player.Player) bool {
@@ -219,30 +257,60 @@ func (l *Lobby) HasPlayer(p *player.Player) bool {
 	return false
 }
 
-func (l *Lobby) SetPrivate(isPrivate bool) {
-	l.mu.Lock()
-	l.options.isPrivate = isPrivate
-	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(LobbyEvent{Type: "SETTINGS_UPDATED"})
+func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	lobby, exists := m.lobbies[code]
+	if !exists {
+		return nil, errors.New("lobby not found")
 	}
+
+	return lobby, nil
 }
 
-func (l *Lobby) SetMaxPlayers(max int) {
+func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	l.mu.Lock()
-	l.options.maxPlayers = max
-	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(LobbyEvent{Type: "SETTINGS_UPDATED"})
+	defer l.mu.Unlock()
+
+	if l.leader.Compare(p) {
+		if len(l.guests) > 0 {
+			l.leader = l.guests[0]
+			l.guests = l.guests[1:]
+			if l.broadcaster != nil {
+				l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
+			}
+			return false
+		}
+
+		if l.broadcaster != nil {
+			l.broadcaster.Broadcast(Event{Type: "LOBBY_CLOSED"})
+		}
+		return true
 	}
+
+	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
+		l.guests = slices.Delete(l.guests, idx, idx+1)
+		if l.broadcaster != nil {
+			l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
+		}
+	}
+
+	return false
 }
 
-func (l *Lobby) SetCardGame(game *db.Game) {
-	l.mu.Lock()
-	l.options.cardGame = game
-	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(LobbyEvent{Type: "SETTINGS_UPDATED"})
+func (m *Manager) LeaveLobby(p *player.Player) {
+	l := m.FindLobbyByPlayer(p)
+	if l == nil {
+		return
+	}
+
+	if l.RemovePlayer(p) {
+		m.RemoveLobby(l.Code())
+	} else {
+		m.mu.Lock()
+		delete(m.playerLobby, p.Id)
+		m.mu.Unlock()
 	}
 }
 
@@ -270,21 +338,6 @@ func (m *Manager) RemoveLobby(code string) {
 	delete(m.lobbies, code)
 }
 
-func (m *Manager) LeaveLobby(p *player.Player) {
-	l := m.FindLobbyByPlayer(p)
-	if l == nil {
-		return
-	}
-
-	if l.RemovePlayer(p) {
-		m.RemoveLobby(l.Code())
-	} else {
-		m.mu.Lock()
-		delete(m.playerLobby, p.Id)
-		m.mu.Unlock()
-	}
-}
-
 func (l *Lobby) addGuest(player *player.Player) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -302,29 +355,9 @@ func (l *Lobby) addGuest(player *player.Player) error {
 
 	l.guests = append(l.guests, player)
 	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(LobbyEvent{Type: "PLAYERS_UPDATED"})
+		l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
 	}
 	return nil
-}
-
-func (l *Lobby) Code() string {
-	return l.code
-}
-
-func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[LobbyEvent] {
-	return l.broadcaster
-}
-
-const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
-
-func generateLobbyCode(length int) string {
-	code := make([]byte, length)
-	charsetLen := big.NewInt(int64(len(charset)))
-	for i := range code {
-		n, _ := rand.Int(rand.Reader, charsetLen)
-		code[i] = charset[n.Int64()]
-	}
-	return string(code)
 }
 
 func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
@@ -337,6 +370,7 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 
 	rules, err := registry.Create(l.options.cardGame.Name)
 	if err != nil {
+		slog.Error("how did we end up here, user selected a game that doesn't exist", "error", err)
 		return nil, err
 	}
 
@@ -351,42 +385,16 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 	players := append([]*player.Player{l.leader}, l.guests...)
 	engine := game.NewGameEngine(rules, players, rules.InitialDeck())
 
+	if err := engine.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start game engine: %w", err)
+	}
+
 	l.state = InGame
 
-	l.broadcaster.Broadcast(LobbyEvent{
+	l.broadcaster.Broadcast(Event{
 		Type:    "GAME_STARTED",
 		Payload: engine,
 	})
 
 	return engine, nil
-}
-
-func (l *Lobby) GameName() string { return l.options.cardGame.Name }
-func (l *Lobby) MaxPlayers() int  { return l.options.maxPlayers }
-func (l *Lobby) CurrentPlayers() int {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	return 1 + len(l.guests)
-}
-func (l *Lobby) Leader() *player.Player { return l.leader }
-func (l *Lobby) Guests() []*player.Player {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	guests := make([]*player.Player, len(l.guests))
-	copy(guests, l.guests)
-	return guests
-}
-func (l *Lobby) IsPrivate() bool { return l.options.isPrivate }
-
-func (m *Manager) GetPublicLobbies() []*Lobby {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	var publicLobbies []*Lobby
-	for _, l := range m.lobbies {
-		if !l.IsPrivate() && l.state == Waiting {
-			publicLobbies = append(publicLobbies, l)
-		}
-	}
-	return publicLobbies
 }

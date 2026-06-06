@@ -16,7 +16,6 @@ func New(cards []Card) *Pile {
 		cards: cards,
 	}
 	pile.Shuffle()
-
 	return pile
 }
 
@@ -37,7 +36,6 @@ func (p *Pile) Draw() (Card, bool) {
 	if len(p.cards) < 1 {
 		return Card{}, false
 	}
-
 	lastIdx := len(p.cards) - 1
 	topCard := p.cards[lastIdx]
 	p.cards = p.cards[:lastIdx]
@@ -53,7 +51,7 @@ func (p *Pile) DrawNCards(cardsToDraw int) ([]Card, bool) {
 	nCards := make([]Card, cardsToDraw)
 	copy(nCards, p.cards[splitIdx:])
 	p.cards = p.cards[:splitIdx]
-	
+
 	slices.Reverse(nCards)
 	return nCards, true
 }

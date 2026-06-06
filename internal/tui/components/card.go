@@ -2,7 +2,7 @@ package components
 
 import (
 	"client/internal/deck"
-	"fmt"
+	"strings"
 
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -62,14 +62,13 @@ func getRankStr(rank deck.Rank) string {
 	}
 }
 
-// RenderCard returns a string representing an ASCII card drawn with Lipgloss.
 func RenderCard(card deck.Card, selected bool) string {
 	suitStr, style := getSuitInfo(card.Suit)
-	rankStr := getRankStr(card.Rank)
+	cleanRank := strings.TrimSpace(getRankStr(card.Rank))
 
-	topRank := style.Render(rankStr)
-	centerSuit := style.Render(fmt.Sprintf("  %s  ", suitStr))
-	bottomRank := style.Render(fmt.Sprintf("    %s", rankStr))
+	topRank := style.Render(lg.Place(7, 1, lg.Left, lg.Center, cleanRank))
+	centerSuit := style.Render(lg.Place(7, 1, lg.Center, lg.Center, suitStr))
+	bottomRank := style.Render(lg.Place(7, 1, lg.Right, lg.Center, cleanRank))
 
 	inner := lg.JoinVertical(lg.Left,
 		topRank,

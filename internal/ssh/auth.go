@@ -15,6 +15,7 @@ var (
 	ErrInternal    = errors.New("internal server error")
 )
 
+// TODO: refactor this bullshit
 func AuthenticateAndLoadUser(queries *db.Queries, s ssh.Session) (*db.User, error) {
 	publicKey := s.PublicKey()
 	if publicKey == nil {
