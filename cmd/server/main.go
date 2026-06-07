@@ -51,7 +51,13 @@ func main() {
 	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
 
 	queries := db.NewQueries(database)
-	server, err := ssh.SetupServer(cfg, queries, lobbyManager, gameRegistry)
+	deps := ssh.ServerDependencies{
+		Config:       cfg,
+		Queries:      queries,
+		LobbyManager: lobbyManager,
+		GameRegistry: gameRegistry,
+	}
+	server, err := ssh.SetupServer(deps)
 	if err != nil {
 		slog.Error("error while setting up the server", "error", err)
 		panic(err)

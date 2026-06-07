@@ -15,7 +15,6 @@ var (
 	ErrInternal    = errors.New("internal server error")
 )
 
-// TODO: refactor this bullshit
 func AuthenticateAndLoadUser(queries *db.Queries, s ssh.Session) (*db.User, error) {
 	publicKey := s.PublicKey()
 	if publicKey == nil {
@@ -25,10 +24,20 @@ func AuthenticateAndLoadUser(queries *db.Queries, s ssh.Session) (*db.User, erro
 	fingerprint := cryptossh.FingerprintSHA256(publicKey)
 	sshUsername := s.User()
 
-	user, err := queries.AuthenticateAndLoadUser(fingerprint, sshUsername)
+	user, key, err := queries.LoadUserByFingerprint(fingerprint)
 	if err != nil {
 		slog.Error("database error while authenticating user", "error", err)
 		return nil, ErrInternal
+	}
+
+	if user == nil {
+		user, key, err = queries.RegisterUserWithKey(sshUsername, fingerprint)
+		if err != nil {
+			slog.Error("failed to register new user", "error", err)
+			return nil, err
+		}
+	} else {
+		queries.UpdateUserActivity(user, key)
 	}
 
 	return user, nil

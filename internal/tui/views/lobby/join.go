@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"client/internal/tui/views/common"
+
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -42,10 +44,16 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	lobbies := m.global.LobbyManager.PublicLobbies() // TODO: pagination, caching, filtering, retriving lobbies close to user interest.
 
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
+	if !m.writingCode {
+		if handled, commonCmd := common.HandleCommonMsg(msg, &m.global); handled {
+			return m, commonCmd
+		}
+	} else if msg, ok := msg.(tea.WindowSizeMsg); ok {
 		m.global.Width = msg.Width
 		m.global.Height = msg.Height
+	}
+
+	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		if m.writingCode {
 			switch msg.Type {
@@ -73,8 +81,6 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			switch msg.String() {
-			case "q", "ctrl+c":
-				return m, tea.Quit
 			case "esc":
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n":
@@ -165,9 +171,5 @@ func (m joinModel) View() string {
 	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return lg.Place(
-		m.global.Width, m.global.Height,
-		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
-	)
+	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
 }

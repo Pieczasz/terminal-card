@@ -8,6 +8,8 @@ import (
 	"client/internal/tui/styles"
 	"fmt"
 
+	"client/internal/tui/views/common"
+
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -74,10 +76,11 @@ func (m model) getElo(p *player.Player) uint32 {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.global.Width = msg.Width
-		m.global.Height = msg.Height
 	case tea.KeyMsg:
 		if m.showLeaveConfirm {
 			switch msg.String() {
@@ -94,8 +97,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
 
 		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
 		case "esc", "x":
 			m.showLeaveConfirm = true
 			return m, nil
@@ -222,11 +223,7 @@ func (m model) View() string {
 		redYes := lg.NewStyle().Foreground(lg.Color("#FF4444")).Bold(true).Render("Yes")
 		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
 
-		return lg.Place(
-			m.global.Width, m.global.Height,
-			lg.Center, lg.Center,
-			styles.RenderMainLayout(m.global.Width, m.global.Height, header, popupText, footer),
-		)
+		return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer)
 	}
 
 	renderOption := func(idx int, label, value string) string {
@@ -242,7 +239,7 @@ func (m model) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public " // TODO: fix that hack
+	vis := "Public"
 	if m.isPrivate {
 		vis = "Private"
 	}
@@ -298,9 +295,5 @@ func (m model) View() string {
 		form = lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
 	}
 
-	return lg.Place(
-		m.global.Width, m.global.Height,
-		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, header, form, footer),
-	)
+	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer)
 }

@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"strings"
 
+	"client/internal/tui/views/common"
+
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -105,14 +107,13 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.global.Width = msg.Width
-		m.global.Height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
 		case "esc":
 			if m.phase == game.Finished {
 				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
@@ -227,9 +228,5 @@ func (m model) View() string {
 		content = "Waiting for game to start..."
 	}
 
-	return lg.Place(
-		m.global.Width, m.global.Height,
-		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
-	)
+	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
 }

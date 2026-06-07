@@ -3,10 +3,10 @@ package home
 import (
 	"client/internal/tui/router"
 	"client/internal/tui/styles"
+	"client/internal/tui/views/common"
 	"fmt"
 
 	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
 )
 
 type model struct {
@@ -22,14 +22,13 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.global.Width = msg.Width
-		m.global.Height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
 		case "f":
@@ -53,9 +52,5 @@ func (m model) View() string {
 
 	homePageActions := styles.RenderActionFooter(styles.GlobalActions)
 
-	return lg.Place(
-		m.global.Width, m.global.Height,
-		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions),
-	)
+	return common.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions)
 }

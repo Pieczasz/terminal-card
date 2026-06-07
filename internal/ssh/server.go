@@ -50,9 +50,15 @@ func (t *SessionTracker) Disconnect(userID uint) {
 	delete(t.active, userID)
 }
 
-// TODO: maybe create a struct out of these 4 parameters/context like
-func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Manager, gameRegistry *game.Registry) (*ssh.Server, error) {
-	key, err := keygen.New(cfg.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
+type ServerDependencies struct {
+	Config       *config.Config
+	Queries      *db.Queries
+	LobbyManager *lobby.Manager
+	GameRegistry *game.Registry
+}
+
+func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
+	key, err := keygen.New(deps.Config.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
 		return nil, fmt.Errorf("generating a keygen pair error: %w", err)
 	}
@@ -67,7 +73,7 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 
 	server, err := wish.NewServer(
 		// TODO: refactor to normal address instead of localhost
-		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", cfg.ServerPort)),
+		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
 			return true
@@ -76,18 +82,18 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
 					sh(s)
-					user, err := AuthenticateAndLoadUser(queries, s)
+					user, err := AuthenticateAndLoadUser(deps.Queries, s)
 					if err == nil && s.Context().Value("owns_connection") == true {
 						tracker.Disconnect(user.ID)
 						p := &player.Player{Id: fmt.Sprint(user.ID), DatabaseUser: user}
-						lobbyManager.LeaveLobby(p)
+						deps.LobbyManager.LeaveLobby(p)
 					}
 				}
 			},
 
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 				// TODO: refactor getting user multiple times?
-				user, err := AuthenticateAndLoadUser(queries, s)
+				user, err := AuthenticateAndLoadUser(deps.Queries, s)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
@@ -100,7 +106,7 @@ func SetupServer(cfg *config.Config, queries *db.Queries, lobbyManager *lobby.Ma
 
 				s.Context().SetValue("owns_connection", true)
 
-				return tui.Model(*user, queries, lobbyManager, gameRegistry), []tea.ProgramOption{
+				return tui.Model(*user, deps.Queries, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),

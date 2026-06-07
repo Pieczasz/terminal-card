@@ -41,54 +41,56 @@ func (q *Queries) GetUserProfile(userID uint) (*User, error) {
 	return &user, nil
 }
 
-// AuthenticateAndLoadUser loads a user by SSH key fingerprint, creating them if they don't exist.
-// TODO: make this split this into two functions
-func (q *Queries) AuthenticateAndLoadUser(fingerprint, sshUsername string) (*User, error) {
+func (q *Queries) LoadUserByFingerprint(fingerprint string) (*User, *PublicKey, error) {
 	var dbKey PublicKey
-	var currentUser User
-
 	err := q.db.Where("fingerprint = ?", fingerprint).Preload("User").First(&dbKey).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			var existingUser User
-			if err := q.db.Where("username = ?", sshUsername).First(&existingUser).Error; err == nil {
-				return nil, errors.New("Username already taken, please choose another via ssh config")
-			} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-				return nil, err
-			}
-
-			currentUser = User{
-				Username:   sshUsername,
-				LastSeenAt: time.Now(),
-			}
-
-			if err := q.db.Create(&currentUser).Error; err != nil {
-				return nil, err
-			}
-
-			dbKey = PublicKey{
-				Fingerprint: fingerprint,
-				Name:        "Auto-generated Key",
-				UserID:      currentUser.ID,
-				LastUsedAt:  time.Now(),
-			}
-
-			if err := q.db.Create(&dbKey).Error; err != nil {
-				return nil, err
-			}
-		} else {
-			return nil, err
+			return nil, nil, nil
 		}
-	} else {
-		currentUser = dbKey.User
+		return nil, nil, err
+	}
+	return &dbKey.User, &dbKey, nil
+}
 
-		if err := q.db.Model(&currentUser).Update("LastSeenAt", time.Now()).Error; err != nil {
-			slog.Error("unexpected error while trying to update LastSeenAt filed", "user", currentUser, "error", err)
-		}
-		if err := q.db.Model(&dbKey).Update("LastUsedAt", time.Now()).Error; err != nil {
-			slog.Error("unexpected error while trying to update LastUsedAT filed", "user", currentUser, "error", err)
-		}
+func (q *Queries) RegisterUserWithKey(username, fingerprint string) (*User, *PublicKey, error) {
+	var existingUser User
+	err := q.db.Where("username = ?", username).First(&existingUser).Error
+	if err == nil {
+		return nil, nil, errors.New("Username already taken, please choose another via ssh config")
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil, err
 	}
 
-	return &currentUser, nil
+	currentUser := User{
+		Username:   username,
+		LastSeenAt: time.Now(),
+	}
+
+	if err := q.db.Create(&currentUser).Error; err != nil {
+		return nil, nil, err
+	}
+
+	dbKey := PublicKey{
+		Fingerprint: fingerprint,
+		Name:        "Auto-generated Key",
+		UserID:      currentUser.ID,
+		LastUsedAt:  time.Now(),
+	}
+
+	if err := q.db.Create(&dbKey).Error; err != nil {
+		return nil, nil, err
+	}
+
+	return &currentUser, &dbKey, nil
+}
+
+func (q *Queries) UpdateUserActivity(user *User, key *PublicKey) {
+	if err := q.db.Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
+		slog.Error("unexpected error while trying to update LastSeenAt field", "user", user, "error", err)
+	}
+	if err := q.db.Model(key).Update("LastUsedAt", time.Now()).Error; err != nil {
+		slog.Error("unexpected error while trying to update LastUsedAt field", "user", user, "error", err)
+	}
 }

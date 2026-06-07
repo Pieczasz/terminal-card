@@ -8,6 +8,8 @@ import (
 	"client/internal/tui/styles"
 	"fmt"
 
+	"client/internal/tui/views/common"
+
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -38,14 +40,13 @@ func (m createModel) Init() tea.Cmd {
 }
 
 func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+		return m, cmd
+	}
+
 	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		m.global.Width = msg.Width
-		m.global.Height = msg.Height
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
-			return m, tea.Quit
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		case "n":
@@ -122,7 +123,7 @@ func (m createModel) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public " // TODO: make this display properly instead of this hack.
+	vis := "Public"
 	if m.isPrivate {
 		vis = "Private"
 	}
@@ -157,9 +158,5 @@ func (m createModel) View() string {
 	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return lg.Place(
-		m.global.Width, m.global.Height,
-		lg.Center, lg.Center,
-		styles.RenderMainLayout(m.global.Width, m.global.Height, header, content, footer),
-	)
+	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
 }

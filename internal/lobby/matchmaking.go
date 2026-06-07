@@ -127,7 +127,11 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	code := m.generateLobbyCode()
+	code, err := m.generateLobbyCode()
+	if err != nil {
+		return nil, err
+	}
+
 	lobby := &Lobby{
 		leader:      leader,
 		guests:      make([]*player.Player, 0, options.maxPlayers-1),
@@ -151,22 +155,24 @@ func setupDefaultOptions() *options {
 
 const charset = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
-// TODO: make sure that we won't end up in infinite loop
-func (m *Manager) generateLobbyCode() string {
+func (m *Manager) generateLobbyCode() (string, error) {
 	var code string
-	for {
+	maxAttempts := 10
+
+	for range maxAttempts {
 		rawCode := make([]byte, 6)
 		charsetLen := big.NewInt(int64(len(charset)))
-		for i := range code {
+		for i := range rawCode {
 			n, _ := rand.Int(rand.Reader, charsetLen)
 			rawCode[i] = charset[n.Int64()]
 		}
-		code = string(code)
+		code = string(rawCode)
 		if _, exists := m.lobbies[code]; !exists {
-			break
+			return code, nil
 		}
 	}
-	return code
+	slog.Error("failed to generate unique lobby code after maximum attempts", "attempts", maxAttempts)
+	return "", errors.New("failed to generate lobby code")
 }
 
 func (l *Lobby) Code() string                                 { return l.code }
