@@ -49,17 +49,17 @@ func (m Model) renderTopOpponent() string {
 		}
 		o := m.baseState.Opponents[idx]
 		isTurn := m.baseState.CurrentPlayer == o.ID
-		rendered := gameview.RenderOpponent(o, isTurn)
-		return lg.NewStyle().Width(70).Height(4).Align(lg.Center).Render(rendered)
+		rendered := gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
+		return lg.NewStyle().Width(70).Height(6).Align(lg.Center).Render(rendered)
 	}
-	return lg.NewStyle().Width(70).Height(4).Render("")
+	return lg.NewStyle().Width(70).Height(6).Render("")
 }
 
 func (m Model) renderLeftOpponent() string {
 	if len(m.baseState.Opponents) >= 2 {
 		o := m.baseState.Opponents[0]
 		isTurn := m.baseState.CurrentPlayer == o.ID
-		return gameview.RenderOpponent(o, isTurn)
+		return gameview.RenderOpponent(o, isTurn, gameview.OrientationLeft)
 	}
 	return ""
 }
@@ -68,11 +68,11 @@ func (m Model) renderRightOpponent() string {
 	if len(m.baseState.Opponents) == 2 {
 		o := m.baseState.Opponents[1]
 		isTurn := m.baseState.CurrentPlayer == o.ID
-		return gameview.RenderOpponent(o, isTurn)
+		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
 	} else if len(m.baseState.Opponents) >= 3 {
 		o := m.baseState.Opponents[2]
 		isTurn := m.baseState.CurrentPlayer == o.ID
-		return gameview.RenderOpponent(o, isTurn)
+		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
 	}
 	return ""
 }
