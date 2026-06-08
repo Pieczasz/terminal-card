@@ -33,8 +33,12 @@ func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleEscape()
 	case "left", "h":
 		return m.handleLeft()
-	case "right", "k", "l":
+	case "right", "l":
 		return m.handleRight()
+	case "up", "k":
+		return m.handleUp()
+	case "down", "j":
+		return m.handleDown()
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		return m.handleNumberSelection(msg.String())
 	case "enter":
@@ -64,7 +68,7 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 
 func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
-		if m.suitCursor > 0 {
+		if m.suitCursor%2 != 0 {
 			m.suitCursor--
 		}
 		return m, nil
@@ -77,13 +81,33 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 
 func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
-		if m.suitCursor < 3 {
+		if m.suitCursor%2 == 0 {
 			m.suitCursor++
 		}
 		return m, nil
 	}
 	if m.selectedCardIdx < len(m.baseState.Hand)-1 {
 		m.selectedCardIdx++
+	}
+	return m, nil
+}
+
+func (m Model) handleUp() (tea.Model, tea.Cmd) {
+	if m.pickingSuit {
+		if m.suitCursor >= 2 {
+			m.suitCursor -= 2
+		}
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m Model) handleDown() (tea.Model, tea.Cmd) {
+	if m.pickingSuit {
+		if m.suitCursor < 2 {
+			m.suitCursor += 2
+		}
+		return m, nil
 	}
 	return m, nil
 }

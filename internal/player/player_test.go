@@ -1,0 +1,37 @@
+package player
+
+import (
+	"testing"
+
+	"terminalcard/internal/db"
+
+	"github.com/stretchr/testify/assert"
+	"gorm.io/gorm"
+)
+
+func TestPlayer_Compare(t *testing.T) {
+	p1 := &Player{DatabaseUser: &db.User{Model: gorm.Model{ID: 1}}}
+	p2 := &Player{DatabaseUser: &db.User{Model: gorm.Model{ID: 1}}}
+	p3 := &Player{DatabaseUser: &db.User{Model: gorm.Model{ID: 2}}}
+
+	t.Run("identical IDs", func(t *testing.T) {
+		got := p1.Compare(p2)
+		assert.True(t, got)
+	})
+
+	t.Run("different IDs", func(t *testing.T) {
+		got := p1.Compare(p3)
+		assert.False(t, got)
+	})
+
+	t.Run("nil receiver", func(t *testing.T) {
+		var pNil *Player
+		got := pNil.Compare(p1)
+		assert.False(t, got)
+	})
+
+	t.Run("nil other", func(t *testing.T) {
+		got := p1.Compare(nil)
+		assert.False(t, got)
+	})
+}

@@ -42,12 +42,12 @@ func renderTopCards(count int) string {
 	if count <= 0 {
 		return ""
 	}
-	
+
 	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
 	botLine := lg.NewStyle().Foreground(cardColor).Render("╰" + strings.Repeat("┴", count-1) + "───────╯")
-	
+
 	edge := lg.NewStyle().Foreground(cardColor).Render("│" + strings.Repeat("│", count-1))
 	body := lg.NewStyle().Foreground(textColor).Render("░░░░░░░")
 	rightEdge := lg.NewStyle().Foreground(cardColor).Render("│")
@@ -74,7 +74,7 @@ func renderLeftCards(count int) string {
 	if count <= 0 {
 		return ""
 	}
-	
+
 	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
@@ -84,7 +84,7 @@ func renderLeftCards(count int) string {
 	cardBody := lg.NewStyle().Foreground(textColor).Render("░░░░░") + lg.NewStyle().Foreground(cardColor).Render("│")
 
 	var sb strings.Builder
-	sb.Grow((count+3) * 20) // Pre-allocate approximate capacity
+	sb.Grow((count + 3) * 20) // Pre-allocate approximate capacity
 
 	sb.WriteString(topEdge)
 	sb.WriteByte('\n')
@@ -109,7 +109,7 @@ func renderRightCards(count int) string {
 	if count <= 0 {
 		return ""
 	}
-	
+
 	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
@@ -119,7 +119,7 @@ func renderRightCards(count int) string {
 	cardBody := lg.NewStyle().Foreground(cardColor).Render("│") + lg.NewStyle().Foreground(textColor).Render("░░░░░")
 
 	var sb strings.Builder
-	sb.Grow((count+3) * 20)
+	sb.Grow((count + 3) * 20)
 
 	sb.WriteString(topEdge)
 	sb.WriteByte('\n')

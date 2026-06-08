@@ -3,13 +3,10 @@ package db
 import (
 	"errors"
 	"log/slog"
-	"regexp"
 	"time"
 
 	"gorm.io/gorm"
 )
-
-var usernameRegex = regexp.MustCompile(`^[A-Za-z0-9_]+$`)
 
 // Queries provides abstraction layer for database operations
 type Queries struct {
@@ -57,17 +54,14 @@ func (q *Queries) LoadUserByFingerprint(fingerprint string) (*User, *PublicKey, 
 }
 
 func (q *Queries) RegisterUserWithKey(username, fingerprint string) (*User, *PublicKey, error) {
-	if len(username) > 16 {
-		return nil, nil, errors.New("Username cannot exceed 16 characters")
-	}
-	if !usernameRegex.MatchString(username) {
-		return nil, nil, errors.New("Username can only contain English letters, numbers, and underscores")
+	if err := ValidateUsername(username); err != nil {
+		return nil, nil, err
 	}
 
 	var existingUser User
 	err := q.db.Where("username = ?", username).First(&existingUser).Error
 	if err == nil {
-		return nil, nil, errors.New("Username already taken, please choose another via ssh config")
+		return nil, nil, errors.New("username already taken, please choose another via ssh config")
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil, err
@@ -84,7 +78,7 @@ func (q *Queries) RegisterUserWithKey(username, fingerprint string) (*User, *Pub
 
 	dbKey := PublicKey{
 		Fingerprint: fingerprint,
-		Name:        "Auto-generated Key",
+		Name:        "auto-generated key",
 		UserID:      currentUser.ID,
 		LastUsedAt:  time.Now(),
 	}

@@ -1,0 +1,66 @@
+package observability
+
+import (
+	"context"
+	"net"
+	"testing"
+
+	"terminalcard/internal/config"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	otellog "go.opentelemetry.io/otel/log"
+	"go.opentelemetry.io/otel/log/global"
+	collogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+)
+
+type mockLogsService struct {
+	collogpb.UnimplementedLogsServiceServer
+	requests []*collogpb.ExportLogsServiceRequest
+}
+
+func (m *mockLogsService) Export(ctx context.Context, req *collogpb.ExportLogsServiceRequest) (*collogpb.ExportLogsServiceResponse, error) {
+	m.requests = append(m.requests, req)
+	return &collogpb.ExportLogsServiceResponse{}, nil
+}
+
+func TestOTel_Integration(t *testing.T) {
+	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
+	mockSvc := &mockLogsService{}
+	collogpb.RegisterLogsServiceServer(grpcServer, mockSvc)
+
+	go func() {
+		_ = grpcServer.Serve(lis)
+	}()
+	defer grpcServer.Stop()
+
+	addr := lis.Addr().String()
+	cfg := &config.Config{
+		OTelEndpoint: addr,
+	}
+
+	ctx := context.Background()
+	shutdown, err := SetupOTel(ctx, cfg)
+	require.NoError(t, err)
+
+	logger := global.Logger("test-logger")
+
+	var record otellog.Record
+	record.SetBody(otellog.StringValue("hello from test"))
+
+	logger.Emit(ctx, record)
+
+	err = shutdown(ctx)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, mockSvc.requests, "expected mock server to receive logs")
+	req := mockSvc.requests[0]
+
+	require.NotEmpty(t, req.ResourceLogs)
+	assert.Equal(t, "terminal-card-server", req.ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue())
+}
