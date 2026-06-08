@@ -81,7 +81,7 @@ func RenderCard(card deck.Card, selected bool) string {
 	borderStyle := lg.RoundedBorder()
 	cardStyle := lg.NewStyle().
 		Border(borderStyle).
-		BorderForeground(lg.Color("#555555")).
+		BorderForeground(lg.Color("#EEEEEE")).
 		Padding(0, 1)
 
 	if selected {

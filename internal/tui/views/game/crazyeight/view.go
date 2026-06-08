@@ -14,31 +14,36 @@ func (m Model) View() string {
 		return gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner)
 	}
 
-	boardView := m.renderBoard()
+	topHeight := m.global.Height / 3
+	midHeight := m.global.Height / 3
+	botHeight := m.global.Height - topHeight - midHeight
+
+	topArea := lg.Place(m.global.Width, topHeight, lg.Center, lg.Top, lg.NewStyle().MarginTop(4).Render(m.renderTopOpponent()))
+	midArea := m.renderMiddleLayer(midHeight)
+	
 	mySection := m.renderPlayerSection()
+	helperText := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).Render("←/h: left | →/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
+	fullPlayerArea := lg.NewStyle().MarginBottom(3).Render(lg.JoinVertical(lg.Center, mySection, helperText))
 
-	content := lg.JoinVertical(lg.Center, boardView, mySection)
-	helperText := "←/h: left | →/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
+	botArea := lg.Place(m.global.Width, botHeight, lg.Center, lg.Bottom, fullPlayerArea)
 
-	return gameview.RenderGameScreen(m.global.Width, m.global.Height, content, helperText)
+	return lg.JoinVertical(lg.Left, topArea, midArea, botArea)
 }
 
-func (m Model) renderBoard() string {
-	topLayer := m.renderTopOpponent()
-	middleLayer := m.renderMiddleLayer()
-	return lg.JoinVertical(lg.Center, topLayer, middleLayer)
-}
-
-func (m Model) renderMiddleLayer() string {
+func (m Model) renderMiddleLayer(height int) string {
 	leftOpponent := m.renderLeftOpponent()
 	rightOpponent := m.renderRightOpponent()
 	centerStack := m.renderCenterTable()
 
-	return lg.JoinHorizontal(lg.Center,
-		lg.NewStyle().Width(20).Align(lg.Center).Render(leftOpponent),
-		lg.NewStyle().Width(30).Align(lg.Center).Render(centerStack),
-		lg.NewStyle().Width(20).Align(lg.Center).Render(rightOpponent),
-	)
+	w1 := m.global.Width / 3
+	w2 := m.global.Width / 3
+	w3 := m.global.Width - w1 - w2
+
+	leftArea := lg.Place(w1, height, lg.Left, lg.Center, leftOpponent)
+	centerArea := lg.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
+	rightArea := lg.Place(w3, height, lg.Right, lg.Center, rightOpponent)
+
+	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
 }
 
 func (m Model) renderTopOpponent() string {
@@ -49,10 +54,9 @@ func (m Model) renderTopOpponent() string {
 		}
 		o := m.baseState.Opponents[idx]
 		isTurn := m.baseState.CurrentPlayer == o.ID
-		rendered := gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
-		return lg.NewStyle().Width(70).Height(6).Align(lg.Center).Render(rendered)
+		return gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
 	}
-	return lg.NewStyle().Width(70).Height(6).Render("")
+	return ""
 }
 
 func (m Model) renderLeftOpponent() string {

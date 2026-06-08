@@ -43,10 +43,9 @@ func renderTopCards(count int) string {
 		return ""
 	}
 	
-	cardColor := lg.Color("#444444")
+	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
-	topLine := lg.NewStyle().Foreground(cardColor).Render("╭" + strings.Repeat("┬", count-1) + "───────╮")
 	botLine := lg.NewStyle().Foreground(cardColor).Render("╰" + strings.Repeat("┴", count-1) + "───────╯")
 	
 	edge := lg.NewStyle().Foreground(cardColor).Render("│" + strings.Repeat("│", count-1))
@@ -56,9 +55,11 @@ func renderTopCards(count int) string {
 	midLine := edge + body + rightEdge
 
 	var sb strings.Builder
-	sb.Grow(len(topLine) + len(midLine)*2 + len(botLine) + 3)
+	sb.Grow(len(midLine)*4 + len(botLine) + 5)
 
-	sb.WriteString(topLine)
+	sb.WriteString(midLine)
+	sb.WriteByte('\n')
+	sb.WriteString(midLine)
 	sb.WriteByte('\n')
 	sb.WriteString(midLine)
 	sb.WriteByte('\n')
@@ -74,7 +75,7 @@ func renderLeftCards(count int) string {
 		return ""
 	}
 	
-	cardColor := lg.Color("#444444")
+	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
 	topEdge := lg.NewStyle().Foreground(cardColor).Render("─────╮")
@@ -95,6 +96,10 @@ func renderLeftCards(count int) string {
 	sb.WriteByte('\n')
 	sb.WriteString(cardBody)
 	sb.WriteByte('\n')
+	sb.WriteString(cardBody)
+	sb.WriteByte('\n')
+	sb.WriteString(cardBody)
+	sb.WriteByte('\n')
 	sb.WriteString(botEdge)
 
 	return sb.String()
@@ -105,7 +110,7 @@ func renderRightCards(count int) string {
 		return ""
 	}
 	
-	cardColor := lg.Color("#444444")
+	cardColor := lg.Color("#EEEEEE")
 	textColor := lg.Color("#AAAAAA")
 
 	topEdge := lg.NewStyle().Foreground(cardColor).Render("╭─────")
@@ -122,6 +127,10 @@ func renderRightCards(count int) string {
 		sb.WriteString(midEdge)
 		sb.WriteByte('\n')
 	}
+	sb.WriteString(cardBody)
+	sb.WriteByte('\n')
+	sb.WriteString(cardBody)
+	sb.WriteByte('\n')
 	sb.WriteString(cardBody)
 	sb.WriteByte('\n')
 	sb.WriteString(cardBody)
@@ -154,9 +163,11 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 	if orientation == OrientationTop {
 		// Below the deck on top
 		return lg.JoinVertical(lg.Center, cardsView, infoView)
-	} else {
+	} else if orientation == OrientationLeft {
 		// Above the deck on left and right side
-		return lg.JoinVertical(lg.Center, infoView, cardsView)
+		return lg.JoinVertical(lg.Left, infoView, cardsView)
+	} else {
+		return lg.JoinVertical(lg.Right, infoView, cardsView)
 	}
 }
 

@@ -9,7 +9,7 @@ import (
 type User struct {
 	gorm.Model
 	LastSeenAt time.Time
-	Username   string `gorm:"uniqueIndex"`
+	Username   string `gorm:"uniqueIndex;type:varchar(16);check:username_valid,username ~ '^[A-Za-z0-9_]+$'"`
 	PublicKeys []PublicKey
 	Rankings   []Ranking
 }
