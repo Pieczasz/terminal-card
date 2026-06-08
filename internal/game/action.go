@@ -1,6 +1,6 @@
 package game
 
-import "client/internal/deck"
+import "terminalcard/internal/deck"
 
 type Action struct {
 	Type   ActionType

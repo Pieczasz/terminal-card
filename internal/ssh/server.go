@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"sync"
 
-	"client/internal/config"
-	"client/internal/db"
-	"client/internal/game"
-	"client/internal/lobby"
-	"client/internal/player"
-	"client/internal/tui"
+	"terminalcard/internal/config"
+	"terminalcard/internal/db"
+	"terminalcard/internal/game"
+	"terminalcard/internal/lobby"
+	"terminalcard/internal/player"
+	"terminalcard/internal/tui"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/keygen"

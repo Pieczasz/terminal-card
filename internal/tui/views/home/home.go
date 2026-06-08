@@ -1,10 +1,10 @@
 package home
 
 import (
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
-	"client/internal/tui/views/common"
 	"fmt"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
+	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

@@ -1,6 +1,6 @@
 package crazyeight
 
-import "client/internal/deck"
+import "terminalcard/internal/deck"
 
 type State struct {
 	Direction   int

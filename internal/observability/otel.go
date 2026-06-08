@@ -1,10 +1,10 @@
 package observability
 
 import (
-	"client/internal/config"
 	"context"
 	"errors"
 	"fmt"
+	"terminalcard/internal/config"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"

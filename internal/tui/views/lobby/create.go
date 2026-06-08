@@ -1,14 +1,14 @@
 package lobby
 
 import (
-	"client/internal/db"
-	"client/internal/lobby"
-	"client/internal/player"
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
 	"fmt"
+	"terminalcard/internal/db"
+	"terminalcard/internal/lobby"
+	"terminalcard/internal/player"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
 
-	"client/internal/tui/views/common"
+	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -28,7 +28,7 @@ func NewCreate(global router.GlobalContext) tea.Model {
 	return createModel{
 		global:      global,
 		cursor:      0, // 0: Game, 1: Players, 2: Visibility, 3: Create Button
-		isPrivate:   false,
+		isPrivate:   true,
 		maxPlayers:  4,
 		gameOptions: []string{"Crazy Eights"}, //TODO: automate this
 		gameIndex:   0,
@@ -123,9 +123,9 @@ func (m createModel) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public"
+	vis := fmt.Sprintf("%-7s", "Public")
 	if m.isPrivate {
-		vis = "Private"
+		vis = fmt.Sprintf("%-7s", "Private")
 	}
 	visStr := renderOption(2, "Visibility", vis)
 

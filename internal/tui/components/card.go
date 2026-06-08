@@ -1,8 +1,8 @@
 package components
 
 import (
-	"client/internal/deck"
 	"strings"
+	"terminalcard/internal/deck"
 
 	lg "github.com/charmbracelet/lipgloss"
 )

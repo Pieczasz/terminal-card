@@ -1,13 +1,13 @@
 package lobby
 
 import (
-	"client/internal/player"
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
 	"fmt"
 	"strings"
+	"terminalcard/internal/player"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
 
-	"client/internal/tui/views/common"
+	"terminalcard/internal/tui/views/common"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"

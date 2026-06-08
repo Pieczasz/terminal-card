@@ -1,9 +1,9 @@
 package router
 
 import (
-	"client/internal/db"
-	"client/internal/game"
-	"client/internal/lobby"
+	"terminalcard/internal/db"
+	"terminalcard/internal/game"
+	"terminalcard/internal/lobby"
 
 	tea "github.com/charmbracelet/bubbletea"
 )

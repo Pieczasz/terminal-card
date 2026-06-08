@@ -3,14 +3,14 @@
 package game
 
 import (
-	"client/internal/broadcaster"
-	"client/internal/deck"
-	"client/internal/player"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
 	"sync"
+	"terminalcard/internal/broadcaster"
+	"terminalcard/internal/deck"
+	"terminalcard/internal/player"
 )
 
 type Engine struct {
@@ -144,4 +144,50 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	})
 
 	return nil
+}
+
+func (e *Engine) RemovePlayer(playerId string) {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+
+	if e.state.Phase == Finished {
+		return
+	}
+
+	playerIndex := -1
+	for i, p := range e.state.Players {
+		if p.Id == playerId {
+			playerIndex = i
+			break
+		}
+	}
+
+	if playerIndex == -1 {
+		return
+	}
+
+	// Remove player from state
+	e.state.Players = append(e.state.Players[:playerIndex], e.state.Players[playerIndex+1:]...)
+
+	// Inform turn manager
+	e.turnManager.RemovePlayer(playerIndex)
+	e.state.CurrentTurn = e.turnManager.Current()
+
+	// If only 1 player remains, finish game
+	if len(e.state.Players) == 1 {
+		e.state.Phase = Finished
+		e.state.Winner = e.state.Players[0]
+		e.broadcaster.Broadcast(Event{
+			Type:     EventGameEnded,
+			PlayerID: e.state.Winner.Id,
+		})
+	} else {
+		// Broadcast that turn might have advanced due to removal
+		e.broadcaster.Broadcast(Event{
+			Sequence: int64(e.turnManager.Current()),
+			Type:     EventTurnAdvanced,
+		})
+	}
 }

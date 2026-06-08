@@ -4,7 +4,7 @@ import (
 	"errors"
 	"log/slog"
 
-	"client/internal/db"
+	"terminalcard/internal/db"
 
 	"github.com/charmbracelet/ssh"
 	cryptossh "golang.org/x/crypto/ssh"

@@ -1,7 +1,7 @@
 package game
 
 import (
-	"client/internal/deck"
+	"terminalcard/internal/deck"
 )
 
 type Rules interface {

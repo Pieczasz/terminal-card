@@ -4,10 +4,6 @@
 package lobby
 
 import (
-	"client/internal/broadcaster"
-	"client/internal/db"
-	"client/internal/game"
-	"client/internal/player"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -15,16 +11,21 @@ import (
 	"math/big"
 	"slices"
 	"sync"
+	"terminalcard/internal/broadcaster"
+	"terminalcard/internal/db"
+	"terminalcard/internal/game"
+	"terminalcard/internal/player"
 )
 
 type Lobby struct {
-	mu          sync.RWMutex
-	broadcaster *broadcaster.Broadcaster[Event]
-	leader      *player.Player
-	guests      []*player.Player
-	options     *options
-	code        string
-	state       state
+	mu           sync.RWMutex
+	broadcaster  *broadcaster.Broadcaster[Event]
+	leader       *player.Player
+	guests       []*player.Player
+	options      *options
+	code         string
+	state        state
+	activeEngine *game.Engine
 }
 
 type Event struct {
@@ -279,6 +280,10 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	if l.activeEngine != nil {
+		l.activeEngine.RemovePlayer(p.Id)
+	}
+
 	if l.leader.Compare(p) {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
@@ -396,6 +401,7 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 	}
 
 	l.state = InGame
+	l.activeEngine = engine
 
 	l.broadcaster.Broadcast(Event{
 		Type:    "GAME_STARTED",

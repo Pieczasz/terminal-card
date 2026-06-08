@@ -1,12 +1,12 @@
 package profile
 
 import (
-	"client/internal/db"
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
 	"fmt"
+	"terminalcard/internal/db"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
 
-	"client/internal/tui/views/common"
+	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"

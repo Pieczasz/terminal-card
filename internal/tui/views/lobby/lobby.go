@@ -1,14 +1,15 @@
 package lobby
 
 import (
-	"client/internal/game"
-	"client/internal/lobby"
-	"client/internal/player"
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
 	"fmt"
+	"strings"
+	"terminalcard/internal/game"
+	"terminalcard/internal/lobby"
+	"terminalcard/internal/player"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
 
-	"client/internal/tui/views/common"
+	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -167,7 +168,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if msg.Type == "GAME_STARTED" {
 			engine := msg.Payload.(*game.Engine)
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "game", Context: engine} }
+
+			// Format game name for routing (e.g. "Crazy Eights" -> "game_crazy_eights")
+			gameRouteName := "game_" + strings.ReplaceAll(strings.ToLower(m.currentLobby.GameName()), " ", "_")
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: gameRouteName, Context: engine} }
 		}
 		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
 			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
@@ -239,9 +243,9 @@ func (m model) View() string {
 	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
 	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
-	vis := "Public"
+	vis := fmt.Sprintf("%-7s", "Public")
 	if m.isPrivate {
-		vis = "Private"
+		vis = fmt.Sprintf("%-7s", "Private")
 	}
 	visStr := renderOption(2, "Visibility", vis)
 

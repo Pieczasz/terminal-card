@@ -1,8 +1,8 @@
 package player
 
 import (
-	"client/internal/db"
-	"client/internal/deck"
+	"terminalcard/internal/db"
+	"terminalcard/internal/deck"
 )
 
 type Player struct {

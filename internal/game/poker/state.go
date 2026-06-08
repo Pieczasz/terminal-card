@@ -1,9 +1,9 @@
 package poker
 
 import (
-	"client/internal/deck"
-	"client/internal/game"
-	"client/internal/player"
+	"terminalcard/internal/deck"
+	"terminalcard/internal/game"
+	"terminalcard/internal/player"
 )
 
 type State struct {

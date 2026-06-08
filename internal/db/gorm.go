@@ -1,11 +1,11 @@
 package db
 
 import (
-	"client/internal/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 	"log/slog"
+	"terminalcard/internal/config"
 )
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {

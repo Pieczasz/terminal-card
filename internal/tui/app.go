@@ -1,16 +1,16 @@
 package tui
 
 import (
-	"client/internal/db"
-	"client/internal/game"
-	internal_lobby "client/internal/lobby"
-	"client/internal/player"
-	"client/internal/tui/router"
-	gameview "client/internal/tui/views/game"
-	"client/internal/tui/views/home"
-	"client/internal/tui/views/lobby"
-	"client/internal/tui/views/profile"
 	"fmt"
+	"terminalcard/internal/db"
+	"terminalcard/internal/game"
+	internal_lobby "terminalcard/internal/lobby"
+	"terminalcard/internal/player"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/views/game/crazyeight"
+	"terminalcard/internal/tui/views/home"
+	"terminalcard/internal/tui/views/lobby"
+	"terminalcard/internal/tui/views/profile"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -55,12 +55,12 @@ func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manag
 		return lobby.New(g, l)
 	})
 
-	r.Register("game", func(g router.GlobalContext, ctx any) tea.Model {
+	r.Register("game_crazy_eights", func(g router.GlobalContext, ctx any) tea.Model {
 		// ctx should be the *game.Engine
 		e, _ := ctx.(*game.Engine)
-		return gameview.New(g, e)
+		return crazyeight.New(g, e)
 	})
-
+	//TODO: after adding new games, register their view here
 	r.Goto("home", nil)
 
 	return r

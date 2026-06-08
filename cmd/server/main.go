@@ -1,15 +1,15 @@
 package main
 
 import (
-	"client/internal/config"
-	"client/internal/db"
-	"client/internal/game"
-	"client/internal/game/crazyeight"
-	"client/internal/lobby"
-	"client/internal/observability"
-	"client/internal/ssh"
 	"context"
 	"log/slog"
+	"terminalcard/internal/config"
+	"terminalcard/internal/db"
+	"terminalcard/internal/game"
+	"terminalcard/internal/game/crazyeight"
+	"terminalcard/internal/lobby"
+	"terminalcard/internal/observability"
+	"terminalcard/internal/ssh"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/termenv"

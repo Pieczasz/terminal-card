@@ -1,11 +1,11 @@
 package crazyeight
 
 import (
-	"client/internal/deck"
-	"client/internal/game"
 	"errors"
 	"log/slog"
 	"slices"
+	"terminalcard/internal/deck"
+	"terminalcard/internal/game"
 )
 
 type CrazyEightsRules struct{}
@@ -116,6 +116,8 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 
 		if card.Rank != deck.Eight {
 			extra.CurrentSuit = card.Suit
+		} else if action.Suit != deck.NoSuit {
+			extra.CurrentSuit = action.Suit
 		}
 
 	case game.ActionDrawCard:

@@ -3,9 +3,9 @@
 package game
 
 import (
-	"client/internal/deck"
-	"client/internal/player"
 	"sync"
+	"terminalcard/internal/deck"
+	"terminalcard/internal/player"
 )
 
 type State struct {

@@ -1,4 +1,4 @@
-module client
+module terminalcard
 
 go 1.26.4
 

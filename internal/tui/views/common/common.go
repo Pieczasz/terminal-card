@@ -1,8 +1,8 @@
 package common
 
 import (
-	"client/internal/tui/router"
-	"client/internal/tui/styles"
+	"terminalcard/internal/tui/router"
+	"terminalcard/internal/tui/styles"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"

@@ -2,8 +2,8 @@ package poker
 
 //
 // import (
-// 	"client/internal/deck"
-// 	"client/internal/game"
+// 	"terminalcard/internal/deck"
+// 	"terminalcard/internal/game"
 // 	"errors"
 // 	"slices"
 // )
