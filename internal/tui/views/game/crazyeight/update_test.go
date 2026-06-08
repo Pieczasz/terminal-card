@@ -1,9 +1,10 @@
 package crazyeight
 
 import (
+	"testing"
+
 	"terminalcard/internal/deck"
 	gameview "terminalcard/internal/tui/views/game"
-	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"

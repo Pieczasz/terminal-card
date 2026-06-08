@@ -1,4 +1,4 @@
-// Package deck contains implementation for card (suit and rank) as well as deck builder funcitonality
+// Package deck contains implementation for card (suit and rank) as well as deck builder functionality
 // shuffling and deck manipulation methods.
 package deck
 

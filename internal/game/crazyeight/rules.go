@@ -129,7 +129,7 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 	}
 }
 
-func (r *CrazyEightsRules) PostActionCondition(state *game.State, action game.Action) error {
+func (r *CrazyEightsRules) PostActionCondition(_ *game.State, _ game.Action) error {
 	return nil
 }
 

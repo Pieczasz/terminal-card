@@ -8,7 +8,7 @@ import (
 	"gorm.io/gorm"
 )
 
-// Queries provides abstraction layer for database operations
+// Queries provides abstraction layer for database operations.
 type Queries struct {
 	db *gorm.DB
 }
@@ -18,7 +18,7 @@ func NewQueries(db *gorm.DB) *Queries {
 }
 
 // GetBestPlayers returns the top players across all games, or filtered by gameID.
-// TODO: cache this, maybe like top 10 of each
+// TODO: cache this, maybe like top 10 of each.
 func (q *Queries) GetBestPlayers(limit int) ([]Ranking, error) {
 	var rankings []Ranking
 	err := q.db.Preload("User").Preload("Game").

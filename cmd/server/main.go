@@ -67,5 +67,4 @@ func main() {
 		slog.Error("server: starting ssh server error", "error", err)
 		panic(err)
 	}
-
 }

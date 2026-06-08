@@ -1,17 +1,18 @@
 package crazyeight
 
 import (
+	"testing"
+
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
 	"terminalcard/internal/player"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func createTestState() *game.State {
 	rules := &CrazyEightsRules{}
-	players := []*player.Player{{Id: "p1", Cards: []deck.Card{
+	players := []*player.Player{{ID: "p1", Cards: []deck.Card{
 		{Rank: deck.Two, Suit: deck.Spades},
 		{Rank: deck.King, Suit: deck.Hearts},
 		{Rank: deck.Eight, Suit: deck.Diamonds},

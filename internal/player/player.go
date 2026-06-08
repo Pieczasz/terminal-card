@@ -6,7 +6,7 @@ import (
 )
 
 type Player struct {
-	Id           string
+	ID           string
 	DatabaseUser *db.User
 	Cards        []deck.Card
 }

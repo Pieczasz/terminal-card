@@ -5,7 +5,6 @@ import (
 	"terminalcard/internal/db"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-
 	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -74,7 +73,7 @@ func (m model) View() string {
 	}
 
 	innerWidth := styles.GetInnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureAscii("User Profile", innerWidth)
+	titleFig := styles.RenderFigureASCII("User Profile", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))

@@ -7,7 +7,6 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-
 	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -30,7 +29,7 @@ func NewCreate(global router.GlobalContext) tea.Model {
 		cursor:      0, // 0: Game, 1: Players, 2: Visibility, 3: Create Button
 		isPrivate:   true,
 		maxPlayers:  4,
-		gameOptions: []string{"Crazy Eights"}, //TODO: automate this
+		gameOptions: []string{"Crazy Eights"}, // TODO: automate this
 		gameIndex:   0,
 	}
 }
@@ -92,7 +91,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.cursor == 3 {
 				// Submit Create
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				gameOpt := lobby.WithCardGame(&db.Game{Name: m.gameOptions[m.gameIndex]})
 				maxOpt := lobby.WithMaxPlayers(m.maxPlayers)
 				privOpt := lobby.WithPrivate(m.isPrivate)
@@ -151,7 +150,7 @@ func (m createModel) View() string {
 	}
 
 	innerWidth := styles.GetInnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureAscii("Create New Lobby", innerWidth)
+	titleFig := styles.RenderFigureASCII("Create New Lobby", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 

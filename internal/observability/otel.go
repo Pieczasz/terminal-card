@@ -55,12 +55,16 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 }
 
 func newResource() (*resource.Resource, error) {
-	return resource.Merge(resource.Default(),
+	r, err := resource.Merge(resource.Default(),
 		resource.NewWithAttributes(resource.Default().SchemaURL(),
-			//TODO: change this in prod/setup envs
+			// TODO: change this in prod/setup envs
 			semconv.ServiceName("terminal-card-server"),
 			semconv.ServiceVersion("1.0.0"),
 		))
+	if err != nil {
+		return nil, fmt.Errorf("failed to merge default resource attributes: %w", err)
+	}
+	return r, nil
 }
 
 func newLoggerProvider(ctx context.Context, cfg *config.Config, res *resource.Resource) (*sdklog.LoggerProvider, error) {
@@ -69,7 +73,7 @@ func newLoggerProvider(ctx context.Context, cfg *config.Config, res *resource.Re
 		otlploggrpc.WithEndpoint(cfg.OTelEndpoint),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create otlp log exporter: %w", err)
 	}
 
 	loggerProvider := sdklog.NewLoggerProvider(

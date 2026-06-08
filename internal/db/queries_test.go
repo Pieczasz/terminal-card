@@ -1,8 +1,9 @@
 package db
 
 import (
-	"terminalcard/internal/testutil"
 	"testing"
+
+	"terminalcard/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 )

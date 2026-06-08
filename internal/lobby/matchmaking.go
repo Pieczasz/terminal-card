@@ -62,9 +62,9 @@ func WithCardGame(game *db.Game) Option {
 	}
 }
 
-func WithMaxPlayers(max int) Option {
+func WithMaxPlayers(limit int) Option {
 	return func(o *options) {
-		o.maxPlayers = max
+		o.maxPlayers = limit
 	}
 }
 
@@ -89,9 +89,9 @@ func (l *Lobby) SetPrivate(isPrivate bool) {
 	}
 }
 
-func (l *Lobby) SetMaxPlayers(max int) {
+func (l *Lobby) SetMaxPlayers(limit int) {
 	l.mu.Lock()
-	l.options.maxPlayers = max
+	l.options.maxPlayers = limit
 	l.mu.Unlock()
 	if l.broadcaster != nil {
 		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
@@ -142,7 +142,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	}
 
 	m.lobbies[code] = lobby
-	m.playerLobby[leader.Id] = lobby
+	m.playerLobby[leader.ID] = lobby
 	return lobby, nil
 }
 
@@ -197,7 +197,7 @@ func (l *Lobby) CurrentPlayers() int {
 	return 1 + len(l.guests)
 }
 
-// TODO: optimize this
+// TODO: optimize this.
 func (m *Manager) PublicLobbies() []*Lobby {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -224,7 +224,7 @@ func (m *Manager) JoinLobbyByCode(code string, player *player.Player) error {
 	err = lobby.addGuest(player)
 	if err == nil {
 		m.mu.Lock()
-		m.playerLobby[player.Id] = lobby
+		m.playerLobby[player.ID] = lobby
 		m.mu.Unlock()
 	}
 	return err
@@ -232,7 +232,7 @@ func (m *Manager) JoinLobbyByCode(code string, player *player.Player) error {
 
 func (m *Manager) FindLobbyByPlayer(player *player.Player) *Lobby {
 	m.mu.RLock()
-	lobby, exists := m.playerLobby[player.Id]
+	lobby, exists := m.playerLobby[player.ID]
 	m.mu.RUnlock()
 
 	if exists {
@@ -241,8 +241,8 @@ func (m *Manager) FindLobbyByPlayer(player *player.Player) *Lobby {
 		}
 		// Lazy cleanup if player was removed (e.g. kicked)
 		m.mu.Lock()
-		if m.playerLobby[player.Id] == lobby {
-			delete(m.playerLobby, player.Id)
+		if m.playerLobby[player.ID] == lobby {
+			delete(m.playerLobby, player.ID)
 		}
 		m.mu.Unlock()
 	}
@@ -281,7 +281,7 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	defer l.mu.Unlock()
 
 	if l.activeEngine != nil {
-		l.activeEngine.RemovePlayer(p.Id)
+		l.activeEngine.RemovePlayer(p.ID)
 	}
 
 	if l.leader.Compare(p) {
@@ -320,7 +320,7 @@ func (m *Manager) LeaveLobby(p *player.Player) {
 		m.RemoveLobby(l.Code())
 	} else {
 		m.mu.Lock()
-		delete(m.playerLobby, p.Id)
+		delete(m.playerLobby, p.ID)
 		m.mu.Unlock()
 	}
 }
@@ -340,9 +340,9 @@ func (m *Manager) RemoveLobby(code string) {
 		l.broadcaster = nil
 	}
 
-	delete(m.playerLobby, l.leader.Id)
+	delete(m.playerLobby, l.leader.ID)
 	for _, g := range l.guests {
-		delete(m.playerLobby, g.Id)
+		delete(m.playerLobby, g.ID)
 	}
 	l.mu.Unlock()
 
@@ -382,7 +382,7 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 	rules, err := registry.Create(l.options.cardGame.Name)
 	if err != nil {
 		slog.Error("how did we end up here, user selected a game that doesn't exist", "error", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to create game rules: %w", err)
 	}
 
 	totalPlayers := len(l.guests) + 1

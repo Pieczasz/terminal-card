@@ -43,11 +43,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	innerWidth := styles.GetInnerWidth(m.global.Width)
 
-	titleFig := styles.RenderFigureAscii("Terminal Cards", innerWidth)
+	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 
 	welcomeUser := fmt.Sprintf("Welcome %s", m.global.User.Username)
-	welcomeFig := styles.RenderFigureAscii(welcomeUser, innerWidth)
+	welcomeFig := styles.RenderFigureASCII(welcomeUser, innerWidth)
 	welcomeText := styles.Welcome.Render(welcomeFig)
 
 	homePageActions := styles.RenderActionFooter(styles.GlobalActions)

@@ -160,13 +160,14 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 		cardsView = renderRightCards(o.HandSize)
 	}
 
-	if orientation == OrientationTop {
+	switch orientation {
+	case OrientationTop:
 		// Below the deck on top
 		return lg.JoinVertical(lg.Center, cardsView, infoView)
-	} else if orientation == OrientationLeft {
+	case OrientationLeft:
 		// Above the deck on left and right side
 		return lg.JoinVertical(lg.Left, infoView, cardsView)
-	} else {
+	default:
 		return lg.JoinVertical(lg.Right, infoView, cardsView)
 	}
 }
@@ -194,7 +195,7 @@ func RenderGameScreen(width, height int, content string, helperText string) stri
 
 func RenderWaitingScreen(width, height int, phase game.Phase, winner string) string {
 	innerWidth := styles.GetInnerWidth(width)
-	titleFig := styles.RenderFigureAscii("Active Game", innerWidth)
+	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))

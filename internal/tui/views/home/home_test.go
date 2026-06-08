@@ -1,8 +1,9 @@
 package home
 
 import (
-	"terminalcard/internal/tui/router"
 	"testing"
+
+	"terminalcard/internal/tui/router"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"

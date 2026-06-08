@@ -1,9 +1,10 @@
 package styles
 
 import (
+	"strings"
+
 	lg "github.com/charmbracelet/lipgloss"
 	"github.com/common-nighthawk/go-figure"
-	"strings"
 )
 
 func GetBoxWidth(screenWidth int) int {
@@ -24,7 +25,7 @@ func GetInnerWidth(screenWidth int) int {
 	return GetBoxWidth(screenWidth) - 6
 }
 
-func RenderFigureAscii(text string, maxWidth int) string {
+func RenderFigureASCII(text string, maxWidth int) string {
 	fonts := []string{"slant", "small", "mini"}
 	for _, font := range fonts {
 		fig := figure.NewFigure(text, font, true).String()

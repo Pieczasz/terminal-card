@@ -2,8 +2,8 @@ package ssh
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
-
 	"terminalcard/internal/db"
 
 	"github.com/charmbracelet/ssh"
@@ -31,10 +31,10 @@ func AuthenticateAndLoadUser(queries *db.Queries, s ssh.Session) (*db.User, erro
 	}
 
 	if user == nil {
-		user, key, err = queries.RegisterUserWithKey(sshUsername, fingerprint)
+		user, _, err = queries.RegisterUserWithKey(sshUsername, fingerprint)
 		if err != nil {
 			slog.Error("failed to register new user", "error", err)
-			return nil, err
+			return nil, fmt.Errorf("failed to register new user: %w", err)
 		}
 	} else {
 		queries.UpdateUserActivity(user, key)

@@ -24,12 +24,19 @@ linters:
 
   exclusions:
     generated: lax
-    presets:
-      - common-false-positives
     rules:
       - text: '(slog|log)\.\w+'
         linters:
           - noctx
+
+  settings:
+    revive:
+      enable-default-rules: true
+      rules:
+        - name: exported
+          disabled: true
+        - name: package-comments
+          disabled: true
 
 issues:
   max-issues-per-linter: 0
@@ -37,8 +44,6 @@ issues:
 
 formatters:
   enable:
-    - gofumpt
     - goimports
   exclusions:
     generated: lax
-

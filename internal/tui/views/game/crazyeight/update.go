@@ -55,7 +55,7 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 
 	if m.baseState.Phase == game.Finished {
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
@@ -124,7 +124,7 @@ func (m Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
-		p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+		p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 	}

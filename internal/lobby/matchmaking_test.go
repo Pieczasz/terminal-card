@@ -1,11 +1,12 @@
 package lobby
 
 import (
+	"testing"
+
 	"terminalcard/internal/db"
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
 	"terminalcard/internal/player"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -33,7 +34,7 @@ func (m *MockRules) CheckWinCondition(state *game.State) bool { return m.Called(
 
 func mockPlayer(id string, dbID uint) *player.Player {
 	return &player.Player{
-		Id: id,
+		ID: id,
 		DatabaseUser: &db.User{
 			Model: gorm.Model{ID: dbID},
 		},

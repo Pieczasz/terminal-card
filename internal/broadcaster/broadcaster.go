@@ -12,7 +12,7 @@ type subscriber[T any] struct {
 type Broadcaster[T any] struct {
 	mu          sync.RWMutex
 	subscribers map[int]*subscriber[T]
-	nextId      int
+	nextID      int
 }
 
 func New[T any](maxSubscribers int) *Broadcaster[T] {
@@ -27,8 +27,8 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 
 	// TODO: calculate optimal size / think of better idea
 	ch := make(chan T, 1000)
-	b.subscribers[b.nextId] = &subscriber[T]{ch: ch, id: b.nextId}
-	b.nextId++
+	b.subscribers[b.nextID] = &subscriber[T]{ch: ch, id: b.nextID}
+	b.nextID++
 	return ch
 }
 

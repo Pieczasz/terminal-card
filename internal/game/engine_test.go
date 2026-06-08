@@ -1,9 +1,10 @@
 package game
 
 import (
+	"testing"
+
 	"terminalcard/internal/deck"
 	"terminalcard/internal/player"
-	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -17,37 +18,46 @@ func (m *MockRules) Name() string {
 	args := m.Called()
 	return args.String(0)
 }
+
 func (m *MockRules) MinPlayers() int {
 	args := m.Called()
 	return args.Int(0)
 }
+
 func (m *MockRules) MaxPlayers() int {
 	args := m.Called()
 	return args.Int(0)
 }
+
 func (m *MockRules) InitialDeck() []deck.Card {
 	args := m.Called()
 	return args.Get(0).([]deck.Card)
 }
+
 func (m *MockRules) InitialDealCount() int {
 	args := m.Called()
 	return args.Int(0)
 }
+
 func (m *MockRules) OnGameStart(state *State) error {
 	args := m.Called(state)
 	return args.Error(0)
 }
+
 func (m *MockRules) PreActionCondition(state *State, action Action) error {
 	args := m.Called(state, action)
 	return args.Error(0)
 }
+
 func (m *MockRules) ApplyAction(state *State, action Action) {
 	m.Called(state, action)
 }
+
 func (m *MockRules) PostActionCondition(state *State, action Action) error {
 	args := m.Called(state, action)
 	return args.Error(0)
 }
+
 func (m *MockRules) CheckWinCondition(state *State) bool {
 	args := m.Called(state)
 	return args.Bool(0)
@@ -63,7 +73,7 @@ func setupMockRules() *MockRules {
 
 func TestEngine_Start(t *testing.T) {
 	t.Parallel()
-	players := []*player.Player{{Id: "p1"}, {Id: "p2"}}
+	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
 	m := setupMockRules()
 	engine := NewGameEngine(m, players, deck.StandardDeck())
 
@@ -81,18 +91,18 @@ func TestEngine_Start(t *testing.T) {
 
 func TestEngine_SubmitAction(t *testing.T) {
 	t.Parallel()
-	players := []*player.Player{{Id: "p1"}, {Id: "p2"}}
+	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
 	m := setupMockRules()
 	engine := NewGameEngine(m, players, deck.StandardDeck())
 	engine.Start()
 
-	currentPlayerId := engine.CurrentPlayer().Id
-	otherPlayerId := "p2"
-	if currentPlayerId == "p2" {
-		otherPlayerId = "p1"
+	currentPlayerID := engine.CurrentPlayer().ID
+	otherPlayerID := "p2"
+	if currentPlayerID == "p2" {
+		otherPlayerID = "p1"
 	}
 
-	err := engine.SubmitAction(otherPlayerId, Action{Type: ActionDrawCard})
+	err := engine.SubmitAction(otherPlayerID, Action{Type: ActionDrawCard})
 	assert.ErrorContains(t, err, "wait for your turn")
 
 	validAction := Action{Type: ActionDrawCard}
@@ -101,17 +111,17 @@ func TestEngine_SubmitAction(t *testing.T) {
 	m.On("PostActionCondition", mock.Anything, validAction).Return(nil)
 	m.On("CheckWinCondition", mock.Anything).Return(false)
 
-	err = engine.SubmitAction(currentPlayerId, validAction)
+	err = engine.SubmitAction(currentPlayerID, validAction)
 	assert.NoError(t, err)
 
-	assert.Equal(t, otherPlayerId, engine.CurrentPlayer().Id)
+	assert.Equal(t, otherPlayerID, engine.CurrentPlayer().ID)
 
 	m.AssertExpectations(t)
 }
 
 func TestEngine_RemovePlayer(t *testing.T) {
 	t.Parallel()
-	players := []*player.Player{{Id: "p1"}, {Id: "p2"}, {Id: "p3"}}
+	players := []*player.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
 	m := setupMockRules()
 	engine := NewGameEngine(m, players, deck.StandardDeck())
 	engine.Start()
@@ -128,7 +138,7 @@ func TestEngine_RemovePlayer(t *testing.T) {
 	engine.WithState(func(state *State) {
 		assert.Len(t, state.Players, 1)
 		assert.Equal(t, Finished, state.Phase)
-		assert.Equal(t, "p1", state.Winner.Id)
+		assert.Equal(t, "p1", state.Winner.ID)
 	})
 
 	m.AssertExpectations(t)

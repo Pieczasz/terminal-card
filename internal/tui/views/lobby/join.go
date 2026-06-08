@@ -6,7 +6,6 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-
 	"terminalcard/internal/tui/views/common"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -42,7 +41,7 @@ func (m joinModel) Init() tea.Cmd {
 
 func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	lobbies := m.global.LobbyManager.PublicLobbies() // TODO: pagination, caching, filtering, retriving lobbies close to user interest.
+	lobbies := m.global.LobbyManager.PublicLobbies() // TODO: pagination, caching, filtering, retrieving lobbies close to user interest.
 
 	if !m.writingCode {
 		if handled, commonCmd := common.HandleCommonMsg(msg, &m.global); handled {
@@ -66,7 +65,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if code == "" {
 					return m, nil
 				}
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				err := m.global.LobbyManager.JoinLobbyByCode(code, p)
 				if err != nil {
 					m.err = err
@@ -104,7 +103,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "enter", " ":
 				if len(lobbies) > 0 && m.cursor < len(lobbies) {
 					l := lobbies[m.cursor]
-					p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+					p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 					err := m.global.LobbyManager.JoinLobbyByCode(l.Code(), p)
 					if err != nil {
 						m.err = err
@@ -164,7 +163,7 @@ func (m joinModel) View() string {
 	}
 
 	innerWidth := styles.GetInnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureAscii("Join Game", innerWidth)
+	titleFig := styles.RenderFigureASCII("Join Game", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 

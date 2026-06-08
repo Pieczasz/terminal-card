@@ -5,7 +5,6 @@ package ssh
 import (
 	"fmt"
 	"sync"
-
 	"terminalcard/internal/config"
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
@@ -75,7 +74,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		// TODO: refactor to normal address instead of localhost
 		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
-		wish.WithPublicKeyAuth(func(ctx ssh.Context, key ssh.PublicKey) bool {
+		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
 		}),
 		wish.WithMiddleware(
@@ -85,7 +84,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 					user, err := AuthenticateAndLoadUser(deps.Queries, s)
 					if err == nil && s.Context().Value("owns_connection") == true {
 						tracker.Disconnect(user.ID)
-						p := &player.Player{Id: fmt.Sprint(user.ID), DatabaseUser: user}
+						p := &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
 						deps.LobbyManager.LeaveLobby(p)
 					}
 				}

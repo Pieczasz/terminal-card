@@ -8,7 +8,6 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-
 	"terminalcard/internal/tui/views/common"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -43,7 +42,7 @@ func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
 	}
 }
 
-// New returns a new lobby model. We pass the current active lobby through Context
+// New returns a new lobby model. We pass the current active lobby through Context.
 func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 	ch := activeLobby.Broadcaster().Subscribe()
 	return model{
@@ -86,7 +85,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.showLeaveConfirm {
 			switch msg.String() {
 			case "y", "Y":
-				p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				m.global.LobbyManager.LeaveLobby(p)
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n", "N", "esc":
@@ -174,7 +173,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: gameRouteName, Context: engine} }
 		}
 		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
-			p := &player.Player{Id: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 
 			// Check if we got kicked
 			if !m.currentLobby.Leader().Compare(p) {
@@ -209,7 +208,7 @@ func (m model) View() string {
 	}
 
 	innerWidth := styles.GetInnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureAscii("Lobby", innerWidth)
+	titleFig := styles.RenderFigureASCII("Lobby", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 

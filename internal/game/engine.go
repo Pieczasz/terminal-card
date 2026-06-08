@@ -80,7 +80,7 @@ func (e *Engine) Start() error {
 	return nil
 }
 
-func (e *Engine) SubmitAction(playerId string, action Action) error {
+func (e *Engine) SubmitAction(playerID string, action Action) error {
 	e.mu.Lock()
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
@@ -91,8 +91,8 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	}
 
 	currentPlayer := e.CurrentPlayer()
-	if currentPlayer.Id != playerId {
-		//TODO: cheating?
+	if currentPlayer.ID != playerID {
+		// TODO: cheating?
 		return errors.New("wait for your turn to perform an action")
 	}
 
@@ -113,13 +113,13 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	e.broadcaster.Broadcast(Event{
 		Sequence: int64(e.turnManager.Current()), // Basic sequence for now
 		Type:     eventType,
-		PlayerID: playerId,
+		PlayerID: playerID,
 		Action:   action,
 		// State snapshot could be built here
 	})
 
 	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
-		//TODO:
+		// TODO:
 		// this can mean cheating, we should detect that and prevent it
 		slog.Error("post condition doesn't hold for a game, cheating?", "error", err)
 		return fmt.Errorf("post condition doesn't hold %w", err)
@@ -130,7 +130,7 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 		e.state.Winner = currentPlayer
 		e.broadcaster.Broadcast(Event{
 			Type:     EventGameEnded,
-			PlayerID: currentPlayer.Id,
+			PlayerID: currentPlayer.ID,
 		})
 		return nil
 	}
@@ -146,7 +146,7 @@ func (e *Engine) SubmitAction(playerId string, action Action) error {
 	return nil
 }
 
-func (e *Engine) RemovePlayer(playerId string) {
+func (e *Engine) RemovePlayer(playerID string) {
 	e.mu.Lock()
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
@@ -158,7 +158,7 @@ func (e *Engine) RemovePlayer(playerId string) {
 
 	playerIndex := -1
 	for i, p := range e.state.Players {
-		if p.Id == playerId {
+		if p.ID == playerID {
 			playerIndex = i
 			break
 		}
@@ -181,7 +181,7 @@ func (e *Engine) RemovePlayer(playerId string) {
 		e.state.Winner = e.state.Players[0]
 		e.broadcaster.Broadcast(Event{
 			Type:     EventGameEnded,
-			PlayerID: e.state.Winner.Id,
+			PlayerID: e.state.Winner.ID,
 		})
 	} else {
 		// Broadcast that turn might have advanced due to removal
