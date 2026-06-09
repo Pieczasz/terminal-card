@@ -46,6 +46,23 @@ func (r *CrazyEightsRules) OnGameStart(state *game.State) error {
 	return nil
 }
 
+type ActionPlayCard struct {
+	Cards []deck.Card
+	Suit  deck.Suit
+}
+
+func (a ActionPlayCard) Name() string { return "crazyeight.PlayCard" }
+
+type ActionDrawCard struct{}
+
+func (a ActionDrawCard) Name() string { return "crazyeight.DrawCard" }
+
+type ActionPickSuit struct {
+	Suit deck.Suit
+}
+
+func (a ActionPickSuit) Name() string { return "crazyeight.PickSuit" }
+
 func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Action) error {
 	topCard, ok := state.Discard.Peak()
 	if !ok {
@@ -57,8 +74,8 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		return errors.New("invalid state type")
 	}
 
-	switch action.Type {
-	case game.ActionPlayCard:
+	switch action := action.(type) {
+	case ActionPlayCard:
 		if len(action.Cards) != 1 {
 			return errors.New("must play exactly one card")
 		}
@@ -80,13 +97,13 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		}
 		return errors.New("card doesn't match top discard")
 
-	case game.ActionDrawCard:
+	case ActionDrawCard:
 		if state.Deck.IsEmpty() {
 			return errors.New("deck is empty")
 		}
 		return nil
 
-	case game.ActionPickSuit:
+	case ActionPickSuit:
 		return nil
 	}
 
@@ -97,8 +114,8 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 	extra := state.Extra.(*State)
 	player := state.Players[state.CurrentTurn]
 
-	switch action.Type {
-	case game.ActionPlayCard:
+	switch action := action.(type) {
+	case ActionPlayCard:
 		card := action.Cards[0]
 
 		newHand := make([]deck.Card, 0, len(player.Cards)-1)
@@ -120,11 +137,11 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 			extra.CurrentSuit = action.Suit
 		}
 
-	case game.ActionDrawCard:
+	case ActionDrawCard:
 		drawn, _ := state.Deck.Draw()
 		player.Cards = append(player.Cards, drawn)
 
-	case game.ActionPickSuit:
+	case ActionPickSuit:
 		extra.CurrentSuit = action.Suit
 	}
 }

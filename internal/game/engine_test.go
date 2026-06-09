@@ -89,6 +89,14 @@ func TestEngine_Start(t *testing.T) {
 	m.AssertExpectations(t)
 }
 
+type MockAction struct {
+	name string
+}
+
+func (m MockAction) Name() string {
+	return m.name
+}
+
 func TestEngine_SubmitAction(t *testing.T) {
 	t.Parallel()
 	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
@@ -102,10 +110,10 @@ func TestEngine_SubmitAction(t *testing.T) {
 		otherPlayerID = "p1"
 	}
 
-	err := engine.SubmitAction(otherPlayerID, Action{Type: ActionDrawCard})
+	err := engine.SubmitAction(otherPlayerID, MockAction{name: "MockDraw"})
 	assert.ErrorContains(t, err, "wait for your turn")
 
-	validAction := Action{Type: ActionDrawCard}
+	validAction := MockAction{name: "MockDraw"}
 	m.On("PreActionCondition", mock.Anything, validAction).Return(nil)
 	m.On("ApplyAction", mock.Anything, validAction)
 	m.On("PostActionCondition", mock.Anything, validAction).Return(nil)

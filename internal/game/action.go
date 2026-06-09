@@ -2,23 +2,9 @@ package game
 
 import "terminalcard/internal/deck"
 
-type Action struct {
-	Type   ActionType
-	Cards  []deck.Card
-	Suit   deck.Suit
-	Target string
+type Action interface {
+	Name() string
 }
-
-type ActionType uint8
-
-const (
-	ActionPlayCard ActionType = iota
-	ActionDrawCard
-	ActionPickSuit
-	ActionPass
-	ActionBet
-	ActionFold
-)
 
 type Event struct {
 	Sequence int64
@@ -31,10 +17,8 @@ type Event struct {
 type EventType uint8
 
 const (
-	EventCardPlayed EventType = iota
-	EventCardDrawn
-	EventSuitPicked
-	EventTurnAdvanced
+	EventTurnAdvanced EventType = iota
+	EventActionApplied
 	EventGameEnded
 	EventGameStarted
 )

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
+	logic "terminalcard/internal/game/crazyeight"
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/views/common"
@@ -145,8 +146,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), game.Action{
-		Type:  game.ActionPlayCard,
+	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 	})
 	return m, nil
@@ -154,8 +154,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 	chosenSuit := deck.Suit(m.suitCursor)
-	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), game.Action{
-		Type:  game.ActionPlayCard,
+	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 		Suit:  chosenSuit,
 	})
@@ -165,9 +164,7 @@ func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDraw() (tea.Model, tea.Cmd) {
 	if m.baseState.MyTurn && !m.pickingSuit {
-		_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), game.Action{
-			Type: game.ActionDrawCard,
-		})
+		_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionDrawCard{})
 	}
 	return m, nil
 }

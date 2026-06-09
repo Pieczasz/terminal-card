@@ -31,7 +31,7 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
 
 		err := rules.PreActionCondition(state, action)
 		assert.NoError(t, err)
@@ -42,7 +42,7 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 		state := createTestState()
 		state.Discard = deck.New([]deck.Card{{Rank: deck.King, Suit: deck.Clubs}})
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
 		err := rules.PreActionCondition(state, action)
 		assert.NoError(t, err)
@@ -52,7 +52,7 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}}
 
 		err := rules.PreActionCondition(state, action)
 		assert.NoError(t, err)
@@ -62,7 +62,7 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
 		err := rules.PreActionCondition(state, action)
 		assert.ErrorContains(t, err, "card doesn't match top discard")
@@ -72,7 +72,7 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}}}
 
 		err := rules.PreActionCondition(state, action)
 		assert.ErrorContains(t, err, "you don't have that card")
@@ -82,41 +82,44 @@ func TestCrazyEightsRules_PreActionCondition_PlayCard(t *testing.T) {
 func TestCrazyEightsRules_ApplyAction(t *testing.T) {
 	t.Parallel()
 
-	t.Run("play standard card", func(t *testing.T) {
+	t.Run("card that matches rank or suit", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
 
 		rules.ApplyAction(state, action)
 
+		extra := state.Extra.(*State)
+
+		assert.Equal(t, deck.Spades, extra.CurrentSuit)
 		assert.Len(t, state.Players[0].Cards, 2)
 
 		top, _ := state.Discard.Peak()
 		assert.Equal(t, deck.Two, top.Rank)
 		assert.Equal(t, deck.Spades, top.Suit)
-
-		extra := state.Extra.(*State)
-		assert.Equal(t, deck.Spades, extra.CurrentSuit)
 	})
 
-	t.Run("play eight picks suit", func(t *testing.T) {
+	t.Run("card that is 8, currentsuit should change, discard shoult change", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
+		state.Players[0].Cards = []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}, {Rank: deck.King, Suit: deck.Hearts}}
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionPlayCard, Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}, Suit: deck.Clubs}
+		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}, Suit: deck.Clubs}
 
 		rules.ApplyAction(state, action)
 
 		extra := state.Extra.(*State)
+
 		assert.Equal(t, deck.Clubs, extra.CurrentSuit)
+		assert.Len(t, state.Players[0].Cards, 1)
 	})
 
 	t.Run("draw card", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &CrazyEightsRules{}
-		action := game.Action{Type: game.ActionDrawCard}
+		action := ActionDrawCard{}
 
 		initialSize := state.Deck.Size()
 		rules.ApplyAction(state, action)

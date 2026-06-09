@@ -102,17 +102,9 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 
 	e.state.Rules.ApplyAction(e.state, action)
 
-	eventType := EventCardPlayed
-	switch action.Type {
-	case ActionDrawCard:
-		eventType = EventCardDrawn
-	case ActionPickSuit:
-		eventType = EventSuitPicked
-	}
-
 	e.broadcaster.Broadcast(Event{
 		Sequence: int64(e.turnManager.Current()), // Basic sequence for now
-		Type:     eventType,
+		Type:     EventActionApplied,
 		PlayerID: playerID,
 		Action:   action,
 		// State snapshot could be built here
