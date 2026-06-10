@@ -25,6 +25,7 @@ type Lobby struct {
 	options      *options
 	code         string
 	state        state
+	ready        map[string]bool
 	activeEngine *game.Engine
 }
 
@@ -138,6 +139,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 		guests:      make([]*player.Player, 0, options.maxPlayers-1),
 		options:     options,
 		code:        code,
+		ready:       make(map[string]bool),
 		broadcaster: broadcaster.New[Event](options.maxPlayers),
 	}
 
@@ -371,7 +373,73 @@ func (l *Lobby) addGuest(player *player.Player) error {
 	return nil
 }
 
-func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
+func (l *Lobby) IsReady(p *player.Player) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.ready[p.ID]
+}
+
+func (l *Lobby) ToggleReady(p *player.Player, registry *game.Registry) error {
+	l.mu.Lock()
+
+	if l.state == InGame {
+		if l.activeEngine != nil && l.activeEngine.IsFinished() {
+			l.state = Waiting
+			l.activeEngine = nil
+			clear(l.ready)
+		} else {
+			l.mu.Unlock()
+			return errors.New("game is already in progress")
+		}
+	}
+
+	if !l.hasPlayerNoLock(p) {
+		l.mu.Unlock()
+		return errors.New("player not in lobby")
+	}
+
+	l.ready[p.ID] = !l.ready[p.ID]
+
+	// Check if everyone is ready
+	allReady := true
+	if !l.ready[l.leader.ID] {
+		allReady = false
+	} else {
+		for _, g := range l.guests {
+			if !l.ready[g.ID] {
+				allReady = false
+				break
+			}
+		}
+	}
+
+	l.mu.Unlock()
+
+	if allReady {
+		_, err := l.startGame(registry)
+		return err
+	}
+
+	if l.broadcaster != nil {
+		l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
+	}
+
+	return nil
+}
+
+func (l *Lobby) hasPlayerNoLock(p *player.Player) bool {
+	if l.leader.Compare(p) {
+		return true
+	}
+	for _, g := range l.guests {
+		if g.Compare(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func (l *Lobby) startGame(registry *game.Registry) (*game.Engine, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -402,6 +470,7 @@ func (l *Lobby) StartGame(registry *game.Registry) (*game.Engine, error) {
 
 	l.state = InGame
 	l.activeEngine = engine
+	clear(l.ready)
 
 	l.broadcaster.Broadcast(Event{
 		Type:    "GAME_STARTED",

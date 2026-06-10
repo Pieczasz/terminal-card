@@ -15,7 +15,7 @@ type State struct {
 	CurrentTurn      int
 	OverrideNextTurn *int
 	Phase            Phase
-	Winner      *player.Player
+	Winner           *player.Player
 
 	Deck    *deck.Pile
 	Discard *deck.Pile

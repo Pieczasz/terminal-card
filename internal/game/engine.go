@@ -143,6 +143,14 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	return nil
 }
 
+func (e *Engine) IsFinished() bool {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+	return e.state.Phase == Finished
+}
+
 func (e *Engine) RemovePlayer(playerID string) {
 	e.mu.Lock()
 	e.state.mu.Lock()

@@ -112,7 +112,7 @@ func TestManager_LeaveLobby(t *testing.T) {
 	assert.ErrorContains(t, err, "lobby not found")
 }
 
-func TestLobby_StartGame(t *testing.T) {
+func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
 	m := NewManager()
 	leader := mockPlayer("p1", 1)
@@ -135,10 +135,16 @@ func TestLobby_StartGame(t *testing.T) {
 		return mockRules
 	})
 
-	engine, err := l.StartGame(registry)
+	err := l.ToggleReady(leader, registry)
 	assert.NoError(t, err)
-	assert.NotNil(t, engine)
+	assert.True(t, l.IsReady(leader))
+	assert.Equal(t, Waiting, l.state)
+
+	err = l.ToggleReady(guest, registry)
+	assert.NoError(t, err)
+	
 	assert.Equal(t, InGame, l.state)
+	assert.NotNil(t, l.activeEngine)
 
 	mockRules.AssertExpectations(t)
 }

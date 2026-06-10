@@ -106,15 +106,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
-		case "s":
-			if isLeader {
-				_, err := m.currentLobby.StartGame(m.global.GameRegistry)
-				if err == nil {
-					// The broadcast from StartGame will symmetrically trigger GAME_STARTED
-					// for both the leader and the guests via the lobby channel listener.
-					return m, nil
-				}
-			}
+		case "r":
+			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+			_ = m.currentLobby.ToggleReady(p, m.global.GameRegistry)
+			return m, nil
 		case "up", "k":
 			if isLeader && m.cursor > 0 {
 				m.cursor--
@@ -216,9 +211,7 @@ func (m model) View() string {
 
 	var footerActions []string
 	footerActions = append(footerActions, "x - Leave Lobby")
-	if isLeader {
-		footerActions = append(footerActions, "s - Start Game")
-	}
+	footerActions = append(footerActions, "r - Ready")
 	footerActions = append(footerActions, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
@@ -253,7 +246,12 @@ func (m model) View() string {
 
 	leader := m.currentLobby.Leader()
 	leaderElo := m.getElo(leader)
-	playerList = append(playerList, fmt.Sprintf("  %s %s (Elo: %d)", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo))
+
+	leaderReadyStr := ""
+	if m.currentLobby.IsReady(leader) {
+		leaderReadyStr = lg.NewStyle().Foreground(lg.Color("46")).Render(" - Ready")
+	}
+	playerList = append(playerList, fmt.Sprintf("  %s %s (Elo: %d)%s", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo, leaderReadyStr))
 
 	guests := m.currentLobby.Guests()
 	for i, g := range guests {
@@ -263,7 +261,11 @@ func (m model) View() string {
 			cursor = "> "
 		}
 		guestElo := m.getElo(g)
-		row := fmt.Sprintf("%s%s %s (Elo: %d)", cursor, styles.GuestTag.Render("[Guest] "), g.DatabaseUser.Username, guestElo)
+		guestReadyStr := ""
+		if m.currentLobby.IsReady(g) {
+			guestReadyStr = lg.NewStyle().Foreground(lg.Color("46")).Render(" - Ready")
+		}
+		row := fmt.Sprintf("%s%s %s (Elo: %d)%s", cursor, styles.GuestTag.Render("[Guest] "), g.DatabaseUser.Username, guestElo, guestReadyStr)
 		if isSelected {
 			row = styles.PlayerItemSelected.Render(row)
 		}
