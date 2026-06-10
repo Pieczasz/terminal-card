@@ -5,6 +5,7 @@ import (
 
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
+	"terminalcard/internal/player"
 )
 
 type PokerRules struct{}
@@ -24,6 +25,54 @@ func (r *PokerRules) InitialDealCount() int {
 }
 
 func (r *PokerRules) OnGameStart(state *game.State) error {
+	if state.Deck.Size() < 5 {
+		return errors.New("not enough cards to start the game")
+	}
+
+	playerChips := make(map[string]uint, len(state.Players))
+	for _, p := range state.Players {
+		playerChips[p.ID] = 1000
+	}
+
+	playerBets := make(map[string]uint, len(state.Players))
+
+	smallBlindAmount := uint(25)
+	bigBlindAmount := uint(50)
+
+	N := len(state.Players)
+	var sbIndex, bbIndex, dealerIndex int
+	if N == 2 {
+		dealerIndex = state.CurrentTurn
+		sbIndex = state.CurrentTurn
+		bbIndex = (state.CurrentTurn + 1) % N
+	} else {
+		dealerIndex = (state.CurrentTurn - 3 + N) % N
+		bbIndex = (state.CurrentTurn - 1 + N) % N
+		sbIndex = (state.CurrentTurn - 2 + N) % N
+	}
+
+	sbPlayer := state.Players[sbIndex]
+	bbPlayer := state.Players[bbIndex]
+
+	playerChips[sbPlayer.ID] -= smallBlindAmount
+	playerChips[bbPlayer.ID] -= bigBlindAmount
+
+	playerBets[sbPlayer.ID] = smallBlindAmount
+	playerBets[bbPlayer.ID] = bigBlindAmount
+
+	state.Extra = &State{
+		DealerIndex: dealerIndex,
+		MainPool:    smallBlindAmount + bigBlindAmount,
+		CurrentBet:  bigBlindAmount,
+		SmallBlind:  smallBlindAmount,
+		BigBlind:    bigBlindAmount,
+		Phase:       PreFlop,
+		PlayersFold: make([]*player.Player, 0, len(state.Players)),
+		Table:       make([]*deck.Card, 0, 5),
+		PlayerChips: playerChips,
+		PlayerBets:  playerBets,
+	}
+
 	return nil
 }
 

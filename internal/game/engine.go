@@ -127,7 +127,12 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 		return nil
 	}
 
-	e.turnManager.Next()
+	if e.state.OverrideNextTurn != nil {
+		e.turnManager.SetCurrent(*e.state.OverrideNextTurn)
+		e.state.OverrideNextTurn = nil
+	} else {
+		e.turnManager.Next()
+	}
 	e.state.CurrentTurn = e.turnManager.Current()
 
 	e.broadcaster.Broadcast(Event{

@@ -6,17 +6,8 @@ import (
 	"terminalcard/internal/player"
 )
 
-type RoundPhase uint8
-
-const (
-	PreFlop RoundPhase = iota
-	Flop
-	Turn
-	River
-	Showdown
-)
-
 type State struct {
+	DealerIndex  int
 	MainPool     uint
 	CurrentBet   uint
 	SmallBlind   uint
@@ -29,3 +20,13 @@ type State struct {
 	PlayerChips  map[string]uint
 	PlayerBets   map[string]uint
 }
+
+type RoundPhase uint8
+
+const (
+	PreFlop RoundPhase = iota
+	Flop
+	Turn
+	River
+	Showdown
+)
