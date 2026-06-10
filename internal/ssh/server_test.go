@@ -57,7 +57,7 @@ func setupTestEnvironment(t *testing.T) testEnv {
 	deps := ServerDependencies{
 		Config:       &config.Config{ServerPort: port, SSHKeyPath: t.TempDir() + "/id_ed25519"},
 		Queries:      queries,
-		LobbyManager: lobby.NewManager(),
+		LobbyManager: lobby.NewManager(nil),
 		GameRegistry: game.NewRegistry(),
 	}
 

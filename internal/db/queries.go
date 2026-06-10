@@ -2,8 +2,12 @@ package db
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
+
+	"terminalcard/internal/elo"
 
 	"gorm.io/gorm"
 )
@@ -97,4 +101,62 @@ func (q *Queries) UpdateUserActivity(user *User, key *PublicKey) {
 	if err := q.db.Model(key).Update("LastUsedAt", time.Now()).Error; err != nil {
 		slog.Error("unexpected error while trying to update LastUsedAt field", "user", user, "error", err)
 	}
+}
+
+// UpdateGameRankings updates the rankings for a given game ID based on the standings.
+// orderedUserIDs must be sorted from 1st place to last place.
+func (q *Queries) UpdateGameRankings(gameID uint, orderedUserIDs []uint) error {
+	if len(orderedUserIDs) == 0 {
+		return nil
+	}
+
+	if err := q.db.Transaction(func(tx *gorm.DB) error {
+		var players []elo.Player
+
+		var rankings []Ranking
+		if err := tx.Where("user_id IN ? AND game_id = ?", orderedUserIDs, gameID).Find(&rankings).Error; err != nil {
+			return err
+		}
+
+		rankingMap := make(map[uint]*Ranking)
+		for i := range rankings {
+			rankingMap[rankings[i].UserID] = &rankings[i]
+		}
+
+		for _, userID := range orderedUserIDs {
+			rating := elo.DefaultRating
+			if r, ok := rankingMap[userID]; ok {
+				rating = float64(r.Elo)
+			}
+			players = append(players, elo.Player{
+				ID:     strconv.FormatUint(uint64(userID), 10),
+				Rating: rating,
+			})
+		}
+
+		newRatings := elo.Calculate(players)
+
+		for userIDStr, newRating := range newRatings {
+			userID, _ := strconv.ParseUint(userIDStr, 10, 64)
+			uid := uint(userID)
+
+			r, exists := rankingMap[uid]
+			if !exists {
+				r = &Ranking{
+					UserID: uid,
+					GameID: gameID,
+				}
+			}
+			r.Elo = uint32(newRating)
+
+			if err := tx.Save(r).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to update rankings transaction: %w", err)
+	}
+	return nil
 }

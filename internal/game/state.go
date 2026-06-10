@@ -12,6 +12,7 @@ type State struct {
 	mu sync.RWMutex
 
 	Players          []*player.Player
+	LeftPlayers      []*player.Player
 	CurrentTurn      int
 	OverrideNextTurn *int
 	Phase            Phase

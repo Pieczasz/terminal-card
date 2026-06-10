@@ -31,6 +31,9 @@ func (m *MockRules) PostActionCondition(state *game.State, action game.Action) e
 	return m.Called(state, action).Error(0)
 }
 func (m *MockRules) CheckWinCondition(state *game.State) bool { return m.Called(state).Bool(0) }
+func (m *MockRules) GetStandings(state *game.State) []*player.Player {
+	return m.Called(state).Get(0).([]*player.Player)
+}
 
 func mockPlayer(id string, dbID uint) *player.Player {
 	return &player.Player{
@@ -43,7 +46,7 @@ func mockPlayer(id string, dbID uint) *player.Player {
 
 func TestManager_New(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 
 	l, err := m.New(leader, WithMaxPlayers(3), WithPrivate(false))
@@ -63,7 +66,7 @@ func TestManager_New(t *testing.T) {
 
 func TestManager_JoinLobbyByCode(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 	guest1 := mockPlayer("g1", 2)
 	guest2 := mockPlayer("g2", 3)
@@ -88,7 +91,7 @@ func TestManager_JoinLobbyByCode(t *testing.T) {
 
 func TestManager_LeaveLobby(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 	guest1 := mockPlayer("g1", 2)
 	guest2 := mockPlayer("g2", 3)
@@ -114,7 +117,7 @@ func TestManager_LeaveLobby(t *testing.T) {
 
 func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 
@@ -142,7 +145,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 	err = l.ToggleReady(guest, registry)
 	assert.NoError(t, err)
-	
+
 	assert.Equal(t, InGame, l.state)
 	assert.NotNil(t, l.activeEngine)
 
@@ -151,7 +154,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 func TestLobby_SettersAndGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 
 	cardGame := &db.Game{Name: "CrazyEights"}
@@ -175,7 +178,7 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 func TestManager_PublicLobbies(t *testing.T) {
 	t.Parallel()
-	m := NewManager()
+	m := NewManager(nil)
 
 	p1 := mockPlayer("p1", 1)
 	p2 := mockPlayer("p2", 2)

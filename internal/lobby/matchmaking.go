@@ -19,6 +19,7 @@ import (
 
 type Lobby struct {
 	mu           sync.RWMutex
+	manager      *Manager
 	broadcaster  *broadcaster.Broadcaster[Event]
 	leader       *player.Player
 	guests       []*player.Player
@@ -46,6 +47,7 @@ type Manager struct {
 	mu          sync.RWMutex
 	lobbies     map[string]*Lobby
 	playerLobby map[string]*Lobby
+	queries     *db.Queries
 }
 
 type Option func(*options)
@@ -108,10 +110,11 @@ func (l *Lobby) SetCardGame(game *db.Game) {
 	}
 }
 
-func NewManager() *Manager {
+func NewManager(queries *db.Queries) *Manager {
 	return &Manager{
 		lobbies:     make(map[string]*Lobby),
 		playerLobby: make(map[string]*Lobby),
+		queries:     queries,
 	}
 }
 
@@ -135,6 +138,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	}
 
 	lobby := &Lobby{
+		manager:     m,
 		leader:      leader,
 		guests:      make([]*player.Player, 0, options.maxPlayers-1),
 		options:     options,
@@ -400,7 +404,6 @@ func (l *Lobby) ToggleReady(p *player.Player, registry *game.Registry) error {
 
 	l.ready[p.ID] = !l.ready[p.ID]
 
-	// Check if everyone is ready
 	allReady := true
 	if !l.ready[l.leader.ID] {
 		allReady = false
@@ -466,6 +469,27 @@ func (l *Lobby) startGame(registry *game.Registry) (*game.Engine, error) {
 
 	if err := engine.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start game engine: %w", err)
+	}
+
+	if l.manager.queries != nil {
+		ch := engine.Broadcaster().Subscribe()
+		go func() {
+			for event := range ch {
+				if event.Type == game.EventGameEnded {
+					standings := engine.Standings()
+					userIDs := make([]uint, len(standings))
+					for i, p := range standings {
+						userIDs[i] = p.DatabaseUser.ID
+					}
+					if l.options.isRanked && l.options.cardGame != nil {
+						if err := l.manager.queries.UpdateGameRankings(l.options.cardGame.ID, userIDs); err != nil {
+							slog.Error("failed to update game rankings", "error", err)
+						}
+					}
+					break
+				}
+			}
+		}()
 	}
 
 	l.state = InGame

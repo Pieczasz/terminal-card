@@ -38,6 +38,21 @@ func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
 	return e.broadcaster
 }
 
+func (e *Engine) Standings() []*player.Player {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+
+	standings := e.state.Rules.GetStandings(e.state)
+
+	for i := len(e.state.LeftPlayers) - 1; i >= 0; i-- {
+		standings = append(standings, e.state.LeftPlayers[i])
+	}
+
+	return standings
+}
+
 // WithState allows thread-safe read access to the game state.
 // The provided function is executed while holding the state lock.
 func (e *Engine) WithState(fn func(state *State)) {
@@ -173,14 +188,14 @@ func (e *Engine) RemovePlayer(playerID string) {
 		return
 	}
 
-	// Remove player from state
+	removedPlayer := e.state.Players[playerIndex]
+	e.state.LeftPlayers = append(e.state.LeftPlayers, removedPlayer)
+
 	e.state.Players = append(e.state.Players[:playerIndex], e.state.Players[playerIndex+1:]...)
 
-	// Inform turn manager
 	e.turnManager.RemovePlayer(playerIndex)
 	e.state.CurrentTurn = e.turnManager.Current()
 
-	// If only 1 player remains, finish game
 	if len(e.state.Players) == 1 {
 		e.state.Phase = Finished
 		e.state.Winner = e.state.Players[0]
@@ -189,7 +204,6 @@ func (e *Engine) RemovePlayer(playerID string) {
 			PlayerID: e.state.Winner.ID,
 		})
 	} else {
-		// Broadcast that turn might have advanced due to removal
 		e.broadcaster.Broadcast(Event{
 			Sequence: int64(e.turnManager.Current()),
 			Type:     EventTurnAdvanced,

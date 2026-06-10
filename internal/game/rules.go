@@ -2,6 +2,7 @@ package game
 
 import (
 	"terminalcard/internal/deck"
+	"terminalcard/internal/player"
 )
 
 type Rules interface {
@@ -18,4 +19,5 @@ type Rules interface {
 	PostActionCondition(state *State, action Action) error
 	ApplyAction(state *State, action Action)
 	CheckWinCondition(state *State) bool
+	GetStandings(state *State) []*player.Player
 }

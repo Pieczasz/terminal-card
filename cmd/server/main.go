@@ -46,11 +46,11 @@ func main() {
 		panic(err)
 	}
 
-	lobbyManager := lobby.NewManager()
+	queries := db.NewQueries(database)
+	lobbyManager := lobby.NewManager(queries)
 	gameRegistry := game.NewRegistry()
 	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
 
-	queries := db.NewQueries(database)
 	deps := ssh.ServerDependencies{
 		Config:       cfg,
 		Queries:      queries,
