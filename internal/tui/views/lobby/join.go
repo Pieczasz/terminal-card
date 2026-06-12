@@ -6,7 +6,7 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -41,10 +41,12 @@ func (m joinModel) Init() tea.Cmd {
 
 func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	lobbies := m.global.LobbyManager.PublicLobbies() // TODO: pagination, caching, filtering, retrieving lobbies close to user interest.
+
+	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+	lobbies := m.global.LobbyManager.PublicLobbies(p)
 
 	if !m.writingCode {
-		if handled, commonCmd := common.HandleCommonMsg(msg, &m.global); handled {
+		if handled, commonCmd := views.HandleCommonMsg(msg, &m.global); handled {
 			return m, commonCmd
 		}
 	} else if msg, ok := msg.(tea.WindowSizeMsg); ok {
@@ -88,6 +90,8 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 			case "p":
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+			case "t":
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 			case "up", "k":
 				if m.cursor > 0 {
 					m.cursor--
@@ -122,7 +126,8 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m joinModel) View() string {
-	lobbies := m.global.LobbyManager.PublicLobbies()
+	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+	lobbies := m.global.LobbyManager.PublicLobbies(p)
 
 	var publicLobbiesStr strings.Builder
 	publicLobbiesStr.WriteString("Public Lobbies:\n")
@@ -170,5 +175,5 @@ func (m joinModel) View() string {
 	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
+	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
 }

@@ -7,22 +7,21 @@ import (
 	logic "terminalcard/internal/game/crazyeight"
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case gameMsg:
-		m.syncState()
-		return m, listenForEvents(m.events)
+	case game.Event:
+		return m.syncState(), listenForEvents(m.events)
 	}
 
 	return m, nil

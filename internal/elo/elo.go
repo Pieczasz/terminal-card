@@ -35,7 +35,7 @@ func UpdateRating(rating, expectedScore, actualScore float64) float64 {
 
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
 // https://www.tckerrigan.com/Misc/Multiplayer_Elo/
-// The players slice MUST be sorted by performance, from 1st place (index 0) to last place (index n-1).
+// The player slice MUST be sorted by performance, from 1st place (index 0) to last place (index n-1).
 // It returns a map of Player ID to their new rating.
 func Calculate(players []Player) map[string]float64 {
 	n := len(players)
