@@ -1,4 +1,4 @@
-package common
+package views
 
 import (
 	"terminalcard/internal/tui/router"

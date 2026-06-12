@@ -7,7 +7,7 @@ import (
 	"terminalcard/internal/game"
 	"terminalcard/internal/tui/components"
 	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	lg "github.com/charmbracelet/lipgloss"
 )
@@ -83,26 +83,7 @@ func renderLeftCards(count int) string {
 	botEdge := lg.NewStyle().Foreground(cardColor).Render("─────╯")
 	cardBody := lg.NewStyle().Foreground(textColor).Render("░░░░░") + lg.NewStyle().Foreground(cardColor).Render("│")
 
-	var sb strings.Builder
-	sb.Grow((count + 3) * 20) // Pre-allocate approximate capacity
-
-	sb.WriteString(topEdge)
-	sb.WriteByte('\n')
-	for i := 0; i < count-1; i++ {
-		sb.WriteString(midEdge)
-		sb.WriteByte('\n')
-	}
-	sb.WriteString(cardBody)
-	sb.WriteByte('\n')
-	sb.WriteString(cardBody)
-	sb.WriteByte('\n')
-	sb.WriteString(cardBody)
-	sb.WriteByte('\n')
-	sb.WriteString(cardBody)
-	sb.WriteByte('\n')
-	sb.WriteString(botEdge)
-
-	return sb.String()
+	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
 }
 
 func renderRightCards(count int) string {
@@ -118,6 +99,10 @@ func renderRightCards(count int) string {
 	botEdge := lg.NewStyle().Foreground(cardColor).Render("╰─────")
 	cardBody := lg.NewStyle().Foreground(cardColor).Render("│") + lg.NewStyle().Foreground(textColor).Render("░░░░░")
 
+	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
+}
+
+func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody string) string {
 	var sb strings.Builder
 	sb.Grow((count + 3) * 20)
 
@@ -182,17 +167,6 @@ func RenderStatus(currentPlayer string, isMyTurn bool) string {
 	return statusStyle.Render(statusStr)
 }
 
-func RenderGameScreen(width, height int, content string, helperText string) string {
-	helpers := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).Render(helperText)
-	fullContent := lg.JoinVertical(lg.Center, content, helpers)
-
-	return lg.Place(
-		width, height,
-		lg.Center, lg.Center,
-		fullContent,
-	)
-}
-
 func RenderWaitingScreen(width, height int, phase game.Phase, winner string) string {
 	innerWidth := styles.GetInnerWidth(width)
 	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
@@ -207,5 +181,5 @@ func RenderWaitingScreen(width, height int, phase game.Phase, winner string) str
 		content = "Waiting for game to start..."
 	}
 
-	return common.RenderCenteredLayout(width, height, header, content, footer)
+	return views.RenderCenteredLayout(width, height, header, content, footer)
 }

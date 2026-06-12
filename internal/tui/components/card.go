@@ -7,11 +7,6 @@ import (
 	lg "github.com/charmbracelet/lipgloss"
 )
 
-var (
-	redStyle   = lg.NewStyle().Foreground(lg.Color("9"))
-	blackStyle = lg.NewStyle().Foreground(lg.Color("0"))
-)
-
 func getSuitInfo(suit deck.Suit) (string, lg.Style) {
 	switch suit {
 	case deck.Hearts:

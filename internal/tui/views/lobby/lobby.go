@@ -2,13 +2,14 @@ package lobby
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -76,7 +77,7 @@ func (m model) getElo(p *player.Player) uint32 {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
 
@@ -106,9 +107,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+		case "t":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 		case "r":
 			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-			_ = m.currentLobby.ToggleReady(p, m.global.GameRegistry)
+			if err := m.currentLobby.ToggleReady(p, m.global.GameRegistry); err != nil {
+				slog.Error("failed to toggle ready or start game engine", "error", err)
+			}
 			return m, nil
 		case "up", "k":
 			if isLeader && m.cursor > 0 {
@@ -219,7 +224,7 @@ func (m model) View() string {
 		redYes := lg.NewStyle().Foreground(lg.Color("#FF4444")).Bold(true).Render("Yes")
 		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
 
-		return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer)
+		return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer)
 	}
 
 	renderOption := func(idx int, label, value string) string {
@@ -300,5 +305,5 @@ func (m model) View() string {
 		form = lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
 	}
 
-	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer)
+	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer)
 }

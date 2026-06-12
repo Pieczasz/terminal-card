@@ -7,7 +7,7 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	tea "github.com/charmbracelet/bubbletea"
 	lg "github.com/charmbracelet/lipgloss"
@@ -39,7 +39,7 @@ func (m createModel) Init() tea.Cmd {
 }
 
 func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
 
@@ -54,6 +54,8 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+		case "t":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 		case "up", "k":
 			if m.cursor > 0 {
 				m.cursor--
@@ -157,5 +159,5 @@ func (m createModel) View() string {
 	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return common.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
+	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
 }

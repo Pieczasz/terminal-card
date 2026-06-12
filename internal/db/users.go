@@ -29,7 +29,7 @@ type Ranking struct {
 	UserID uint `gorm:"primaryKey"`
 	GameID uint `gorm:"primaryKey"`
 
-	Elo uint32 `gorm:"check:elo_valid,elo >= 0 AND elo <= 4000;default:1000"`
+	Elo uint32 `gorm:"check:elo_valid,elo >= 0 AND elo <= 4000;default:1500"`
 
 	// Allows preload data from memory using gorm .Preload
 	User User `gorm:"foreignKey:UserID"`

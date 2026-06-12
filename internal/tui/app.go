@@ -8,20 +8,22 @@ import (
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/views/game/crazyeight"
 	"terminalcard/internal/tui/views/home"
+	"terminalcard/internal/tui/views/leaderboard"
 	"terminalcard/internal/tui/views/lobby"
 	"terminalcard/internal/tui/views/profile"
 
-	internal_lobby "terminalcard/internal/lobby"
+	internallobby "terminalcard/internal/lobby"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manager, gameRegistry *game.Registry) tea.Model {
+func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
 	global := router.GlobalContext{
-		User:         &user,
-		Queries:      queries,
-		LobbyManager: lobbyManager,
-		GameRegistry: gameRegistry,
+		User:            &user,
+		UserRepository:  userRepo,
+		MatchRepository: matchRepo,
+		LobbyManager:    lobbyManager,
+		GameRegistry:    gameRegistry,
 	}
 
 	r := router.New(global)
@@ -32,6 +34,10 @@ func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manag
 
 	r.Register("profile", func(g router.GlobalContext, _ any) tea.Model {
 		return profile.New(g)
+	})
+
+	r.Register("leaderboard", func(g router.GlobalContext, _ any) tea.Model {
+		return leaderboard.New(g)
 	})
 
 	r.Register("lobby_create", func(g router.GlobalContext, _ any) tea.Model {
@@ -52,7 +58,7 @@ func Model(user db.User, queries *db.Queries, lobbyManager *internal_lobby.Manag
 
 	r.Register("lobby", func(g router.GlobalContext, ctx any) tea.Model {
 		// ctx should be the *lobby.Lobby
-		l, _ := ctx.(*internal_lobby.Lobby)
+		l, _ := ctx.(*internallobby.Lobby)
 		return lobby.New(g, l)
 	})
 

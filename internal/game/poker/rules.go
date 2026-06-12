@@ -128,15 +128,18 @@ func (r *PokerRules) ApplyAction(state *game.State, action game.Action) {
 	}
 }
 
-func (r *PokerRules) PostActionCondition(state *game.State, action game.Action) error {
+func (r *PokerRules) PostActionCondition(_ *game.State, _ game.Action) error {
 	return nil
 }
 
 func (r *PokerRules) CheckWinCondition(state *game.State) bool {
 	extra := state.Extra.(*State)
-	// If everyone else folded, the remaining player wins
-	if len(extra.PlayersFold) >= len(state.Players)-1 {
-		return true
-	}
-	return false
+	return len(extra.PlayersFold) >= len(state.Players)-1
+}
+
+func (r *PokerRules) GetStandings(state *game.State) []*player.Player {
+	standings := make([]*player.Player, len(state.Players))
+	copy(standings, state.Players)
+	// Poker logic is stubbed
+	return standings
 }

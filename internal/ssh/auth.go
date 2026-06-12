@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,29 +16,29 @@ var (
 	ErrInternal    = errors.New("internal server error")
 )
 
-func AuthenticateAndLoadUser(queries *db.Queries, s ssh.Session) (*db.User, error) {
+func AuthenticateSession(s ssh.Session) (string, error) {
 	publicKey := s.PublicKey()
 	if publicKey == nil {
-		return nil, ErrNoPublicKey
+		return "", ErrNoPublicKey
 	}
+	return cryptossh.FingerprintSHA256(publicKey), nil
+}
 
-	fingerprint := cryptossh.FingerprintSHA256(publicKey)
-	sshUsername := s.User()
-
-	user, key, err := queries.LoadUserByFingerprint(fingerprint)
+func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUsername, fingerprint string) (*db.User, error) {
+	user, key, err := userRepo.LoadUserByFingerprint(ctx, fingerprint)
 	if err != nil {
 		slog.Error("database error while authenticating user", "error", err)
 		return nil, ErrInternal
 	}
 
 	if user == nil {
-		user, _, err = queries.RegisterUserWithKey(sshUsername, fingerprint)
+		user, _, err = userRepo.RegisterUserWithKey(ctx, sshUsername, fingerprint)
 		if err != nil {
 			slog.Error("failed to register new user", "error", err)
 			return nil, fmt.Errorf("failed to register new user: %w", err)
 		}
 	} else {
-		queries.UpdateUserActivity(user, key)
+		userRepo.UpdateUserActivity(ctx, user, key)
 	}
 
 	return user, nil

@@ -25,6 +25,20 @@ func GetInnerWidth(screenWidth int) int {
 	return GetBoxWidth(screenWidth) - 6
 }
 
+func GetAvailableContentHeight(screenHeight int, header, footer string) int {
+	boxHeight := GetBoxHeight(screenHeight)
+	innerHeight := boxHeight - 4
+
+	header = strings.TrimRight(header, "\r\n")
+	footer = strings.TrimRight(footer, "\r\n")
+
+	return innerHeight - lg.Height(header) - lg.Height(footer)
+}
+
+func GetAvailableContentWidth(screenWidth int) int {
+	return GetBoxWidth(screenWidth) - 6
+}
+
 func RenderFigureASCII(text string, maxWidth int) string {
 	fonts := []string{"slant", "small", "mini"}
 	for _, font := range fonts {
@@ -35,15 +49,6 @@ func RenderFigureASCII(text string, maxWidth int) string {
 	}
 	// Fallback to pure string if even mini is too large
 	return text
-}
-
-func RenderMainBox(width, height int, content string) string {
-	boxWidth := GetBoxWidth(width)
-	boxHeight := GetBoxHeight(height)
-
-	// 4 for horizontal borders/padding, 4 for vertical borders/padding
-	placedContent := lg.Place(boxWidth-6, boxHeight-4, lg.Center, lg.Center, content)
-	return Box.Width(boxWidth).Height(boxHeight).Render(placedContent)
 }
 
 func RenderMainLayout(width, height int, header, content, footer string) string {
@@ -83,12 +88,7 @@ func RenderActionFooter(actions []string) string {
 	return strings.Join(renderedActions, " | ")
 }
 
-var GlobalActions = []string{
-	"n - New Game",
-	"f - Find Game",
-	"p - Profile",
-	"q - Quit",
-}
+var GlobalActions = []string{"n - New Game", "f - Join Game", "p - Profile", "t - Leaderboard", "ctrl+c - Quit"}
 
 var (
 	Box = lg.NewStyle().

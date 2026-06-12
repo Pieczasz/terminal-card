@@ -7,7 +7,7 @@ import (
 	"terminalcard/internal/tui/router"
 )
 
-// BaseState contains standard engine state applicable to most games.
+// BaseState contains a standard engine state applicable to most games.
 type BaseState struct {
 	Phase         game.Phase
 	MyTurn        bool

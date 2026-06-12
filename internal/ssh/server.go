@@ -4,6 +4,7 @@ package ssh
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"terminalcard/internal/config"
 	"terminalcard/internal/db"
@@ -50,10 +51,11 @@ func (t *SessionTracker) Disconnect(userID uint) {
 }
 
 type ServerDependencies struct {
-	Config       *config.Config
-	Queries      *db.Queries
-	LobbyManager *lobby.Manager
-	GameRegistry *game.Registry
+	Config          *config.Config
+	UserRepository  db.UserRepository
+	MatchRepository db.MatchRepository
+	LobbyManager    *lobby.Manager
+	GameRegistry    *game.Registry
 }
 
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
@@ -80,19 +82,36 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		wish.WithMiddleware(
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("critical panic recovered during ssh session", "panic", r, "user", s.User(), "remote_addr", s.RemoteAddr().String())
+							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+						}
+
+						fingerprint, err := AuthenticateSession(s)
+						if err != nil {
+							return
+						}
+						user, err := LoadOrRegisterUser(s.Context(), deps.UserRepository, s.User(), fingerprint)
+						if err == nil && s.Context().Value("owns_connection") == true {
+							tracker.Disconnect(user.ID)
+							p := &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
+							deps.LobbyManager.LeaveLobby(p)
+						}
+					}()
+
 					sh(s)
-					user, err := AuthenticateAndLoadUser(deps.Queries, s)
-					if err == nil && s.Context().Value("owns_connection") == true {
-						tracker.Disconnect(user.ID)
-						p := &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
-						deps.LobbyManager.LeaveLobby(p)
-					}
 				}
 			},
 
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 				// TODO: refactor getting user multiple times?
-				user, err := AuthenticateAndLoadUser(deps.Queries, s)
+				fingerprint, err := AuthenticateSession(s)
+				if err != nil {
+					wish.Fatalf(s, "%v\n", err)
+					return nil, nil
+				}
+				user, err := LoadOrRegisterUser(s.Context(), deps.UserRepository, s.User(), fingerprint)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
@@ -105,7 +124,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 
 				s.Context().SetValue("owns_connection", true)
 
-				return tui.Model(*user, deps.Queries, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{
+				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
 				}
 			}),
