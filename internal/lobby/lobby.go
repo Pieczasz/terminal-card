@@ -364,11 +364,16 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 				userIDs[i] = p.DatabaseUser.ID
 			}
 			if l.options.isRanked && l.options.cardGame != nil {
-				deltas, err := l.manager.matchRepo.UpdateRankings(context.Background(), l.options.cardGame.ID, userIDs)
+				game, err := l.manager.matchRepo.GetOrCreateGame(context.Background(), l.options.cardGame.Name)
+				if err != nil {
+					slog.Error("failed to get or create game", "error", err)
+					break
+				}
+				deltas, err := l.manager.matchRepo.UpdateRankings(context.Background(), game.ID, userIDs)
 				if err != nil {
 					slog.Error("failed to update game rankings", "error", err)
 				} else {
-					if err := l.manager.matchRepo.RecordMatch(context.Background(), l.options.cardGame.ID, userIDs, deltas); err != nil {
+					if err := l.manager.matchRepo.RecordMatch(context.Background(), game.ID, userIDs, deltas); err != nil {
 						slog.Error("failed to record match history", "error", err)
 					}
 				}

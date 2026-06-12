@@ -4,57 +4,75 @@ import (
 	"fmt"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/joho/godotenv"
 )
 
 type Config struct {
 	Env            string
+	ServerHost     string
 	ServerPort     int
+	MaxConnections int
 	SSHKeyPath     string
 	DBHost         string
 	DBPort         int
 	DBUser         string
 	DBName         string
 	DBPassword     string
-	DBPasswordFile string
+	DBSslMode      string
 	OTelEndpoint   string
 }
 
 func Load() (*Config, error) {
-	// Attempt to load .env file if it exists (mostly for local development)
-	// It's okay if it fails (e.g. in production using standard env vars or docker compose)
+	// Attempt to load .env file if it exists
 	_ = godotenv.Load()
 
+	env := getEnv("ENV", "development")
+	if env != "production" && env != "development" {
+		env = "development"
+	}
+
+	serverPort, err := getEnvAsInt("SERVER_PORT", 6969)
+	if err != nil {
+		return nil, fmt.Errorf("invalid SERVER_PORT: %w", err)
+	}
+
+	maxConnections, err := getEnvAsInt("MAX_CONNECTIONS", 1000)
+	if err != nil {
+		return nil, fmt.Errorf("invalid MAX_CONNECTIONS: %w", err)
+	}
+
+	dbPort, err := getEnvAsInt("DB_PORT", 5432)
+	if err != nil {
+		return nil, fmt.Errorf("invalid DB_PORT: %w", err)
+	}
+
+	defaultSslMode := "disable"
+	if env == "production" {
+		defaultSslMode = "require"
+	}
+
 	cfg := &Config{
-		Env:            getEnv("ENV", "development"),
-		ServerPort:     getEnvAsInt("SERVER_PORT", 6969),
+		Env:            env,
+		ServerHost:     getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort:     serverPort,
+		MaxConnections: maxConnections,
 		SSHKeyPath:     getEnv("SSH_KEY_PATH", ".wishlist/server"),
 		DBHost:         getEnv("DB_HOST", "localhost"),
-		DBPort:         getEnvAsInt("DB_PORT", 5432),
+		DBPort:         dbPort,
 		DBUser:         getEnv("DB_USER", "postgres"),
 		DBName:         getEnv("DB_NAME", "terminal_card"),
 		DBPassword:     getEnv("DB_PASSWORD", ""),
-		DBPasswordFile: getEnv("DB_PASSWORD_FILE", ""),
+		DBSslMode:      getEnv("DB_SSLMODE", defaultSslMode),
 		OTelEndpoint:   getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "localhost:4317"),
-	}
-
-	// Read password from file if the file is provided (e.g. Docker secrets)
-	if cfg.DBPasswordFile != "" {
-		passwordBytes, err := os.ReadFile(cfg.DBPasswordFile)
-		if err == nil {
-			cfg.DBPassword = strings.TrimSpace(string(passwordBytes))
-		}
 	}
 
 	return cfg, nil
 }
 
 func (c *Config) DSN() string {
-	// TODO: change sslmode=disable to require or verify-full for production
-	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=disable TimeZone=UTC",
-		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort)
+	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=UTC",
+		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort, c.DBSslMode)
 }
 
 func getEnv(key string, fallback string) string {
@@ -64,10 +82,14 @@ func getEnv(key string, fallback string) string {
 	return fallback
 }
 
-func getEnvAsInt(name string, fallback int) int {
+func getEnvAsInt(name string, fallback int) (int, error) {
 	valStr := getEnv(name, "")
-	if val, err := strconv.Atoi(valStr); err == nil {
-		return val
+	if valStr == "" {
+		return fallback, nil
 	}
-	return fallback
+	val, err := strconv.Atoi(valStr)
+	if err != nil {
+		return 0, fmt.Errorf("trying to parse env value failed: %w", err)
+	}
+	return val, nil
 }

@@ -5,13 +5,16 @@ package ssh
 import (
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"terminalcard/internal/config"
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
 	"terminalcard/internal/player"
+	"terminalcard/internal/ratelimit"
 	"terminalcard/internal/tui"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/keygen"
@@ -22,7 +25,22 @@ import (
 	lm "github.com/charmbracelet/wish/logging"
 )
 
-// TODO: add more tracking? GDPR? legal analytics?
+func RateLimitMiddleware(limiter *ratelimit.SlidingWindowLimiter) wish.Middleware {
+	return func(sh ssh.Handler) ssh.Handler {
+		return func(s ssh.Session) {
+			host, _, err := net.SplitHostPort(s.RemoteAddr().String())
+			if err != nil {
+				host = s.RemoteAddr().String()
+			}
+			if !limiter.Allow(host) {
+				wish.Fatalf(s, "Too many connections. Please try again later.\n")
+				return
+			}
+			sh(s)
+		}
+	}
+}
+
 type SessionTracker struct {
 	mu     sync.Mutex
 	active map[uint]bool
@@ -71,15 +89,17 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	}
 
 	tracker := NewSessionTracker()
+	// Allow 5 connections per 1 second sliding window
+	rateLimiter := ratelimit.NewSlidingWindowLimiter(5, time.Second)
 
 	server, err := wish.NewServer(
-		// TODO: refactor to normal address instead of localhost
-		wish.WithAddress(fmt.Sprintf("0.0.0.0:%d", deps.Config.ServerPort)),
+		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
 		}),
 		wish.WithMiddleware(
+			RateLimitMiddleware(rateLimiter),
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
 					defer func() {
@@ -88,15 +108,12 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
 						}
 
-						fingerprint, err := AuthenticateSession(s)
-						if err != nil {
-							return
-						}
-						user, err := LoadOrRegisterUser(s.Context(), deps.UserRepository, s.User(), fingerprint)
-						if err == nil && s.Context().Value("owns_connection") == true {
-							tracker.Disconnect(user.ID)
-							p := &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
-							deps.LobbyManager.LeaveLobby(p)
+						if s.Context().Value("owns_connection") == true {
+							if u, ok := s.Context().Value("user").(*db.User); ok {
+								tracker.Disconnect(u.ID)
+								p := &player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u}
+								deps.LobbyManager.LeaveLobby(p)
+							}
 						}
 					}()
 
@@ -105,7 +122,6 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 			},
 
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				// TODO: refactor getting user multiple times?
 				fingerprint, err := AuthenticateSession(s)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
@@ -123,6 +139,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				}
 
 				s.Context().SetValue("owns_connection", true)
+				s.Context().SetValue("user", user)
 
 				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{
 					tea.WithAltScreen(),
