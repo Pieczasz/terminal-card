@@ -11,10 +11,9 @@ services:
       - DB_PORT=5432
       - DB_USER=postgres
       - DB_NAME=terminal_card
-      - DB_PASSWORD_FILE=/run/secrets/backend-password
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_SSLMODE=disable
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
-    secrets:
-      - backend-password
     depends_on:
       db:
         condition: service_healthy
@@ -22,13 +21,11 @@ services:
   db:
     image: postgres:latest
     restart: always
-    secrets:
-      - db-password
     volumes:
       - db-data:/var/lib/postgresql
     environment:
       - POSTGRES_DB=terminal_card
-      - POSTGRES_PASSWORD_FILE=/run/secrets/db-password
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
     expose:
       - 5432
     healthcheck:
@@ -84,9 +81,3 @@ services:
 
 volumes:
   db-data:
-
-secrets:
-  db-password:
-    file: internal/db/psql_password.txt
-  backend-password:
-    file: internal/db/psql_password.txt

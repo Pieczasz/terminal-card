@@ -19,6 +19,12 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 	return &GormMatchRepository{db: db}
 }
 
+func (q *GormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
+	var game db.Game
+	err := q.db.WithContext(ctx).Where("name = ?", name).FirstOrCreate(&game, db.Game{Name: name}).Error
+	return &game, err
+}
+
 func (q *GormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
 	if len(orderedUserIDs) == 0 {
 		return nil, nil

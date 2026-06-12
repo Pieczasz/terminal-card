@@ -1,9 +1,11 @@
 package router
 
 import (
+	"strings"
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -23,17 +25,27 @@ type GlobalContext struct {
 	Height          int
 }
 
+type tickMsg time.Time
+
+func tick() tea.Cmd {
+	return tea.Tick(10*time.Second, func(t time.Time) tea.Msg {
+		return tickMsg(t)
+	})
+}
+
 type Router struct {
-	Global    GlobalContext
-	views     map[string]func(GlobalContext, any) tea.Model
-	active    tea.Model
-	activeKey string
+	Global       GlobalContext
+	views        map[string]func(GlobalContext, any) tea.Model
+	active       tea.Model
+	activeKey    string
+	lastActivity time.Time
 }
 
 func New(global GlobalContext) *Router {
 	r := &Router{
-		Global: global,
-		views:  make(map[string]func(GlobalContext, any) tea.Model),
+		Global:       global,
+		views:        make(map[string]func(GlobalContext, any) tea.Model),
+		lastActivity: time.Now(),
 	}
 	return r
 }
@@ -53,29 +65,45 @@ func (r *Router) Goto(name string, context any) tea.Cmd {
 }
 
 func (r *Router) Init() tea.Cmd {
+	var cmds []tea.Cmd
+	cmds = append(cmds, tick())
 	if r.active != nil {
-		return r.active.Init()
+		if cmd := r.active.Init(); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
-	return nil
+	return tea.Batch(cmds...)
 }
 
 func (r *Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
+	case tea.KeyMsg, tea.MouseMsg:
+		r.lastActivity = time.Now()
+	case tickMsg:
+		if time.Since(r.lastActivity) > 5*time.Minute && !strings.HasPrefix(r.activeKey, "game_") {
+			return r, tea.Quit
+		}
+		cmds = append(cmds, tick())
 	case tea.WindowSizeMsg:
 		r.Global.Width = msg.Width
 		r.Global.Height = msg.Height
 	case ChangeViewMsg:
 		cmd := r.Goto(msg.ViewName, msg.Context)
-		return r, cmd
+		cmds = append(cmds, cmd)
+		return r, tea.Batch(cmds...)
 	}
 
 	if r.active != nil {
 		var cmd tea.Cmd
 		r.active, cmd = r.active.Update(msg)
-		return r, cmd
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	}
 
-	return r, nil
+	return r, tea.Batch(cmds...)
 }
 
 func (r *Router) View() string {

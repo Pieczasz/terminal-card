@@ -20,7 +20,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		return m.handleKey(msg)
-	case game.Event:
+	case gameMsg:
 		return m.syncState(), listenForEvents(m.events)
 	}
 

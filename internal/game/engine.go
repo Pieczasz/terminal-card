@@ -68,9 +68,8 @@ func (e *Engine) Start() error {
 	defer e.mu.Unlock()
 	e.state.Phase = Dealing
 
-	cards := deck.New(e.state.Rules.InitialDeck())
 	for playerIdx := range e.state.Players {
-		cards, ok := cards.DrawNCards(e.state.Rules.InitialDealCount())
+		cards, ok := e.state.Deck.DrawNCards(e.state.Rules.InitialDealCount())
 		if !ok {
 			slog.Error("miscalculated maximum number of players/some bug with dealing happen", "engine", e)
 			return errors.New("insufficient number of cards to deal for all players")

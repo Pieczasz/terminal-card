@@ -9,6 +9,9 @@ type subscriber[T any] struct {
 	ch chan T
 }
 
+// TODO: if the project grows and requires horizontal scaling across multiple
+// servers, we should consider replacing this custom broadcaster with a
+// pub/sub library like Watermill (using Redis or go channels).
 type Broadcaster[T any] struct {
 	mu          sync.RWMutex
 	subscribers map[int]*subscriber[T]
