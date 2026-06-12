@@ -63,11 +63,17 @@ func (m *MockRules) CheckWinCondition(state *State) bool {
 	return args.Bool(0)
 }
 
+func (m *MockRules) GetStandings(state *State) []*player.Player {
+	args := m.Called(state)
+	return args.Get(0).([]*player.Player)
+}
+
 func setupMockRules() *MockRules {
 	m := new(MockRules)
 	m.On("InitialDeck").Return(deck.StandardDeck())
 	m.On("InitialDealCount").Return(5)
 	m.On("OnGameStart", mock.Anything).Return(nil)
+	m.On("GetStandings", mock.Anything).Return([]*player.Player{}).Maybe()
 	return m
 }
 

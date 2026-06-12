@@ -104,6 +104,8 @@ func (m Model) renderCurrentSuitIndicator() string {
 		suitStr = "♦ Diamonds"
 	case deck.Clubs:
 		suitStr = "♣ Clubs"
+	case deck.NoSuit:
+		suitStr = ""
 	}
 
 	if suitStr == "" {

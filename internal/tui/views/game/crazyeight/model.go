@@ -50,11 +50,11 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 		engine: engine,
 		events: ch,
 	}
-	m.syncState()
+	m = m.syncState()
 	return m
 }
 
-func (m *Model) syncState() {
+func (m Model) syncState() Model {
 	m.baseState = gameview.SyncBaseState(m.global, m.engine)
 
 	if m.engine != nil {
@@ -69,6 +69,8 @@ func (m *Model) syncState() {
 	if m.selectedCardIdx >= len(m.baseState.Hand) {
 		m.selectedCardIdx = max(len(m.baseState.Hand)-1, 0)
 	}
+
+	return m
 }
 
 func (m Model) Init() tea.Cmd {

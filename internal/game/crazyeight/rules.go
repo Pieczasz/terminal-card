@@ -6,6 +6,7 @@ import (
 	"slices"
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
+	"terminalcard/internal/player"
 )
 
 type CrazyEightsRules struct{}
@@ -157,4 +158,15 @@ func (r *CrazyEightsRules) CheckWinCondition(state *game.State) bool {
 		}
 	}
 	return false
+}
+
+func (r *CrazyEightsRules) GetStandings(state *game.State) []*player.Player {
+	standings := make([]*player.Player, len(state.Players))
+	copy(standings, state.Players)
+
+	slices.SortStableFunc(standings, func(a, b *player.Player) int {
+		return len(a.Cards) - len(b.Cards)
+	})
+
+	return standings
 }

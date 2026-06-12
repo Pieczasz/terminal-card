@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views/common"
+	"terminalcard/internal/tui/views"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -22,7 +22,7 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := common.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
 
@@ -35,6 +35,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+		case "t":
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 		}
 	}
 	return m, nil
@@ -52,5 +54,5 @@ func (m model) View() string {
 
 	homePageActions := styles.RenderActionFooter(styles.GlobalActions)
 
-	return common.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions)
+	return views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions)
 }

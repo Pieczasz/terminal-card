@@ -14,12 +14,13 @@ type ChangeViewMsg struct {
 }
 
 type GlobalContext struct {
-	User         *db.User
-	Queries      *db.Queries
-	LobbyManager *lobby.Manager
-	GameRegistry *game.Registry
-	Width        int
-	Height       int
+	User            *db.User
+	UserRepository  db.UserRepository
+	MatchRepository db.MatchRepository
+	LobbyManager    *lobby.Manager
+	GameRegistry    *game.Registry
+	Width           int
+	Height          int
 }
 
 type Router struct {
