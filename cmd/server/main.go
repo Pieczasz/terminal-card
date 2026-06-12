@@ -9,6 +9,7 @@ import (
 	"terminalcard/internal/game/crazyeight"
 	"terminalcard/internal/lobby"
 	"terminalcard/internal/observability"
+	"terminalcard/internal/repository"
 	"terminalcard/internal/ssh"
 
 	"github.com/charmbracelet/lipgloss"
@@ -46,16 +47,19 @@ func main() {
 		panic(err)
 	}
 
-	queries := db.NewQueries(database)
-	lobbyManager := lobby.NewManager(queries)
+	userRepo := repository.NewUserRepository(database)
+	matchRepo := repository.NewMatchRepository(database)
+	lobbyManager := lobby.NewManager(matchRepo)
 	gameRegistry := game.NewRegistry()
+	// TODO: dont forget to register games here
 	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
 
 	deps := ssh.ServerDependencies{
-		Config:       cfg,
-		Queries:      queries,
-		LobbyManager: lobbyManager,
-		GameRegistry: gameRegistry,
+		Config:          cfg,
+		UserRepository:  userRepo,
+		MatchRepository: matchRepo,
+		LobbyManager:    lobbyManager,
+		GameRegistry:    gameRegistry,
 	}
 	server, err := ssh.SetupServer(deps)
 	if err != nil {

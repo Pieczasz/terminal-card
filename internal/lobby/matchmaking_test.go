@@ -188,7 +188,7 @@ func TestManager_PublicLobbies(t *testing.T) {
 	l2, _ := m.New(p2, WithPrivate(true))
 	l3, _ := m.New(p3, WithPrivate(false))
 
-	public := m.PublicLobbies()
+	public := m.PublicLobbies(nil)
 	assert.Len(t, public, 2)
 
 	codes := []string{public[0].Code(), public[1].Code()}

@@ -1,6 +1,7 @@
 package ssh
 
 import (
+	"context"
 	"crypto/ed25519"
 	"crypto/rand"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
+	"terminalcard/internal/repository"
 	"terminalcard/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
@@ -42,23 +44,25 @@ func generateSigner(t *testing.T) cryptossh.Signer {
 }
 
 type testEnv struct {
-	queries *db.Queries
-	addr    string
-	cleanup func()
+	userRepo db.UserRepository
+	addr     string
+	cleanup  func()
 }
 
 func setupTestEnvironment(t *testing.T) testEnv {
 	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
-	queries := db.NewQueries(gormDB)
+	userRepo := repository.NewUserRepository(gormDB)
+	matchRepo := repository.NewMatchRepository(gormDB)
 
 	port, err := getFreePort()
 	require.NoError(t, err)
 
 	deps := ServerDependencies{
-		Config:       &config.Config{ServerPort: port, SSHKeyPath: t.TempDir() + "/id_ed25519"},
-		Queries:      queries,
-		LobbyManager: lobby.NewManager(nil),
-		GameRegistry: game.NewRegistry(),
+		Config:          &config.Config{ServerPort: port, SSHKeyPath: t.TempDir() + "/id_ed25519"},
+		UserRepository:  userRepo,
+		MatchRepository: matchRepo,
+		LobbyManager:    lobby.NewManager(matchRepo),
+		GameRegistry:    game.NewRegistry(),
 	}
 
 	server, err := SetupServer(deps)
@@ -72,9 +76,9 @@ func setupTestEnvironment(t *testing.T) testEnv {
 	time.Sleep(100 * time.Millisecond)
 
 	return testEnv{
-		queries: queries,
-		addr:    fmt.Sprintf("127.0.0.1:%d", port),
-		cleanup: func() { server.Close() },
+		userRepo: userRepo,
+		addr:     fmt.Sprintf("127.0.0.1:%d", port),
+		cleanup:  func() { server.Close() },
 	}
 }
 
@@ -111,7 +115,7 @@ func TestServer_NewUserConnection(t *testing.T) {
 	var user *db.User
 	var key *db.PublicKey
 	for range 10 {
-		user, key, _ = env.queries.LoadUserByFingerprint(cryptossh.FingerprintSHA256(signer.PublicKey()))
+		user, key, _ = env.userRepo.LoadUserByFingerprint(context.Background(), cryptossh.FingerprintSHA256(signer.PublicKey()))
 		if user != nil {
 			break
 		}
