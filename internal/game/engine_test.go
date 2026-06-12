@@ -70,7 +70,7 @@ func (m *MockRules) GetStandings(state *State) []*player.Player {
 
 func setupMockRules() *MockRules {
 	m := new(MockRules)
-	m.On("InitialDeck").Return(deck.StandardDeck())
+	m.On("InitialDeck").Return(deck.StandardDeck()).Maybe()
 	m.On("InitialDealCount").Return(5)
 	m.On("OnGameStart", mock.Anything).Return(nil)
 	m.On("GetStandings", mock.Anything).Return([]*player.Player{}).Maybe()
