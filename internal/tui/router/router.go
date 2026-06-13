@@ -7,7 +7,7 @@ import (
 	"terminalcard/internal/lobby"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type ChangeViewMsg struct {
@@ -79,7 +79,7 @@ func (r *Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg, tea.MouseMsg:
+	case tea.KeyPressMsg, tea.MouseMsg:
 		r.lastActivity = time.Now()
 	case tickMsg:
 		if time.Since(r.lastActivity) > 5*time.Minute && !strings.HasPrefix(r.activeKey, "game_") {
@@ -106,9 +106,13 @@ func (r *Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return r, tea.Batch(cmds...)
 }
 
-func (r *Router) View() string {
+func (r *Router) View() tea.View {
 	if r.active != nil {
-		return r.active.View()
+		v := r.active.View()
+		v.AltScreen = true
+		return v
 	}
-	return "No active view"
+	v := tea.NewView("No active view")
+	v.AltScreen = true
+	return v
 }

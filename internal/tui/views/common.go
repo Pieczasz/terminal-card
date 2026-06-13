@@ -4,8 +4,8 @@ import (
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/styles"
 
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
 func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) {
@@ -14,7 +14,7 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		global.Width = msg.Width
 		global.Height = msg.Height
 		return true, nil
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return true, tea.Quit

@@ -6,7 +6,7 @@ import (
 	"terminalcard/internal/tui/styles"
 	"terminalcard/internal/tui/views"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 type model struct {
@@ -27,7 +27,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
@@ -42,7 +42,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	innerWidth := styles.GetInnerWidth(m.global.Width)
 
 	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
@@ -54,5 +54,5 @@ func (m model) View() string {
 
 	homePageActions := styles.RenderActionFooter(styles.GlobalActions)
 
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions))
 }

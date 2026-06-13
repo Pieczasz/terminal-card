@@ -6,33 +6,55 @@ import (
 	"terminalcard/internal/tui/components"
 	gameview "terminalcard/internal/tui/views/game"
 
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
-func (m Model) View() string {
+func (m Model) View() tea.View {
 	if m.baseState.Phase != game.Playing {
-		return gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner)
+		return tea.NewView(gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner))
 	}
 
-	topHeight := m.global.Height / 3
-	midHeight := m.global.Height / 3
-	botHeight := m.global.Height - topHeight - midHeight
+	compactMode := m.global.Height < 30
+	superCompact := m.global.Height < 24
 
-	topArea := lg.Place(m.global.Width, topHeight, lg.Center, lg.Top, lg.NewStyle().MarginTop(4).Render(m.renderTopOpponent()))
-	midArea := m.renderMiddleLayer(midHeight)
+	topSection := m.renderTopOpponent(superCompact)
+	var topAreaContent string
+	if superCompact {
+		topAreaContent = topSection
+	} else {
+		topAreaContent = lg.NewStyle().MarginTop(1).Render(topSection)
+	}
 
 	mySection := m.renderPlayerSection()
-	helperText := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).Render("←/h: left | →/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
-	fullPlayerArea := lg.NewStyle().MarginBottom(3).Render(lg.JoinVertical(lg.Center, mySection, helperText))
+	var fullPlayerArea string
+	if superCompact {
+		fullPlayerArea = mySection
+	} else if compactMode {
+		helperText := lg.NewStyle().Foreground(lg.Color("#888888")).Render("←/h: left | →/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
+		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, helperText)
+	} else {
+		helperText := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).Render("←/h: left | →/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
+		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, helperText))
+	}
 
-	botArea := lg.Place(m.global.Width, botHeight, lg.Center, lg.Bottom, fullPlayerArea)
+	topHeight := lg.Height(topAreaContent)
+	botHeight := lg.Height(fullPlayerArea)
+	midHeight := m.global.Height - topHeight - botHeight
+	if midHeight < 0 {
+		midHeight = 0
+	}
 
-	return lg.JoinVertical(lg.Left, topArea, midArea, botArea)
+	topArea := lg.PlaceHorizontal(m.global.Width, lg.Center, topAreaContent)
+	midArea := m.renderMiddleLayer(midHeight, superCompact)
+	botArea := lg.PlaceHorizontal(m.global.Width, lg.Center, fullPlayerArea)
+
+	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
 }
 
-func (m Model) renderMiddleLayer(height int) string {
-	leftOpponent := m.renderLeftOpponent()
-	rightOpponent := m.renderRightOpponent()
+func (m Model) renderMiddleLayer(height int, superCompact bool) string {
+	leftOpponent := m.renderLeftOpponent(superCompact)
+	rightOpponent := m.renderRightOpponent(superCompact)
 
 	var centerStack string
 	if m.pickingSuit {
@@ -52,7 +74,7 @@ func (m Model) renderMiddleLayer(height int) string {
 	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
 }
 
-func (m Model) renderTopOpponent() string {
+func (m Model) renderTopOpponent(superCompact bool) string {
 	if len(m.baseState.Opponents) == 1 || len(m.baseState.Opponents) >= 3 {
 		idx := 0
 		if len(m.baseState.Opponents) >= 3 {
@@ -60,28 +82,40 @@ func (m Model) renderTopOpponent() string {
 		}
 		o := m.baseState.Opponents[idx]
 		isTurn := m.baseState.CurrentPlayer == o.ID
+		if superCompact {
+			return gameview.RenderOpponentMinimal(o, isTurn)
+		}
 		return gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
 	}
 	return ""
 }
 
-func (m Model) renderLeftOpponent() string {
+func (m Model) renderLeftOpponent(superCompact bool) string {
 	if len(m.baseState.Opponents) >= 2 {
 		o := m.baseState.Opponents[0]
 		isTurn := m.baseState.CurrentPlayer == o.ID
+		if superCompact {
+			return gameview.RenderOpponentMinimal(o, isTurn)
+		}
 		return gameview.RenderOpponent(o, isTurn, gameview.OrientationLeft)
 	}
 	return ""
 }
 
-func (m Model) renderRightOpponent() string {
+func (m Model) renderRightOpponent(superCompact bool) string {
 	if len(m.baseState.Opponents) == 2 {
 		o := m.baseState.Opponents[1]
 		isTurn := m.baseState.CurrentPlayer == o.ID
+		if superCompact {
+			return gameview.RenderOpponentMinimal(o, isTurn)
+		}
 		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
 	} else if len(m.baseState.Opponents) >= 3 {
 		o := m.baseState.Opponents[2]
 		isTurn := m.baseState.CurrentPlayer == o.ID
+		if superCompact {
+			return gameview.RenderOpponentMinimal(o, isTurn)
+		}
 		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
 	}
 	return ""
@@ -118,7 +152,7 @@ func (m Model) renderCurrentSuitIndicator() string {
 
 func (m Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
-	handView := gameview.RenderHand(m.baseState.Hand, m.selectedCardIdx, m.pickingSuit)
+	handView := gameview.RenderHand(m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
 
 	return lg.JoinVertical(lg.Center,
 		statusView,

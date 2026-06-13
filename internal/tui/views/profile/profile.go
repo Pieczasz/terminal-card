@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"terminalcard/internal/tui/views"
 
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 
 	"terminalcard/internal/db"
 	"terminalcard/internal/tui/router"
@@ -56,7 +56,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			slog.Error("database error while loading user profile", "error", msg.err)
 		}
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc", "q":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
@@ -72,7 +72,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	return m, nil
 }
-func (m model) View() string {
+func (m model) View() tea.View {
 	titleFig := styles.RenderFigureASCII("User Profile", styles.GetInnerWidth(m.global.Width))
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
@@ -144,5 +144,5 @@ func (m model) View() string {
 
 		content = lg.NewStyle().Align(lg.Left).Render(lg.JoinVertical(lg.Left, centeredUserInfo, "", tables))
 	}
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer))
 }

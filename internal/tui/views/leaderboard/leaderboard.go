@@ -7,8 +7,8 @@ import (
 	"strings"
 	"terminalcard/internal/tui/views"
 
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 
 	"terminalcard/internal/db"
 	"terminalcard/internal/tui/router"
@@ -57,7 +57,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			slog.Error("database error while fetching leaderboard", "error", msg.err)
 		}
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
@@ -74,7 +74,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	innerWidth := styles.GetInnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Leaderboard", innerWidth)
 	titleText := styles.Title.Render(titleFig)
@@ -94,7 +94,7 @@ func (m model) View() string {
 		content = m.renderRankings(contentWidth, contentHeight)
 	}
 
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, content, footer)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, content, footer))
 }
 
 func (m model) renderError() string {

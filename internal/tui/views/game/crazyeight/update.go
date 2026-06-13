@@ -8,8 +8,9 @@ import (
 	"terminalcard/internal/player"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/views"
+	"terminalcard/internal/tui/animation"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 )
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -18,16 +19,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case gameMsg:
 		return m.syncState(), listenForEvents(m.events)
+	case animation.FrameMsg:
+		m.selectionLift, m.selectionVel = m.selectionSpring.Update(m.selectionLift, m.selectionVel, 2.0)
+		return m, animation.Tick()
 	}
 
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m.handleEscape()
@@ -75,6 +79,8 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedCardIdx > 0 {
 		m.selectedCardIdx--
+		m.selectionLift = 0
+		m.selectionVel = 0
 	}
 	return m, nil
 }
@@ -88,6 +94,8 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedCardIdx < len(m.baseState.Hand)-1 {
 		m.selectedCardIdx++
+		m.selectionLift = 0
+		m.selectionVel = 0
 	}
 	return m, nil
 }

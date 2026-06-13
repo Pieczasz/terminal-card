@@ -4,10 +4,12 @@ import (
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
 	logic "terminalcard/internal/game/crazyeight"
+	"terminalcard/internal/tui/animation"
 	"terminalcard/internal/tui/router"
 	gameview "terminalcard/internal/tui/views/game"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/harmonica"
 )
 
 type gameMsg game.Event
@@ -21,9 +23,13 @@ type Model struct {
 	selectedCardIdx int
 
 	// Crazy Eights specific
-	currentSuit deck.Suit
-	pickingSuit bool
-	suitCursor  int
+	currentSuit     deck.Suit
+	pickingSuit     bool
+	suitCursor      int
+	lastActionErr   error
+	selectionSpring harmonica.Spring
+	selectionLift   float64
+	selectionVel    float64
 }
 
 func listenForEvents(ch <-chan game.Event) tea.Cmd {
@@ -46,9 +52,12 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 		ch = engine.Broadcaster().Subscribe()
 	}
 	m := Model{
-		global: global,
-		engine: engine,
-		events: ch,
+		global:          global,
+		engine:          engine,
+		events:          ch,
+		selectionSpring: animation.DefaultSpring(),
+		selectionLift:   2.0,
+		selectionVel:    0,
 	}
 	m = m.syncState()
 	return m
@@ -74,5 +83,8 @@ func (m Model) syncState() Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	return listenForEvents(m.events)
+	return tea.Batch(
+		listenForEvents(m.events),
+		animation.Tick(),
+	)
 }

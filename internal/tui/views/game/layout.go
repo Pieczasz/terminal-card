@@ -9,13 +9,23 @@ import (
 	"terminalcard/internal/tui/styles"
 	"terminalcard/internal/tui/views"
 
-	lg "github.com/charmbracelet/lipgloss"
+	"math"
+
+	lg "charm.land/lipgloss/v2"
 )
 
-func RenderHand(hand []deck.Card, selectedIdx int, disableSelection bool) string {
+func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disableSelection bool) string {
 	var renderedCards []string
 	for i, c := range hand {
 		isSelected := i == selectedIdx && !disableSelection
+		var lift int
+		if isSelected {
+			lift = int(math.Round(selectionLift))
+			if lift < 0 {
+				lift = 0
+			}
+		}
+
 		cardView := components.RenderCard(c, isSelected)
 		if i < 10 {
 			numStyle := lg.NewStyle().Foreground(lg.Color("#888888"))
@@ -25,6 +35,17 @@ func RenderHand(hand []deck.Card, selectedIdx int, disableSelection bool) string
 			numView := numStyle.Render(fmt.Sprintf("%d", i))
 			cardView = lg.JoinVertical(lg.Center, cardView, numView)
 		}
+
+		maxLift := 2
+		if lift > maxLift {
+			lift = maxLift
+		}
+
+		cardView = lg.NewStyle().
+			MarginTop(maxLift - lift).
+			MarginBottom(lift).
+			Render(cardView)
+
 		renderedCards = append(renderedCards, cardView)
 	}
 	return lg.JoinHorizontal(lg.Top, renderedCards...)
@@ -155,6 +176,17 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 	default:
 		return lg.JoinVertical(lg.Right, infoView, cardsView)
 	}
+}
+
+func RenderOpponentMinimal(o game.PlayerSnapshot, isCurrentTurn bool) string {
+	nameStyle := lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true)
+	if isCurrentTurn {
+		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
+	}
+	nameView := nameStyle.Render(o.ID)
+	cardsCountView := lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render(fmt.Sprintf("[%d cards]", o.HandSize))
+
+	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }
 
 func RenderStatus(currentPlayer string, isMyTurn bool) string {

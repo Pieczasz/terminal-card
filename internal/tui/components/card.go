@@ -4,7 +4,7 @@ import (
 	"strings"
 	"terminalcard/internal/deck"
 
-	lg "github.com/charmbracelet/lipgloss"
+	lg "charm.land/lipgloss/v2"
 )
 
 func getSuitInfo(suit deck.Suit) (string, lg.Style) {
