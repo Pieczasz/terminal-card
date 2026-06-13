@@ -11,8 +11,8 @@ import (
 	"terminalcard/internal/tui/styles"
 	"terminalcard/internal/tui/views"
 
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
 type lobbyMsg lobby.Event
@@ -82,7 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.showLeaveConfirm {
 			switch msg.String() {
 			case "y", "Y":
@@ -202,9 +202,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) View() string {
+func (m model) View() tea.View {
 	if m.currentLobby == nil {
-		return "No active lobby."
+		return tea.NewView("No active lobby.")
 	}
 
 	innerWidth := styles.GetInnerWidth(m.global.Width)
@@ -224,7 +224,7 @@ func (m model) View() string {
 		redYes := lg.NewStyle().Foreground(lg.Color("#FF4444")).Bold(true).Render("Yes")
 		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
 
-		return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer)
+		return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer))
 	}
 
 	renderOption := func(idx int, label, value string) string {
@@ -305,5 +305,5 @@ func (m model) View() string {
 		form = lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
 	}
 
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer))
 }

@@ -5,7 +5,7 @@ import (
 
 	"terminalcard/internal/tui/router"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -24,7 +24,7 @@ func TestHome_Update(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("key_"+tt.key, func(t *testing.T) {
-			keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(tt.key)}
+			keyMsg := tea.KeyPressMsg{Code: rune(tt.key[0]), Text: tt.key}
 			_, cmd := m.Update(keyMsg)
 
 			assert.NotNil(t, cmd)

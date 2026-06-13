@@ -9,8 +9,8 @@ import (
 	"terminalcard/internal/tui/styles"
 	"terminalcard/internal/tui/views"
 
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
 type createModel struct {
@@ -44,7 +44,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "esc":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
@@ -110,7 +110,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m createModel) View() string {
+func (m createModel) View() tea.View {
 	renderOption := func(idx int, label, value string) string {
 		cursor := "  "
 		if m.cursor == idx {
@@ -159,5 +159,5 @@ func (m createModel) View() string {
 	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer))
 }

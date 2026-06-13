@@ -3,7 +3,7 @@ package router
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -16,7 +16,7 @@ func (m MockModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	m.handledMsg = msg
 	return m, nil
 }
-func (m MockModel) View() string { return "mock" }
+func (m MockModel) View() tea.View { return tea.NewView("mock") }
 
 func TestRouter_RegistrationAndRouting(t *testing.T) {
 	t.Parallel()
@@ -42,7 +42,7 @@ func TestRouter_UpdatePropagation(t *testing.T) {
 
 	r.Goto("mock", nil)
 
-	keyMsg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("a")}
+	keyMsg := tea.KeyPressMsg{Code: rune("a"[0]), Text: "a"}
 	newModel, _ := r.Update(keyMsg)
 
 	assert.Equal(t, keyMsg, newModel.(*Router).active.(MockModel).handledMsg)

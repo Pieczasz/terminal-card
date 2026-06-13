@@ -17,15 +17,12 @@ import (
 	"terminalcard/internal/repository"
 	"terminalcard/internal/ssh"
 	"time"
-
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"golang.org/x/net/netutil"
 )
 
 func main() {
-	lipgloss.SetColorProfile(termenv.TrueColor)
+
 
 	cfg, err := config.Load()
 	if err != nil {

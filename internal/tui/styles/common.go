@@ -3,7 +3,7 @@ package styles
 import (
 	"strings"
 
-	lg "github.com/charmbracelet/lipgloss"
+	lg "charm.land/lipgloss/v2"
 	"github.com/common-nighthawk/go-figure"
 )
 
@@ -62,10 +62,17 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
+	// Pre-wrap header and footer so their heights are accurately calculated
+	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(header)
+	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(footer)
+
 	hHeader := lg.Height(header)
 	hFooter := lg.Height(footer)
 
 	hContent := innerHeight - hHeader - hFooter
+	if hContent < 0 {
+		hContent = 0
+	}
 
 	// Optical centering: by adding two invisible lines to the bottom of the content block,
 	// lipgloss's math pushes the visible text exactly 1 line UP, which feels more natural to the eye.

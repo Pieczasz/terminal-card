@@ -8,9 +8,9 @@ import (
 	"terminalcard/internal/tui/styles"
 	"terminalcard/internal/tui/views"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	lg "github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
 type joinModel struct {
@@ -25,7 +25,7 @@ func NewJoin(global router.GlobalContext) tea.Model {
 	ti := textinput.New()
 	ti.Placeholder = "6-character code"
 	ti.CharLimit = 6
-	ti.Width = 20
+	ti.SetWidth(20)
 
 	return joinModel{
 		global:      global,
@@ -55,14 +55,14 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		if m.writingCode {
-			switch msg.Type {
-			case tea.KeyEsc:
+			switch msg.String() {
+			case "esc":
 				m.writingCode = false
 				m.textInput.Blur()
 				return m, nil
-			case tea.KeyEnter:
+			case "enter":
 				code := strings.ToUpper(m.textInput.Value())
 				if code == "" {
 					return m, nil
@@ -125,7 +125,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m joinModel) View() string {
+func (m joinModel) View() tea.View {
 	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 	lobbies := m.global.LobbyManager.PublicLobbies(p)
 
@@ -170,10 +170,9 @@ func (m joinModel) View() string {
 	innerWidth := styles.GetInnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Join Game", innerWidth)
 	titleText := styles.Title.Render(titleFig)
-	header := styles.Title.Render(titleText)
 
 	footerActions := append([]string{"c - Enter Code"}, styles.GlobalActions...)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
-	return views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer)
+	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, content, footer))
 }
