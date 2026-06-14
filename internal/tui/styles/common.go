@@ -69,10 +69,7 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	hHeader := lg.Height(header)
 	hFooter := lg.Height(footer)
 
-	hContent := innerHeight - hHeader - hFooter
-	if hContent < 0 {
-		hContent = 0
-	}
+	hContent := max(innerHeight-hHeader-hFooter, 0)
 
 	// Optical centering: by adding two invisible lines to the bottom of the content block,
 	// lipgloss's math pushes the visible text exactly 1 line UP, which feels more natural to the eye.

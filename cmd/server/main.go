@@ -17,13 +17,12 @@ import (
 	"terminalcard/internal/repository"
 	"terminalcard/internal/ssh"
 	"time"
+
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"golang.org/x/net/netutil"
 )
 
 func main() {
-
-
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)

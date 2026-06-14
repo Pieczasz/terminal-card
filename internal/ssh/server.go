@@ -17,12 +17,12 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/keygen"
-	"github.com/charmbracelet/ssh"
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
 	lm "charm.land/wish/v2/logging"
+	"github.com/charmbracelet/keygen"
+	"github.com/charmbracelet/ssh"
 )
 
 func RateLimitMiddleware(limiter *ratelimit.SlidingWindowLimiter) wish.Middleware {
@@ -141,9 +141,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				s.Context().SetValue("owns_connection", true)
 				s.Context().SetValue("user", user)
 
-				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{
-					
-				}
+				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
 			}),
 			lm.Middleware(),
 			activeterm.Middleware(),

@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -19,6 +20,12 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		t.Skip("skipping DB integration test in short mode")
 	}
 
+	// Check if Docker provider can be initialized
+	_, err := testcontainers.ProviderDocker.GetProvider()
+	if err != nil {
+		t.Skipf("skipping test because Docker provider is not available: %v", err)
+	}
+
 	ctx := context.Background()
 
 	postgresContainer, err := tcpostgres.Run(ctx,
@@ -33,6 +40,10 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		),
 	)
 	if err != nil {
+		errStr := err.Error()
+		if strings.Contains(errStr, "docker") || strings.Contains(errStr, "Docker") || strings.Contains(errStr, "daemon") || strings.Contains(errStr, "provider") {
+			t.Skipf("skipping test because Docker is not available or not running: %v", err)
+		}
 		t.Fatalf("failed to start postgres container: %v", err)
 	}
 
