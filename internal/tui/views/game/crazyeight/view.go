@@ -40,10 +40,7 @@ func (m Model) View() tea.View {
 
 	topHeight := lg.Height(topAreaContent)
 	botHeight := lg.Height(fullPlayerArea)
-	midHeight := m.global.Height - topHeight - botHeight
-	if midHeight < 0 {
-		midHeight = 0
-	}
+	midHeight := max(m.global.Height-topHeight-botHeight, 0)
 
 	topArea := lg.PlaceHorizontal(m.global.Width, lg.Center, topAreaContent)
 	midArea := m.renderMiddleLayer(midHeight, superCompact)

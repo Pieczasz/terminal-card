@@ -6,9 +6,9 @@ import (
 	"terminalcard/internal/game"
 	logic "terminalcard/internal/game/crazyeight"
 	"terminalcard/internal/player"
+	"terminalcard/internal/tui/animation"
 	"terminalcard/internal/tui/router"
 	"terminalcard/internal/tui/views"
-	"terminalcard/internal/tui/animation"
 
 	tea "charm.land/bubbletea/v2"
 )

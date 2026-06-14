@@ -20,10 +20,7 @@ func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disabl
 		isSelected := i == selectedIdx && !disableSelection
 		var lift int
 		if isSelected {
-			lift = int(math.Round(selectionLift))
-			if lift < 0 {
-				lift = 0
-			}
+			lift = max(int(math.Round(selectionLift)), 0)
 		}
 
 		cardView := components.RenderCard(c, isSelected)

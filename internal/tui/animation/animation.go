@@ -17,7 +17,7 @@ func Tick() tea.Cmd {
 	})
 }
 
-// DefaultSpring returns a bouncy spring
+// DefaultSpring returns a bouncy spring.
 func DefaultSpring() harmonica.Spring {
 	// frequency: higher is faster
 	// damping: 1.0 is no bounce
