@@ -33,16 +33,17 @@ func main() {
 	otelShutdown, err := observability.SetupOTel(ctx, cfg)
 	if err != nil {
 		slog.Error("failed to setup OpenTelemetry", "error", err)
-	} else {
-		defer func() {
-			if err := otelShutdown(ctx); err != nil {
-				slog.Error("failed to shutdown OpenTelemetry", "error", err)
-			}
-		}()
-
-		otelLogger := otelslog.NewLogger("terminal-card-server")
-		slog.SetDefault(otelLogger)
+		panic(err)
 	}
+	defer func() {
+		if err := otelShutdown(ctx); err != nil {
+			slog.Error("failed to shutdown OpenTelemetry", "error", err)
+		}
+	}()
+
+	// TODO: change logger name
+	otelLogger := otelslog.NewLogger("terminal-card-server")
+	slog.SetDefault(otelLogger)
 
 	database, err := db.Connect(cfg)
 	if err != nil {

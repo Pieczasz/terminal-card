@@ -29,10 +29,6 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 		return err
 	}
 
-	handleErr := func(inErr error) {
-		err = errors.Join(err, inErr)
-	}
-
 	res, err := newResource()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
@@ -45,7 +41,7 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 
 	loggerProvider, err := newLoggerProvider(ctx, cfg, res)
 	if err != nil {
-		handleErr(err)
+		err = errors.Join(err)
 		return
 	}
 	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)

@@ -29,7 +29,6 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 
 	timestamps := s.logs[ip]
 
-	// Purge timestamps older than the sliding window threshold
 	var validTimestamps []time.Time
 	for _, t := range timestamps {
 		if t.After(threshold) {
@@ -37,15 +36,12 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 		}
 	}
 
-	// Check if the current valid timestamps hit the limit
 	if len(validTimestamps) >= s.limit {
 		s.logs[ip] = validTimestamps
 		return false
 	}
 
-	// Allow the request and record the new timestamp
 	validTimestamps = append(validTimestamps, now)
 	s.logs[ip] = validTimestamps
-
 	return true
 }
