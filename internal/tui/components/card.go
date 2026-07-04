@@ -7,7 +7,38 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-func getSuitInfo(suit deck.Suit) (string, lg.Style) {
+func RenderCard(card deck.Card, selected bool) string {
+	suitStr, style := getSuit(card.Suit)
+	cleanRank := strings.TrimSpace(getRankStr(card.Rank))
+
+	topRank := style.Render(lg.Place(7, 1, lg.Left, lg.Center, cleanRank))
+	centerSuit := style.Render(lg.Place(7, 1, lg.Center, lg.Center, suitStr))
+	bottomRank := style.Render(lg.Place(7, 1, lg.Right, lg.Center, cleanRank))
+
+	inner := lg.JoinVertical(lg.Left,
+		topRank,
+		"",
+		centerSuit,
+		"",
+		bottomRank,
+	)
+
+	borderStyle := lg.RoundedBorder()
+	cardStyle := lg.NewStyle().
+		Border(borderStyle).
+		BorderForeground(lg.Color("#EEEEEE")).
+		Padding(0, 1)
+
+	if selected {
+		cardStyle = cardStyle.BorderForeground(lg.Color("#00FF00")).MarginTop(0).MarginBottom(1)
+	} else {
+		cardStyle = cardStyle.MarginTop(1)
+	}
+
+	return cardStyle.Render(inner)
+}
+
+func getSuit(suit deck.Suit) (string, lg.Style) {
 	switch suit {
 	case deck.Hearts:
 		return "♥︎", lg.NewStyle().Foreground(lg.Color("#FF0000"))
@@ -55,35 +86,4 @@ func getRankStr(rank deck.Rank) string {
 	default:
 		return "  "
 	}
-}
-
-func RenderCard(card deck.Card, selected bool) string {
-	suitStr, style := getSuitInfo(card.Suit)
-	cleanRank := strings.TrimSpace(getRankStr(card.Rank))
-
-	topRank := style.Render(lg.Place(7, 1, lg.Left, lg.Center, cleanRank))
-	centerSuit := style.Render(lg.Place(7, 1, lg.Center, lg.Center, suitStr))
-	bottomRank := style.Render(lg.Place(7, 1, lg.Right, lg.Center, cleanRank))
-
-	inner := lg.JoinVertical(lg.Left,
-		topRank,
-		"",
-		centerSuit,
-		"",
-		bottomRank,
-	)
-
-	borderStyle := lg.RoundedBorder()
-	cardStyle := lg.NewStyle().
-		Border(borderStyle).
-		BorderForeground(lg.Color("#EEEEEE")).
-		Padding(0, 1)
-
-	if selected {
-		cardStyle = cardStyle.BorderForeground(lg.Color("#00FF00")).MarginTop(0).MarginBottom(1)
-	} else {
-		cardStyle = cardStyle.MarginTop(1)
-	}
-
-	return cardStyle.Render(inner)
 }

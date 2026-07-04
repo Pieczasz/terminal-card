@@ -4,8 +4,8 @@ go 1.26.4
 
 require (
 	charm.land/bubbles/v2 v2.1.0
-	charm.land/bubbletea/v2 v2.0.7
-	charm.land/lipgloss/v2 v2.0.4
+	charm.land/bubbletea/v2 v2.0.8
+	charm.land/lipgloss/v2 v2.0.5
 	charm.land/wish/v2 v2.0.1
 	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/keygen v0.5.4
@@ -13,8 +13,8 @@ require (
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be
 	github.com/joho/godotenv v1.5.1
 	github.com/stretchr/testify v1.11.1
-	github.com/testcontainers/testcontainers-go v0.42.0
-	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
+	github.com/testcontainers/testcontainers-go v0.43.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.43.0
 	go.opentelemetry.io/contrib/bridges/otelslog v0.19.0
 	go.opentelemetry.io/otel v1.44.0
 	go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc v0.20.0
@@ -24,9 +24,9 @@ require (
 	go.opentelemetry.io/proto/otlp v1.10.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/net v0.56.0
-	google.golang.org/grpc v1.81.1
+	google.golang.org/grpc v1.82.0
 	gorm.io/driver/postgres v1.6.0
-	gorm.io/gorm v1.31.1
+	gorm.io/gorm v1.31.2
 	pgregory.net/rapid v1.3.0
 )
 
@@ -41,7 +41,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260608091853-35bcb7319efa // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
 	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/conpty v0.2.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
@@ -73,18 +73,18 @@ require (
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
-	github.com/klauspost/compress v1.18.6 // indirect
+	github.com/klauspost/compress v1.19.0 // indirect
 	github.com/lucasb-eyer/go-colorful v1.4.0 // indirect
-	github.com/lufia/plan9stats v0.0.0-20260330125221-c963978e514e // indirect
+	github.com/lufia/plan9stats v0.0.0-20260627054121-477a66015f15 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
 	github.com/mattn/go-runewidth v0.0.24 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
-	github.com/moby/moby/api v1.54.2 // indirect
-	github.com/moby/moby/client v0.4.1 // indirect
+	github.com/moby/moby/api v1.55.0 // indirect
+	github.com/moby/moby/client v0.5.0 // indirect
 	github.com/moby/patternmatcher v0.6.1 // indirect
 	github.com/moby/sys/sequential v0.7.0 // indirect
-	github.com/moby/sys/user v0.4.0 // indirect
+	github.com/moby/sys/user v0.4.1 // indirect
 	github.com/moby/sys/userns v0.1.0 // indirect
 	github.com/moby/term v0.5.2 // indirect
 	github.com/muesli/cancelreader v0.2.2 // indirect
@@ -93,7 +93,7 @@ require (
 	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/power-devops/perfstat v0.0.0-20240221224432-82ca36839d55 // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect
-	github.com/shirou/gopsutil/v4 v4.26.5 // indirect
+	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect
@@ -108,8 +108,8 @@ require (
 	golang.org/x/sync v0.21.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260610212136-7ab31c22f7ad // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260610212136-7ab31c22f7ad // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260630182238-925bb5da69e7 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260630182238-925bb5da69e7 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )

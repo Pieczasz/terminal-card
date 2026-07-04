@@ -37,6 +37,7 @@ func (q *GormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerpr
 }
 
 func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, fingerprint string) (*db.User, *db.PublicKey, error) {
+	// TODO: move validate username to different package?
 	if err := db.ValidateUsername(username); err != nil {
 		return nil, nil, fmt.Errorf("invalid username: %w", err)
 	}
