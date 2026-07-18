@@ -3,8 +3,8 @@ package crazyeight
 import (
 	"testing"
 
-	"terminalcard/internal/deck"
-	gameview "terminalcard/internal/tui/views/game"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"

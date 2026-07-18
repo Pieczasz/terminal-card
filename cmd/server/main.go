@@ -8,14 +8,14 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"terminalcard/internal/config"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/game/crazyeight"
-	"terminalcard/internal/lobby"
-	"terminalcard/internal/observability"
-	"terminalcard/internal/repository"
-	"terminalcard/internal/ssh"
+	"github.com/Pieczasz/terminal-card/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/observability"
+	"github.com/Pieczasz/terminal-card/internal/repository"
+	"github.com/Pieczasz/terminal-card/internal/ssh"
 	"time"
 
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -29,14 +29,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	otelShutdown, err := observability.SetupOTel(ctx, cfg)
 	if err != nil {
 		slog.Error("failed to setup OpenTelemetry", "error", err)
 		os.Exit(1)
 	}
 	defer func() {
-		if err := otelShutdown(ctx); err != nil {
+		shutdownOTelCtx, otelCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer otelCancel()
+		if err := otelShutdown(shutdownOTelCtx); err != nil {
 			slog.Error("failed to shutdown OpenTelemetry", "error", err)
 		}
 	}()
@@ -109,8 +113,9 @@ func main() {
 
 	<-done
 	slog.Info("stopping server")
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+	cancel()
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer shutdownCancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("failed to stop server gracefully", "error", err)
 	}

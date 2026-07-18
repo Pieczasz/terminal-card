@@ -3,7 +3,7 @@ package home
 import (
 	"testing"
 
-	"terminalcard/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"

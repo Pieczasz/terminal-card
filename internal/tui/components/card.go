@@ -2,7 +2,7 @@ package components
 
 import (
 	"strings"
-	"terminalcard/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/deck"
 
 	lg "charm.land/lipgloss/v2"
 )

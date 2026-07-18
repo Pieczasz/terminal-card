@@ -1,12 +1,13 @@
 package lobby
 
 import (
+	"errors"
 	"fmt"
 	"strings"
-	"terminalcard/internal/player"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -73,7 +74,11 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.err = err
 					return m, nil
 				}
-				lobby, _ := m.global.LobbyManager.FindLobbyByCode(code)
+				lobby, err := m.global.LobbyManager.FindLobbyByCode(code)
+				if err != nil || lobby == nil {
+					m.err = errors.New("joined lobby but failed to open it")
+					return m, nil
+				}
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: lobby} }
 			default:
 				m.textInput, cmd = m.textInput.Update(msg)

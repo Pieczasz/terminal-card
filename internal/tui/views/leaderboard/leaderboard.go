@@ -5,14 +5,15 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
-	"terminalcard/internal/tui/views"
+	"time"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 )
 
 const (
@@ -41,7 +42,9 @@ type loadedMsg struct {
 
 func (m model) Init() tea.Cmd {
 	return func() tea.Msg {
-		rankings, err := m.global.UserRepository.GetBestPlayers(context.Background(), maxLeaderboardPlayers)
+		ctx, cancel := context.WithTimeout(m.global.RequestContext(), 5*time.Second)
+		defer cancel()
+		rankings, err := m.global.UserRepository.GetBestPlayers(ctx, maxLeaderboardPlayers)
 		return loadedMsg{rankings: rankings, err: err}
 	}
 }
@@ -98,7 +101,7 @@ func (m model) View() tea.View {
 }
 
 func (m model) renderError() string {
-	return lg.JoinVertical(lg.Center, fmt.Sprintf("Error loading leaderboard: %v", m.err))
+	return lg.JoinVertical(lg.Center, "Unable to load leaderboard. Please try again.")
 }
 
 func (m model) renderLoading() string {

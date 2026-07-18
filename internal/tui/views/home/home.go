@@ -2,9 +2,9 @@ package home
 
 import (
 	"fmt"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
 )

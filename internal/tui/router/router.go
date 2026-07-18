@@ -1,10 +1,11 @@
 package router
 
 import (
+	"context"
 	"strings"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,8 +22,18 @@ type GlobalContext struct {
 	MatchRepository db.MatchRepository
 	LobbyManager    *lobby.Manager
 	GameRegistry    *game.Registry
-	Width           int
-	Height          int
+	// SessionCtx is cancelled when the SSH session ends.
+	SessionCtx context.Context
+	Width      int
+	Height     int
+}
+
+// RequestContext returns the session context, or Background if unset.
+func (g GlobalContext) RequestContext() context.Context {
+	if g.SessionCtx != nil {
+		return g.SessionCtx
+	}
+	return context.Background()
 }
 
 type tickMsg time.Time

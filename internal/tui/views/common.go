@@ -1,8 +1,8 @@
 package views
 
 import (
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"

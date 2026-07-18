@@ -9,14 +9,14 @@ import (
 	"os"
 	"sync"
 
-	"terminalcard/internal/config"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/lobby"
-	"terminalcard/internal/observability"
-	"terminalcard/internal/player"
-	"terminalcard/internal/ratelimit"
-	"terminalcard/internal/tui"
+	"github.com/Pieczasz/terminal-card/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/observability"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/ratelimit"
+	"github.com/Pieczasz/terminal-card/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/wish/v2"
@@ -168,7 +168,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				s.Context().SetValue("owns_connection", true)
 				s.Context().SetValue("user", user)
 
-				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
+				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry, s.Context()), []tea.ProgramOption{}
 			}),
 			logging.StructuredMiddleware(),
 			activeterm.Middleware(),
