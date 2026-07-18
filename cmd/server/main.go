@@ -26,14 +26,14 @@ func main() {
 	cfg, err := config.Load()
 	if err != nil {
 		slog.Error("failed to load configuration", "error", err)
-		panic(err)
+		os.Exit(1)
 	}
 
 	ctx := context.Background()
 	otelShutdown, err := observability.SetupOTel(ctx, cfg)
 	if err != nil {
 		slog.Error("failed to setup OpenTelemetry", "error", err)
-		panic(err)
+		os.Exit(1)
 	}
 	defer func() {
 		if err := otelShutdown(ctx); err != nil {
@@ -41,22 +41,35 @@ func main() {
 		}
 	}()
 
-	// TODO: change logger name
-	otelLogger := otelslog.NewLogger("terminal-card-server")
+	otelLogger := otelslog.NewLogger("terminal-card")
 	slog.SetDefault(otelLogger)
 
 	database, err := db.Connect(cfg)
 	if err != nil {
 		slog.Error("failed to setup database", "error", err)
-		panic(err)
+		os.Exit(1)
 	}
+	sqlDB, err := database.DB()
+	if err != nil {
+		slog.Error("failed to get sql.DB", "error", err)
+		os.Exit(1)
+	}
+	defer func() {
+		if err := sqlDB.Close(); err != nil {
+			slog.Error("failed to close database", "error", err)
+		}
+	}()
 
 	userRepo := repository.NewUserRepository(database)
 	matchRepo := repository.NewMatchRepository(database)
-	lobbyManager := lobby.NewManager(matchRepo)
+	lobbyManager := lobby.NewManagerWithContext(ctx, matchRepo)
 	gameRegistry := game.NewRegistry()
-	// TODO: dont forget to register games here
-	gameRegistry.Register("Crazy Eights", func() game.Rules { return &crazyeight.CrazyEightsRules{} })
+	gameRegistry.RegisterModule(game.Module{
+		Name:    "Crazy Eights",
+		Slug:    "crazy_eights",
+		Factory: func() game.Rules { return &crazyeight.CrazyEightsRules{} },
+	})
+	// Poker is WIP and intentionally not registered for v0.1.
 
 	deps := ssh.ServerDependencies{
 		Config:          cfg,
@@ -68,7 +81,7 @@ func main() {
 	server, err := ssh.SetupServer(deps)
 	if err != nil {
 		slog.Error("error while setting up the server", "error", err)
-		panic(err)
+		os.Exit(1)
 	}
 
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort)
@@ -76,14 +89,18 @@ func main() {
 	listener, err := lc.Listen(ctx, "tcp", addr)
 	if err != nil {
 		slog.Error("error creating listener", "error", err)
-		panic(err)
+		os.Exit(1)
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
-	slog.Info("starting ssh server", "address", addr, "max_connections", cfg.MaxConnections)
+	slog.Info("starting ssh server",
+		"address", addr,
+		"max_connections", cfg.MaxConnections,
+		"version", cfg.ServiceVersion,
+	)
 	go func() {
 		if err := server.Serve(limitListener); err != nil {
 			slog.Error("server: starting ssh server error", "error", err)
