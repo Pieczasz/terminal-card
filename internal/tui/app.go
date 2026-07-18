@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/player"
@@ -26,7 +27,7 @@ var gameViews = map[string]ViewFactory{
 	"crazy_eights": crazyeight.New,
 }
 
-func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry, sessionCtx context.Context) tea.Model {
+func Model(sessionCtx context.Context, user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
 	global := router.GlobalContext{
 		User:            &user,
 		UserRepository:  userRepo,

@@ -2,6 +2,7 @@ package crazyeight
 
 import (
 	"fmt"
+
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"

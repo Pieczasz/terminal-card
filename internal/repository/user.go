@@ -14,9 +14,9 @@ import (
 )
 
 var (
-	ErrUsernameTaken       = errors.New("username already taken, please choose another via ssh config")
+	ErrUsernameTaken        = errors.New("username already taken, please choose another via ssh config")
 	ErrKeyAlreadyRegistered = errors.New("public key already registered")
-	ErrInvalidUsername     = errors.New("invalid username")
+	ErrInvalidUsername      = errors.New("invalid username")
 )
 
 type GormUserRepository struct {
@@ -89,7 +89,7 @@ func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 		return nil
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("register user transaction: %w", err)
 	}
 
 	return &currentUser, &dbKey, nil

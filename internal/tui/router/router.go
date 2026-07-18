@@ -3,10 +3,11 @@ package router
 import (
 	"context"
 	"strings"
+	"time"
+
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 )

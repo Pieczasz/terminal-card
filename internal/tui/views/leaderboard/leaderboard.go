@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"time"
+
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"

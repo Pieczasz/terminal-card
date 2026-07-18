@@ -10,6 +10,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/player"
@@ -33,6 +34,14 @@ type Event struct {
 	Type    string
 	Payload any
 }
+
+// Lobby event type constants shared with TUI subscribers.
+const (
+	EventPlayersUpdated  = "PLAYERS_UPDATED"
+	EventSettingsUpdated = "SETTINGS_UPDATED"
+	EventLobbyClosed     = "LOBBY_CLOSED"
+	EventGameStarted     = "GAME_STARTED"
+)
 
 type state uint
 
@@ -97,59 +106,41 @@ func (l *Lobby) takeBroadcaster() *broadcaster.Broadcaster[Event] {
 
 // SetPrivate updates lobby visibility. Only the current leader may change settings.
 func (l *Lobby) SetPrivate(actor *player.Player, isPrivate bool) error {
-	l.mu.Lock()
-	if !l.leader.Compare(actor) {
-		l.mu.Unlock()
-		return errors.New("only the leader can change settings")
-	}
-	if l.state != Waiting {
-		l.mu.Unlock()
-		return errors.New("cannot change settings while a game is in progress")
-	}
-	l.options.isPrivate = isPrivate
-	bc := l.broadcaster
-	l.mu.Unlock()
-	if bc != nil {
-		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
-	}
-	return nil
+	return l.withLeaderSettings(actor, func() error {
+		l.options.isPrivate = isPrivate
+		return nil
+	})
 }
 
 // SetMaxPlayers updates capacity. Clamped to current roster size and optional game rules bounds.
 func (l *Lobby) SetMaxPlayers(actor *player.Player, limit int, rulesMin, rulesMax int) error {
-	l.mu.Lock()
-	if !l.leader.Compare(actor) {
-		l.mu.Unlock()
-		return errors.New("only the leader can change settings")
-	}
-	if l.state != Waiting {
-		l.mu.Unlock()
-		return errors.New("cannot change settings while a game is in progress")
-	}
-	current := 1 + len(l.guests)
-	if limit < current {
-		l.mu.Unlock()
-		return fmt.Errorf("max players cannot be below current roster (%d)", current)
-	}
-	if rulesMin > 0 && limit < rulesMin {
-		l.mu.Unlock()
-		return fmt.Errorf("max players must be at least %d for this game", rulesMin)
-	}
-	if rulesMax > 0 && limit > rulesMax {
-		l.mu.Unlock()
-		return fmt.Errorf("max players cannot exceed %d for this game", rulesMax)
-	}
-	l.options.maxPlayers = limit
-	bc := l.broadcaster
-	l.mu.Unlock()
-	if bc != nil {
-		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
-	}
-	return nil
+	return l.withLeaderSettings(actor, func() error {
+		current := 1 + len(l.guests)
+		if limit < current {
+			return fmt.Errorf("max players cannot be below current roster (%d)", current)
+		}
+		if rulesMin > 0 && limit < rulesMin {
+			return fmt.Errorf("max players must be at least %d for this game", rulesMin)
+		}
+		if rulesMax > 0 && limit > rulesMax {
+			return fmt.Errorf("max players cannot exceed %d for this game", rulesMax)
+		}
+		l.options.maxPlayers = limit
+		return nil
+	})
 }
 
 // SetCardGame updates the selected game. Only the leader may change it while waiting.
 func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
+	return l.withLeaderSettings(actor, func() error {
+		l.options.cardGame = g
+		return nil
+	})
+}
+
+// withLeaderSettings runs mutate while holding the lobby lock after verifying the
+// actor is the leader and the lobby is Waiting. Broadcasts SETTINGS_UPDATED on success.
+func (l *Lobby) withLeaderSettings(actor *player.Player, mutate func() error) error {
 	l.mu.Lock()
 	if !l.leader.Compare(actor) {
 		l.mu.Unlock()
@@ -159,11 +150,14 @@ func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
 		l.mu.Unlock()
 		return errors.New("cannot change settings while a game is in progress")
 	}
-	l.options.cardGame = g
+	if err := mutate(); err != nil {
+		l.mu.Unlock()
+		return err
+	}
 	bc := l.broadcaster
 	l.mu.Unlock()
 	if bc != nil {
-		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+		bc.Broadcast(Event{Type: EventSettingsUpdated})
 	}
 	return nil
 }
@@ -173,59 +167,60 @@ func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
 func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	l.mu.Lock()
 
-	engine := l.activeEngine
 	playerID := ""
 	if p != nil {
 		playerID = p.ID
 	}
 	l.unsubscribePlayerLocked(playerID)
 
-	shouldClose := false
+	engine, bc, eventType, shouldClose, ok := l.detachPlayerLocked(p)
+	l.mu.Unlock()
+	if !ok {
+		return false
+	}
+	notifyEngineAndBroadcast(engine, bc, playerID, eventType)
+	return shouldClose
+}
+
+// detachPlayerLocked mutates roster for a leaving player. Caller holds l.mu.
+// Returns false in ok if the player was not in the lobby.
+func (l *Lobby) detachPlayerLocked(p *player.Player) (engine *game.Engine, bc *broadcaster.Broadcaster[Event], eventType string, shouldClose, ok bool) {
+	engine = l.activeEngine
+	bc = l.broadcaster
+
 	if l.leader.Compare(p) {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
 			l.guests = l.guests[1:]
 			delete(l.ready, p.ID)
-			bc := l.broadcaster
-			l.mu.Unlock()
-			if engine != nil {
-				engine.RemovePlayer(playerID)
-			}
-			if bc != nil {
-				bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-			}
-			return false
+			return engine, bc, EventPlayersUpdated, false, true
 		}
-
 		l.state = Closed
-		bc := l.broadcaster
-		l.mu.Unlock()
-		if engine != nil {
-			engine.RemovePlayer(playerID)
-		}
-		if bc != nil {
-			bc.Broadcast(Event{Type: "LOBBY_CLOSED"})
-		}
-		return true
+		return engine, bc, EventLobbyClosed, true, true
 	}
 
 	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
-		l.guests = slices.Delete(l.guests, idx, idx+1)
-		delete(l.ready, p.ID)
-		bc := l.broadcaster
-		l.mu.Unlock()
-		if engine != nil {
-			engine.RemovePlayer(playerID)
-		}
-		if bc != nil {
-			bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-		}
-		return false
+		l.removeGuestAtLocked(idx)
+		return engine, bc, EventPlayersUpdated, false, true
 	}
+	return nil, nil, "", false, false
+}
 
-	l.mu.Unlock()
-	_ = shouldClose
-	return false
+// removeGuestAtLocked removes guests[idx] and clears ready/subs. Caller holds l.mu.
+func (l *Lobby) removeGuestAtLocked(idx int) {
+	g := l.guests[idx]
+	l.unsubscribePlayerLocked(g.ID)
+	l.guests = slices.Delete(l.guests, idx, idx+1)
+	delete(l.ready, g.ID)
+}
+
+func notifyEngineAndBroadcast(engine *game.Engine, bc *broadcaster.Broadcaster[Event], playerID, eventType string) {
+	if engine != nil {
+		engine.RemovePlayer(playerID)
+	}
+	if bc != nil && eventType != "" {
+		bc.Broadcast(Event{Type: eventType})
+	}
 }
 
 // Subscribe registers a lobby event channel for playerID so disconnect can unsubscribe.
@@ -301,7 +296,7 @@ func (l *Lobby) ToggleReady(p *player.Player, registry *game.Registry) error {
 	l.ready[p.ID] = !l.ready[p.ID]
 
 	if !l.allReadyNoLock() {
-		l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
+		l.broadcastUnlocked(Event{Type: EventPlayersUpdated})
 		return nil
 	}
 
@@ -394,21 +389,21 @@ func (l *Lobby) IsLeader(p *player.Player) bool {
 
 func playerEloForGame(p *player.Player, gameName string) uint32 {
 	if p == nil || p.DatabaseUser == nil {
-		return 1500
+		return elo.ToUint32(elo.DefaultRating)
 	}
 	for _, r := range p.DatabaseUser.Rankings {
 		if r.Game.Name == gameName {
 			return r.Elo
 		}
 	}
-	return 1500
+	return elo.ToUint32(elo.DefaultRating)
 }
 
 func (l *Lobby) averageElo() uint32 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
 	if l.options.cardGame == nil {
-		return 1500
+		return elo.ToUint32(elo.DefaultRating)
 	}
 	gameName := l.options.cardGame.Name
 	var totalElo uint32
@@ -452,7 +447,7 @@ func (l *Lobby) addGuest(p *player.Player) error {
 	}
 
 	l.guests = append(l.guests, p)
-	l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
+	l.broadcastUnlocked(Event{Type: EventPlayersUpdated})
 	return nil
 }
 
@@ -515,7 +510,7 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	observability.GamesStartedTotal.Add(1)
 
 	l.broadcastUnlocked(Event{
-		Type:    "GAME_STARTED",
+		Type:    EventGameStarted,
 		Payload: engine,
 	})
 

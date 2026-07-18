@@ -3,6 +3,7 @@ package lobby
 import (
 	"fmt"
 	"log/slog"
+
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
@@ -81,7 +82,7 @@ func (m model) Init() tea.Cmd {
 // Elo is retrieved from preloaded Rankings, which is updated whenever a game ends.
 func (m model) getElo(p *player.Player) uint32 {
 	if p == nil || p.DatabaseUser == nil {
-		return uint32(elo.DefaultRating)
+		return elo.ToUint32(elo.DefaultRating)
 	}
 	gameName := m.currentLobby.GameName()
 	for _, r := range p.DatabaseUser.Rankings {
@@ -89,7 +90,7 @@ func (m model) getElo(p *player.Player) uint32 {
 			return r.Elo
 		}
 	}
-	return uint32(elo.DefaultRating)
+	return elo.ToUint32(elo.DefaultRating)
 }
 
 func (m model) unsubscribe() model {
@@ -120,6 +121,13 @@ func (m model) selfPlayer() *player.Player {
 	return &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 }
 
+const (
+	cursorGame = iota
+	cursorMaxPlayers
+	cursorVisibility
+	cursorFirstGuest
+)
+
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.currentLobby == nil {
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
@@ -130,156 +138,155 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
-		if m.showLeaveConfirm {
-			switch msg.String() {
-			case "y", "Y":
-				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-				m.global.LobbyManager.LeaveLobby(p)
-				m = m.unsubscribe()
-				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
-			case "n", "N", "esc":
-				m.showLeaveConfirm = false
-			}
-			return m, nil
-		}
-
-		isLeader := m.currentLobby.IsLeader(&player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User})
-		self := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-
-		switch msg.String() {
-		case "esc", "x":
-			m.showLeaveConfirm = true
-			return m, nil
-		case "n":
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
-		case "f":
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
-		case "p":
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
-		case "t":
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
-		case "r":
-			if err := m.currentLobby.ToggleReady(self, m.global.GameRegistry); err != nil {
-				m.actionErr = err
-				slog.Error("failed to toggle ready or start game engine", "error", err)
-			} else {
-				m.actionErr = nil
-			}
-			return m, nil
-		case "up", "k":
-			if isLeader && m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			maxCursor := 2 + len(m.currentLobby.Guests())
-			if isLeader && m.cursor < maxCursor {
-				m.cursor++
-			}
-		case "left", "h":
-			if isLeader {
-				switch m.cursor {
-				case 1:
-					rulesMin, rulesMax := m.gamePlayerBounds()
-					if m.maxPlayers > rulesMin && m.maxPlayers > m.currentLobby.CurrentPlayers() {
-						m.maxPlayers--
-						if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
-							m.maxPlayers++
-							slog.Error("failed to set max players", "error", err)
-						}
-					}
-				case 2:
-					m.isPrivate = !m.isPrivate
-					if err := m.currentLobby.SetPrivate(self, m.isPrivate); err != nil {
-						m.isPrivate = !m.isPrivate
-						slog.Error("failed to set privacy", "error", err)
-					}
-				}
-			}
-		case "right", "l":
-			if isLeader {
-				switch m.cursor {
-				case 1:
-					rulesMin, rulesMax := m.gamePlayerBounds()
-					if m.maxPlayers < rulesMax {
-						m.maxPlayers++
-						if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
-							m.maxPlayers--
-							slog.Error("failed to set max players", "error", err)
-						}
-					}
-				case 2:
-					m.isPrivate = !m.isPrivate
-					if err := m.currentLobby.SetPrivate(self, m.isPrivate); err != nil {
-						m.isPrivate = !m.isPrivate
-						slog.Error("failed to set privacy", "error", err)
-					}
-				}
-			}
-		case "enter":
-			if isLeader && m.cursor > 2 {
-				guestIdx := m.cursor - 3
-				guests := m.currentLobby.Guests()
-				if guestIdx < len(guests) {
-					if err := m.global.LobbyManager.Kick(self, guests[guestIdx]); err != nil {
-						slog.Error("failed to kick player", "error", err)
-					}
-				}
-			}
-		}
-
+		return m.handleKey(msg)
 	case lobbyMsg:
-		if msg.Type == "LOBBY_CLOSED" {
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
-		}
-		if msg.Type == "GAME_STARTED" {
-			engine, ok := msg.Payload.(*game.Engine)
-			if !ok || engine == nil {
-				slog.Error("GAME_STARTED payload was not a game engine")
-				return m, listenToLobbyBroadcaster(m.lobbyChan)
-			}
-
-			routeName, err := m.global.GameRegistry.RouteName(m.currentLobby.GameName())
-			if err != nil {
-				slog.Error("no TUI route for game", "game", m.currentLobby.GameName(), "error", err)
-				return m, nil
-			}
-			m = m.unsubscribe()
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: routeName, Context: engine} }
-		}
-		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
-			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-
-			// Check if we got kicked
-			if !m.currentLobby.Leader().Compare(p) {
-				found := false
-				for _, g := range m.currentLobby.Guests() {
-					if g.Compare(p) {
-						found = true
-						break
-					}
-				}
-				if !found {
-					m = m.unsubscribe()
-					return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
-				}
-			}
-
-			m.isPrivate = m.currentLobby.IsPrivate()
-			m.maxPlayers = m.currentLobby.MaxPlayers()
-
-			maxCursor := 2 + len(m.currentLobby.Guests())
-			if m.cursor > maxCursor {
-				m.cursor = maxCursor
-			}
-		}
-		return m, listenToLobbyBroadcaster(m.lobbyChan)
+		return m.handleLobbyEvent(lobby.Event(msg))
 	}
 	return m, nil
+}
+
+func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.showLeaveConfirm {
+		return m.handleLeaveConfirm(msg.String())
+	}
+
+	self := m.selfPlayer()
+	isLeader := m.currentLobby.IsLeader(self)
+
+	switch msg.String() {
+	case "esc", "x":
+		m.showLeaveConfirm = true
+		return m, nil
+	case "n":
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+	case "f":
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+	case "p":
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+	case "t":
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
+	case "r":
+		if err := m.currentLobby.ToggleReady(self, m.global.GameRegistry); err != nil {
+			m.actionErr = err
+			slog.Error("failed to toggle ready or start game engine", "error", err)
+		} else {
+			m.actionErr = nil
+		}
+		return m, nil
+	case "up", "k":
+		if isLeader && m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		maxCursor := cursorVisibility + len(m.currentLobby.Guests())
+		if isLeader && m.cursor < maxCursor {
+			m.cursor++
+		}
+	case "left", "h":
+		if isLeader {
+			m = m.adjustSetting(self, -1)
+		}
+	case "right", "l":
+		if isLeader {
+			m = m.adjustSetting(self, +1)
+		}
+	case "enter":
+		if isLeader && m.cursor >= cursorFirstGuest {
+			guestIdx := m.cursor - cursorFirstGuest
+			guests := m.currentLobby.Guests()
+			if guestIdx < len(guests) {
+				if err := m.global.LobbyManager.Kick(self, guests[guestIdx]); err != nil {
+					slog.Error("failed to kick player", "error", err)
+				}
+			}
+		}
+	}
+	return m, nil
+}
+
+func (m model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
+	switch key {
+	case "y", "Y":
+		m.global.LobbyManager.LeaveLobby(m.selfPlayer())
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+	case "n", "N", "esc":
+		m.showLeaveConfirm = false
+	}
+	return m, nil
+}
+
+func (m model) adjustSetting(self *player.Player, delta int) model {
+	switch m.cursor {
+	case cursorMaxPlayers:
+		rulesMin, rulesMax := m.gamePlayerBounds()
+		next := m.maxPlayers + delta
+		if delta < 0 && (next < rulesMin || next < m.currentLobby.CurrentPlayers()) {
+			return m
+		}
+		if delta > 0 && next > rulesMax {
+			return m
+		}
+		m.maxPlayers = next
+		if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
+			m.maxPlayers -= delta
+			slog.Error("failed to set max players", "error", err)
+		}
+	case cursorVisibility:
+		m.isPrivate = !m.isPrivate
+		if err := m.currentLobby.SetPrivate(self, m.isPrivate); err != nil {
+			m.isPrivate = !m.isPrivate
+			slog.Error("failed to set privacy", "error", err)
+		}
+	}
+	return m
+}
+
+func (m model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case lobby.EventLobbyClosed:
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+	case lobby.EventGameStarted:
+		engine, ok := msg.Payload.(*game.Engine)
+		if !ok || engine == nil {
+			slog.Error("GAME_STARTED payload was not a game engine")
+			return m, listenToLobbyBroadcaster(m.lobbyChan)
+		}
+		routeName, err := m.global.GameRegistry.RouteName(m.currentLobby.GameName())
+		if err != nil {
+			slog.Error("no TUI route for game", "game", m.currentLobby.GameName(), "error", err)
+			return m, nil
+		}
+		m = m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: routeName, Context: engine} }
+	case lobby.EventSettingsUpdated, lobby.EventPlayersUpdated:
+		self := m.selfPlayer()
+		if !m.currentLobby.Leader().Compare(self) {
+			found := false
+			for _, g := range m.currentLobby.Guests() {
+				if g.Compare(self) {
+					found = true
+					break
+				}
+			}
+			if !found {
+				m = m.unsubscribe()
+				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+			}
+		}
+		m.isPrivate = m.currentLobby.IsPrivate()
+		m.maxPlayers = m.currentLobby.MaxPlayers()
+		maxCursor := cursorVisibility + len(m.currentLobby.Guests())
+		if m.cursor > maxCursor {
+			m.cursor = maxCursor
+		}
+	}
+	return m, listenToLobbyBroadcaster(m.lobbyChan)
 }
 
 func (m model) View() tea.View {
@@ -317,14 +324,14 @@ func (m model) View() tea.View {
 		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
 	}
 
-	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
-	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
+	gameStr := renderOption(cursorGame, "Game", m.gameOptions[m.gameIndex])
+	playersStr := renderOption(cursorMaxPlayers, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
 
 	vis := fmt.Sprintf("%-7s", "Public")
 	if m.isPrivate {
 		vis = fmt.Sprintf("%-7s", "Private")
 	}
-	visStr := renderOption(2, "Visibility", vis)
+	visStr := renderOption(cursorVisibility, "Visibility", vis)
 
 	var playerList []string
 	playerList = append(playerList, "  "+lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true).Render("Players"))
@@ -341,7 +348,7 @@ func (m model) View() tea.View {
 	guests := m.currentLobby.Guests()
 	for i, g := range guests {
 		cursor := "  "
-		isSelected := isLeader && m.cursor == i+3
+		isSelected := isLeader && m.cursor == i+cursorFirstGuest
 		if isSelected {
 			cursor = "> "
 		}
