@@ -2,12 +2,14 @@ package game
 
 import (
 	"testing"
+	"time"
 
 	"terminalcard/internal/deck"
 	"terminalcard/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockRules struct {
@@ -73,7 +75,6 @@ func setupMockRules() *MockRules {
 	m.On("InitialDeck").Return(deck.StandardDeck()).Maybe()
 	m.On("InitialDealCount").Return(5)
 	m.On("OnGameStart", mock.Anything).Return(nil)
-	m.On("GetStandings", mock.Anything).Return([]*player.Player{}).Maybe()
 	return m
 }
 
@@ -110,7 +111,7 @@ func TestEngine_SubmitAction(t *testing.T) {
 	engine := NewGameEngine(m, players, deck.StandardDeck())
 	engine.Start()
 
-	currentPlayerID := engine.CurrentPlayer().ID
+	currentPlayerID := engine.CurrentPlayerID()
 	otherPlayerID := "p2"
 	if currentPlayerID == "p2" {
 		otherPlayerID = "p1"
@@ -128,9 +129,75 @@ func TestEngine_SubmitAction(t *testing.T) {
 	err = engine.SubmitAction(currentPlayerID, validAction)
 	assert.NoError(t, err)
 
-	assert.Equal(t, otherPlayerID, engine.CurrentPlayer().ID)
+	assert.Equal(t, otherPlayerID, engine.CurrentPlayerID())
 
 	m.AssertExpectations(t)
+}
+
+func TestEngine_SubmitAction_SetsWinnerFromStandings(t *testing.T) {
+	t.Parallel()
+	winner := &player.Player{ID: "p2"}
+	loser := &player.Player{ID: "p1"}
+	players := []*player.Player{loser, winner}
+
+	m := setupMockRules()
+	engine := NewGameEngine(m, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+
+	currentPlayerID := engine.CurrentPlayerID()
+	action := MockAction{name: "Win"}
+	m.On("PreActionCondition", mock.Anything, action).Return(nil)
+	m.On("ApplyAction", mock.Anything, action)
+	m.On("PostActionCondition", mock.Anything, action).Return(nil)
+	m.On("CheckWinCondition", mock.Anything).Return(true)
+	m.On("GetStandings", mock.Anything).Return([]*player.Player{winner, loser})
+
+	err := engine.SubmitAction(currentPlayerID, action)
+	require.NoError(t, err)
+
+	engine.WithState(func(state *State) {
+		assert.Equal(t, Finished, state.Phase)
+		assert.Equal(t, "p2", state.Winner.ID)
+	})
+}
+
+func TestEngine_SubmitAction_PostConditionBeforeBroadcast(t *testing.T) {
+	t.Parallel()
+	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
+	m := setupMockRules()
+	engine := NewGameEngine(m, players, deck.StandardDeck())
+
+	ch := engine.Broadcaster().Subscribe()
+	t.Cleanup(func() { engine.Broadcaster().Unsubscribe(ch) })
+
+	require.NoError(t, engine.Start())
+
+	// Drain start event
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for start event")
+	}
+
+	currentPlayerID := engine.CurrentPlayerID()
+	action := MockAction{name: "Bad"}
+	m.On("PreActionCondition", mock.Anything, action).Return(nil)
+	m.On("ApplyAction", mock.Anything, action)
+	m.On("PostActionCondition", mock.Anything, action).Return(assert.AnError)
+
+	err := engine.SubmitAction(currentPlayerID, action)
+	require.Error(t, err)
+
+	engine.WithState(func(state *State) {
+		assert.Equal(t, Finished, state.Phase)
+	})
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("unexpected broadcast after post-condition failure: %+v", ev)
+	case <-time.After(50 * time.Millisecond):
+		// expected: no EventActionApplied
+	}
 }
 
 func TestEngine_RemovePlayer(t *testing.T) {
