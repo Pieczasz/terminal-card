@@ -2,7 +2,10 @@
 // from broadcasting channel to receive live updates for lobby/game state.
 package broadcaster
 
-import "sync"
+import (
+	"log/slog"
+	"sync"
+)
 
 type subscriber[T any] struct {
 	id int
@@ -16,6 +19,7 @@ type Broadcaster[T any] struct {
 	mu          sync.RWMutex
 	subscribers map[int]*subscriber[T]
 	nextID      int
+	closed      bool
 }
 
 func New[T any](maxSubscribers int) *Broadcaster[T] {
@@ -28,8 +32,14 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	// TODO: calculate optimal size / think of better idea
-	ch := make(chan T, 1000)
+	if b.closed {
+		ch := make(chan T)
+		close(ch)
+		return ch
+	}
+
+	// Using a larger buffer size to reduce the chance of dropped messages under heavy UI interaction
+	ch := make(chan T, 10000)
 	b.subscribers[b.nextID] = &subscriber[T]{ch: ch, id: b.nextID}
 	b.nextID++
 	return ch
@@ -52,13 +62,15 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
+	if b.closed {
+		return
+	}
+
 	for _, sub := range b.subscribers {
 		select {
 		case sub.ch <- msg:
 		default:
-			// Channel is full. We drop the message rather than blocking the broadcaster.
-			// TODO: check if there is something else we can do.
-			// TODO: think of this and measure overhead of dropping vs blocking/disconnecting.
+			slog.Warn("broadcaster channel is full, dropping message", "subscriberID", sub.id)
 		}
 	}
 }
@@ -66,6 +78,11 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 func (b *Broadcaster[T]) Close() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+
+	if b.closed {
+		return
+	}
+	b.closed = true
 
 	for id, sub := range b.subscribers {
 		close(sub.ch)

@@ -50,6 +50,7 @@ type testEnv struct {
 }
 
 func setupTestEnvironment(t *testing.T) testEnv {
+	t.Helper()
 	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
 	userRepo := repository.NewUserRepository(gormDB)
 	matchRepo := repository.NewMatchRepository(gormDB)
@@ -58,7 +59,12 @@ func setupTestEnvironment(t *testing.T) testEnv {
 	require.NoError(t, err)
 
 	deps := ServerDependencies{
-		Config:          &config.Config{ServerPort: port, SSHKeyPath: t.TempDir() + "/id_ed25519"},
+		Config: &config.Config{
+			ServerPort:      port,
+			SSHKeyPath:      t.TempDir() + "/id_ed25519",
+			RateLimitCount:  5,
+			RateLimitWindow: time.Second,
+		},
 		UserRepository:  userRepo,
 		MatchRepository: matchRepo,
 		LobbyManager:    lobby.NewManager(matchRepo),
@@ -72,12 +78,19 @@ func setupTestEnvironment(t *testing.T) testEnv {
 		_ = server.ListenAndServe()
 	}()
 
-	// Wait for server to boot up
-	time.Sleep(100 * time.Millisecond)
+	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
+		if err != nil {
+			return false
+		}
+		_ = conn.Close()
+		return true
+	}, 2*time.Second, 20*time.Millisecond, "ssh server did not become ready")
 
 	return testEnv{
 		userRepo: userRepo,
-		addr:     fmt.Sprintf("127.0.0.1:%d", port),
+		addr:     addr,
 		cleanup:  func() { server.Close() },
 	}
 }
@@ -114,13 +127,10 @@ func TestServer_NewUserConnection(t *testing.T) {
 
 	var user *db.User
 	var key *db.PublicKey
-	for range 10 {
+	require.Eventually(t, func() bool {
 		user, key, _ = env.userRepo.LoadUserByFingerprint(context.Background(), cryptossh.FingerprintSHA256(signer.PublicKey()))
-		if user != nil {
-			break
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+		return user != nil
+	}, 2*time.Second, 50*time.Millisecond, "user was not registered")
 
 	require.NotNil(t, user)
 	require.NotNil(t, key)
@@ -153,8 +163,10 @@ func TestServer_UserAlreadyConnected(t *testing.T) {
 	_ = session1.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
 	_ = session1.Shell()
 
-	// Wait for registration and tracking
-	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		user, _, _ := env.userRepo.LoadUserByFingerprint(context.Background(), cryptossh.FingerprintSHA256(signer.PublicKey()))
+		return user != nil
+	}, 2*time.Second, 50*time.Millisecond)
 
 	client2, err := cryptossh.Dial("tcp", env.addr, clientConfig)
 	require.NoError(t, err)
@@ -194,21 +206,79 @@ func TestServer_ExistingUserConnection(t *testing.T) {
 	_ = session1.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
 	_ = session1.Shell()
 
-	time.Sleep(100 * time.Millisecond)
+	require.Eventually(t, func() bool {
+		user, _, _ := env.userRepo.LoadUserByFingerprint(context.Background(), cryptossh.FingerprintSHA256(signer.PublicKey()))
+		return user != nil
+	}, 2*time.Second, 50*time.Millisecond)
 
 	session1.Close()
 	client1.Close()
-	time.Sleep(100 * time.Millisecond)
 
-	client2, err := cryptossh.Dial("tcp", env.addr, clientConfig)
-	require.NoError(t, err)
-	defer client2.Close()
+	require.Eventually(t, func() bool {
+		client2, err := cryptossh.Dial("tcp", env.addr, clientConfig)
+		if err != nil {
+			return false
+		}
+		session2, err := client2.NewSession()
+		if err != nil {
+			client2.Close()
+			return false
+		}
+		err = session2.Shell()
+		session2.Close()
+		client2.Close()
+		return err == nil
+	}, 2*time.Second, 50*time.Millisecond, "reconnect after disconnect failed")
+}
 
-	session2, err := client2.NewSession()
-	require.NoError(t, err)
-	defer session2.Close()
+func TestServer_RateLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping SSH integration test in short mode")
+	}
+	t.Parallel()
 
-	_ = session2.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
-	err = session2.Shell()
-	require.NoError(t, err)
+	env := setupTestEnvironment(t)
+	defer env.cleanup()
+
+	signer := generateSigner(t)
+	clientConfig := &cryptossh.ClientConfig{
+		User:            "testuser_limit",
+		Auth:            []cryptossh.AuthMethod{cryptossh.PublicKeys(signer)},
+		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
+	}
+
+	// Rate limiter allows 5 per second. 6th should fail.
+	var failed bool
+	for i := 0; i < 6; i++ {
+		client, err := cryptossh.Dial("tcp", env.addr, clientConfig)
+		if err != nil {
+			failed = true
+			break
+		}
+		session, err := client.NewSession()
+		if err != nil {
+			failed = true
+			break
+		}
+
+		err = session.Shell()
+		if err != nil {
+			failed = true
+			break
+		}
+		session.Close()
+		client.Close()
+	}
+
+	assert.True(t, failed, "Expected rate limit to block connection")
+}
+
+func TestSetupServer_Errors(t *testing.T) {
+	t.Parallel()
+
+	deps := ServerDependencies{
+		Config: &config.Config{SSHKeyPath: "/invalid/path/that/doesnt/exist"},
+	}
+	_, err := SetupServer(deps)
+	assert.ErrorContains(t, err, "error while saving keypair")
 }

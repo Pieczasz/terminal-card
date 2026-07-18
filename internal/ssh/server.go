@@ -6,21 +6,23 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
 	"sync"
+
 	"terminalcard/internal/config"
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
+	"terminalcard/internal/observability"
 	"terminalcard/internal/player"
 	"terminalcard/internal/ratelimit"
 	"terminalcard/internal/tui"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
-	lm "charm.land/wish/v2/logging"
+	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/keygen"
 	"github.com/charmbracelet/ssh"
 )
@@ -33,6 +35,7 @@ func RateLimitMiddleware(limiter *ratelimit.SlidingWindowLimiter) wish.Middlewar
 				host = s.RemoteAddr().String()
 			}
 			if !limiter.Allow(host) {
+				observability.RateLimitRejectsTotal.Add(1)
 				wish.Fatalf(s, "Too many connections. Please try again later.\n")
 				return
 			}
@@ -59,13 +62,17 @@ func (t *SessionTracker) Connect(userID uint) bool {
 		return false
 	}
 	t.active[userID] = true
+	observability.SSHSessionsActive.Add(1)
 	return true
 }
 
 func (t *SessionTracker) Disconnect(userID uint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.active, userID)
+	if _, ok := t.active[userID]; ok {
+		delete(t.active, userID)
+		observability.SSHSessionsActive.Add(-1)
+	}
 }
 
 type ServerDependencies struct {
@@ -74,6 +81,20 @@ type ServerDependencies struct {
 	MatchRepository db.MatchRepository
 	LobbyManager    *lobby.Manager
 	GameRegistry    *game.Registry
+}
+
+func ensureHostKeyPermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat ssh host key: %w", err)
+	}
+	mode := info.Mode().Perm()
+	if mode&0o077 != 0 {
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("chmod ssh host key: %w", err)
+		}
+	}
+	return nil
 }
 
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
@@ -87,10 +108,12 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 			return nil, fmt.Errorf("error while saving keypair to disk: %w", err)
 		}
 	}
+	if err := ensureHostKeyPermissions(deps.Config.SSHKeyPath); err != nil {
+		return nil, err
+	}
 
 	tracker := NewSessionTracker()
-	// Allow 5 connections per 1 second sliding window
-	rateLimiter := ratelimit.NewSlidingWindowLimiter(5, time.Second)
+	rateLimiter := ratelimit.NewSlidingWindowLimiter(deps.Config.RateLimitCount, deps.Config.RateLimitWindow)
 
 	server, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
@@ -104,7 +127,10 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				return func(s ssh.Session) {
 					defer func() {
 						if r := recover(); r != nil {
-							slog.Error("critical panic recovered during ssh session", "panic", r, "user", s.User(), "remote_addr", s.RemoteAddr().String())
+							slog.Error("critical panic recovered during ssh session",
+								"panic", r,
+								"remote_addr", s.RemoteAddr().String(),
+							)
 							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
 						}
 
@@ -138,12 +164,13 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 					return nil, nil
 				}
 
+				// Mark ownership immediately after Connect so panic recovery always disconnects.
 				s.Context().SetValue("owns_connection", true)
 				s.Context().SetValue("user", user)
 
 				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
 			}),
-			lm.Middleware(),
+			logging.StructuredMiddleware(),
 			activeterm.Middleware(),
 		),
 	)
