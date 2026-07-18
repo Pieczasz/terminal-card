@@ -12,7 +12,7 @@ test-short:
 	go test -race -short ./...
 
 test-integration:
-	go test -race ./... -count=1 -timeout 15m
+	go test -race -tags=integration ./... -count=1 -timeout 15m
 
 lint:
 	golangci-lint run

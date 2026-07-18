@@ -18,10 +18,13 @@ RUN --mount=type=cache,target=/go/pkg/mod/cache \
     go build -o bin/backend cmd/server/main.go
 
 FROM alpine:3.22 AS certs
-RUN apk add --no-cache ca-certificates tzdata
+RUN apk add --no-cache ca-certificates tzdata \
+    && adduser -D -u 65532 -H -s /sbin/nologin nonroot
 
 FROM scratch
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=certs /usr/share/zoneinfo /usr/share/zoneinfo
+COPY --from=certs /etc/passwd /etc/passwd
 COPY --from=builder /code/bin/backend /usr/local/bin/backend
+USER nonroot
 CMD ["/usr/local/bin/backend"]

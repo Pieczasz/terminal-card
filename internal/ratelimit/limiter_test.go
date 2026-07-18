@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"terminalcard/internal/ratelimit"
+	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -72,8 +72,18 @@ func TestSlidingWindowLimiter_WindowExpiryEvicts(t *testing.T) {
 	require.False(t, limiter.Allow("1.1.1.1"))
 	assert.Equal(t, 1, limiter.Size())
 
-	time.Sleep(25 * time.Millisecond)
-
-	require.True(t, limiter.Allow("1.1.1.1"), "same IP should be allowed after window expiry")
+	require.Eventually(t, func() bool {
+		return limiter.Allow("1.1.1.1")
+	}, 200*time.Millisecond, 5*time.Millisecond)
 	assert.Equal(t, 1, limiter.Size())
+}
+
+func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(2)
+
+	require.True(t, limiter.Allow("a"))
+	require.True(t, limiter.Allow("b"))
+	require.False(t, limiter.Allow("c"), "new key should be rejected when at capacity")
+	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
 }

@@ -115,8 +115,7 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 
 	ch := b.Subscribe()
 
-	// The channel size is 10000, so broadcast 10000 times
-	for i := range 10000 {
+	for i := range 256 {
 		b.Broadcast(i)
 	}
 
@@ -133,7 +132,28 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 		t.Fatal("Broadcast blocked on a full channel")
 	}
 
-	// Read one to verify the first ones were retained (channels are FIFO)
 	got := <-ch
 	assert.Equal(t, 0, got)
+}
+
+func TestBroadcaster_MaxSubscribers(t *testing.T) {
+	t.Parallel()
+	b := New[int](2)
+	ch1 := b.Subscribe()
+	ch2 := b.Subscribe()
+	ch3 := b.Subscribe()
+
+	assert.Equal(t, 2, b.Len())
+	_, ok := <-ch3
+	assert.False(t, ok, "over-capacity subscribe should return closed channel")
+
+	b.Unsubscribe(ch1)
+	ch4 := b.Subscribe()
+	assert.Equal(t, 2, b.Len())
+	select {
+	case <-ch4:
+		t.Fatal("new subscriber channel should stay open")
+	default:
+	}
+	_ = ch2
 }

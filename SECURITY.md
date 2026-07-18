@@ -18,12 +18,13 @@ Implications:
 - Usernames are first-come-first-served for a given deployment.
 - Anyone who can reach the SSH port can register a new account with a new key.
 - Protect the service with network controls (firewall, VPN, fail2ban, or an allowlist) if you need a private community.
+- New lobbies default to **ranked**. Prefer casual lobbies (`WithRanked(false)` / UI when available) or network ACLs if open registration would enable Elo farming.
 
 
 
 ## Rate limiting
 
-Incoming SSH sessions are limited per client IP (`RATE_LIMIT_CONNECTIONS` / `RATE_LIMIT_WINDOW_MS`). This reduces brute-force registration noise; it is not a substitute for network ACLs.
+Incoming SSH sessions are limited per client IP (`RATE_LIMIT_CONNECTIONS` / `RATE_LIMIT_WINDOW_MS`). When terminating SSH behind nginx stream proxy, prefer edge `limit_conn` (see `internal/config/nginx.conf`) because the proxy hop collapses client IPs unless PROXY protocol is enabled.
 
 Lobby joins by code are rate-limited per player ID. Private lobby codes are 8 characters (`A-Z0-9`).
 

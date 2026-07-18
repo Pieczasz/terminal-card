@@ -1,3 +1,5 @@
+//go:build integration
+
 package ssh
 
 import (
@@ -9,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"terminalcard/internal/config"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/lobby"
-	"terminalcard/internal/repository"
-	"terminalcard/internal/testutil"
+	"github.com/Pieczasz/terminal-card/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/repository"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
