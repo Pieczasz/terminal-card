@@ -8,11 +8,11 @@ import (
 	"slices"
 	"sync"
 
-	"terminalcard/internal/broadcaster"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/observability"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/broadcaster"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/observability"
+	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Lobby struct {
@@ -26,6 +26,7 @@ type Lobby struct {
 	state        state
 	ready        map[string]bool
 	activeEngine *game.Engine
+	playerSubs   map[string][]<-chan Event
 }
 
 type Event struct {
@@ -171,32 +172,110 @@ func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
 // Prefer Manager.LeaveLobby / Manager.Kick so playerLobby stays consistent.
 func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	l.mu.Lock()
-	defer l.mu.Unlock()
 
-	if l.activeEngine != nil {
-		l.activeEngine.RemovePlayer(p.ID)
+	engine := l.activeEngine
+	playerID := ""
+	if p != nil {
+		playerID = p.ID
 	}
+	l.unsubscribePlayerLocked(playerID)
 
+	shouldClose := false
 	if l.leader.Compare(p) {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
 			l.guests = l.guests[1:]
 			delete(l.ready, p.ID)
-			l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
+			bc := l.broadcaster
+			l.mu.Unlock()
+			if engine != nil {
+				engine.RemovePlayer(playerID)
+			}
+			if bc != nil {
+				bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
+			}
 			return false
 		}
 
-		l.broadcastUnlocked(Event{Type: "LOBBY_CLOSED"})
+		l.state = Closed
+		bc := l.broadcaster
+		l.mu.Unlock()
+		if engine != nil {
+			engine.RemovePlayer(playerID)
+		}
+		if bc != nil {
+			bc.Broadcast(Event{Type: "LOBBY_CLOSED"})
+		}
 		return true
 	}
 
 	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
 		l.guests = slices.Delete(l.guests, idx, idx+1)
 		delete(l.ready, p.ID)
-		l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
+		bc := l.broadcaster
+		l.mu.Unlock()
+		if engine != nil {
+			engine.RemovePlayer(playerID)
+		}
+		if bc != nil {
+			bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
+		}
+		return false
 	}
 
+	l.mu.Unlock()
+	_ = shouldClose
 	return false
+}
+
+// Subscribe registers a lobby event channel for playerID so disconnect can unsubscribe.
+func (l *Lobby) Subscribe(playerID string) <-chan Event {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.broadcaster == nil || l.state == Closed {
+		ch := make(chan Event)
+		close(ch)
+		return ch
+	}
+	ch := l.broadcaster.Subscribe()
+	if l.playerSubs == nil {
+		l.playerSubs = make(map[string][]<-chan Event)
+	}
+	l.playerSubs[playerID] = append(l.playerSubs[playerID], ch)
+	return ch
+}
+
+// Unsubscribe removes a single channel previously returned by Subscribe.
+func (l *Lobby) Unsubscribe(playerID string, ch <-chan Event) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.broadcaster == nil || ch == nil {
+		return
+	}
+	l.broadcaster.Unsubscribe(ch)
+	if playerID == "" || l.playerSubs == nil {
+		return
+	}
+	subs := l.playerSubs[playerID]
+	for i, sub := range subs {
+		if sub == ch {
+			l.playerSubs[playerID] = slices.Delete(subs, i, i+1)
+			if len(l.playerSubs[playerID]) == 0 {
+				delete(l.playerSubs, playerID)
+			}
+			return
+		}
+	}
+}
+
+func (l *Lobby) unsubscribePlayerLocked(playerID string) {
+	if playerID == "" || l.broadcaster == nil || l.playerSubs == nil {
+		return
+	}
+	for _, ch := range l.playerSubs[playerID] {
+		l.broadcaster.Unsubscribe(ch)
+	}
+	delete(l.playerSubs, playerID)
 }
 
 func (l *Lobby) ToggleReady(p *player.Player, registry *game.Registry) error {
@@ -424,7 +503,7 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	if l.manager != nil && l.manager.matchRepo != nil {
 		ch := engine.Broadcaster().Subscribe()
 		go func() {
-			defer engine.Close()
+			defer engine.Broadcaster().Unsubscribe(ch)
 			l.handleBroadcasterEvents(ch, engine)
 		}()
 	}
@@ -465,10 +544,7 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 		if l.options.cardGame != nil {
 			gameName = l.options.cardGame.Name
 		}
-		parentCtx := context.Background()
-		if l.manager != nil && l.manager.appCtx != nil {
-			parentCtx = l.manager.appCtx
-		}
+		parentCtx := l.manager.shutdownCtx()
 		l.mu.RUnlock()
 
 		if isRanked && gameName != "" && l.manager != nil && l.manager.matchRepo != nil {

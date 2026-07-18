@@ -5,7 +5,7 @@ import (
 	"net"
 	"testing"
 
-	"terminalcard/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/config"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

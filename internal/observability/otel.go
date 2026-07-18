@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"terminalcard/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/config"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploggrpc"

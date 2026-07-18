@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"terminalcard/internal/deck"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"

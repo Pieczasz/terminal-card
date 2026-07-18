@@ -3,7 +3,7 @@ package player
 import (
 	"testing"
 
-	"terminalcard/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/db"
 
 	"github.com/stretchr/testify/assert"
 	"gorm.io/gorm"

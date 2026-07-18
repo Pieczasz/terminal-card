@@ -1,6 +1,6 @@
 package crazyeight
 
-import "terminalcard/internal/deck"
+import "github.com/Pieczasz/terminal-card/internal/deck"
 
 // State holds Crazy Eights–specific game state stored in game.State.Extra.
 type State struct {

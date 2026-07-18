@@ -8,7 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"terminalcard/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/db"
 
 	"gorm.io/gorm"
 )

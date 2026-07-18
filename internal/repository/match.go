@@ -6,8 +6,8 @@ import (
 	"math"
 	"strconv"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/elo"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/elo"
 
 	"gorm.io/gorm"
 )
@@ -31,7 +31,7 @@ func (q *GormMatchRepository) GetOrCreateGame(ctx context.Context, name string) 
 
 func (q *GormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
 	if len(orderedUserIDs) == 0 {
-		return nil, nil
+		return map[uint]int{}, nil
 	}
 
 	var deltas map[uint]int
