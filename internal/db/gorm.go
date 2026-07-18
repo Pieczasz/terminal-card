@@ -2,7 +2,8 @@ package db
 
 import (
 	"fmt"
-	"log/slog"
+	"time"
+
 	"terminalcard/internal/config"
 
 	"gorm.io/driver/postgres"
@@ -20,15 +21,17 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 		Logger: logger.Default.LogMode(logMode),
 	})
 	if err != nil {
-		slog.Error("failed to connect to the database", "error", err)
 		return nil, fmt.Errorf("failed to connect to the database: %w", err)
 	}
 
-	// TODO: automate this instead of passing every table manually
-	if err := database.AutoMigrate(&User{}, &PublicKey{}, &Game{}, &Ranking{}, &Match{}, &MatchParticipant{}); err != nil {
-		slog.Error("failed to run database migrations", "error", err)
-		return nil, fmt.Errorf("failed to run database migrations: %w", err)
+	sqlDB, err := database.DB()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get sql.DB: %w", err)
 	}
+
+	sqlDB.SetMaxIdleConns(10)
+	sqlDB.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return database, nil
 }

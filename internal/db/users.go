@@ -18,7 +18,7 @@ type User struct {
 
 type PublicKey struct {
 	gorm.Model
-	Fingerprint string
+	Fingerprint string `gorm:"uniqueIndex"`
 	Name        string
 	LastUsedAt  time.Time
 	UserID      uint
@@ -44,8 +44,10 @@ func ValidateUsername(username string) error {
 	if len(username) > 16 {
 		return errors.New("username cannot exceed 16 characters")
 	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_]+$`).MatchString(username) {
+	if !usernamePattern.MatchString(username) {
 		return errors.New("username can only contain English letters, numbers, and underscores")
 	}
 	return nil
 }
+
+var usernamePattern = regexp.MustCompile(`^[A-Za-z0-9_]+$`)

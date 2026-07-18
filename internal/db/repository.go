@@ -15,4 +15,5 @@ type MatchRepository interface {
 	UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error)
 	RecordMatch(ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error
 	GetOrCreateGame(ctx context.Context, name string) (*Game, error)
+	FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error
 }

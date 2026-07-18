@@ -13,6 +13,12 @@ import (
 	"gorm.io/gorm"
 )
 
+var (
+	ErrUsernameTaken       = errors.New("username already taken, please choose another via ssh config")
+	ErrKeyAlreadyRegistered = errors.New("public key already registered")
+	ErrInvalidUsername     = errors.New("invalid username")
+)
+
 type GormUserRepository struct {
 	db                    *gorm.DB
 	bestPlayersCache      []db.Ranking
@@ -31,43 +37,58 @@ func (q *GormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerpr
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil, nil
 		}
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load user by fingerprint: %w", err)
 	}
 	return &dbKey.User, &dbKey, nil
 }
 
 func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, fingerprint string) (*db.User, *db.PublicKey, error) {
-	// TODO: move validate username to different package?
 	if err := db.ValidateUsername(username); err != nil {
-		return nil, nil, fmt.Errorf("invalid username: %w", err)
+		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidUsername, err)
 	}
 
-	var existingUser db.User
-	err := q.db.WithContext(ctx).Where("username = ?", username).First(&existingUser).Error
-	if err == nil {
-		return nil, nil, errors.New("username already taken, please choose another via ssh config")
-	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil, err
-	}
+	var currentUser db.User
+	var dbKey db.PublicKey
 
-	currentUser := db.User{
-		Username:   username,
-		LastSeenAt: time.Now(),
-	}
+	err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var existingUser db.User
+		err := tx.Where("username = ?", username).First(&existingUser).Error
+		if err == nil {
+			return ErrUsernameTaken
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("check username: %w", err)
+		}
 
-	if err := q.db.WithContext(ctx).Create(&currentUser).Error; err != nil {
-		return nil, nil, err
-	}
+		var existingKey db.PublicKey
+		err = tx.Where("fingerprint = ?", fingerprint).First(&existingKey).Error
+		if err == nil {
+			return ErrKeyAlreadyRegistered
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("check fingerprint: %w", err)
+		}
 
-	dbKey := db.PublicKey{
-		Fingerprint: fingerprint,
-		Name:        "auto-generated key",
-		UserID:      currentUser.ID,
-		LastUsedAt:  time.Now(),
-	}
+		currentUser = db.User{
+			Username:   username,
+			LastSeenAt: time.Now(),
+		}
+		if err := tx.Create(&currentUser).Error; err != nil {
+			return fmt.Errorf("create user: %w", err)
+		}
 
-	if err := q.db.WithContext(ctx).Create(&dbKey).Error; err != nil {
+		dbKey = db.PublicKey{
+			Fingerprint: fingerprint,
+			Name:        "auto-generated key",
+			UserID:      currentUser.ID,
+			LastUsedAt:  time.Now(),
+		}
+		if err := tx.Create(&dbKey).Error; err != nil {
+			return fmt.Errorf("create public key: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
 		return nil, nil, err
 	}
 
@@ -97,17 +118,22 @@ func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]d
 		Order("elo desc").
 		Limit(100).
 		Find(&rankings).Error
-
-	if err == nil {
-		q.bestPlayersCache = rankings
-		q.bestPlayersCacheTime = time.Now()
+	if err != nil {
+		return nil, fmt.Errorf("get best players: %w", err)
 	}
+
+	q.bestPlayersCache = rankings
+	q.bestPlayersCacheTime = time.Now()
 
 	if len(rankings) > limit {
-		rankings = rankings[:limit]
+		out := make([]db.Ranking, limit)
+		copy(out, rankings[:limit])
+		return out, nil
 	}
 
-	return rankings, err
+	out := make([]db.Ranking, len(rankings))
+	copy(out, rankings)
+	return out, nil
 }
 
 func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*db.User, error) {
@@ -117,17 +143,17 @@ func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*
 		Preload("Rankings.Game").
 		First(&user, userID).Error
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get user profile: %w", err)
 	}
 	return &user, nil
 }
 
 func (q *GormUserRepository) UpdateUserActivity(ctx context.Context, user *db.User, key *db.PublicKey) {
 	if err := q.db.WithContext(ctx).Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
-		slog.Error("unexpected error while trying to update LastSeenAt field", "user", user, "error", err)
+		slog.Error("unexpected error while trying to update LastSeenAt field", "user_id", user.ID, "error", err)
 	}
 	if err := q.db.WithContext(ctx).Model(key).Update("LastUsedAt", time.Now()).Error; err != nil {
-		slog.Error("unexpected error while trying to update LastUsedAt field", "user", user, "error", err)
+		slog.Error("unexpected error while trying to update LastUsedAt field", "user_id", user.ID, "error", err)
 	}
 }
 
@@ -141,5 +167,8 @@ func (q *GormUserRepository) GetUserMatchHistory(ctx context.Context, userID uin
 		Order("match_id desc").
 		Limit(limit).
 		Find(&history).Error
-	return history, err
+	if err != nil {
+		return nil, fmt.Errorf("get user match history: %w", err)
+	}
+	return history, nil
 }
