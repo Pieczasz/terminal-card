@@ -53,6 +53,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m Model) unsubscribe() Model {
+	if m.engine != nil && m.events != nil {
+		m.engine.Broadcaster().Unsubscribe(m.events)
+		m.events = nil
+	}
+	return m
+}
+
 func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		m.pickingSuit = false
@@ -63,10 +71,12 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 
 	if m.baseState.Phase == game.Finished {
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
+		m = m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 	}
 
 	m.global.LobbyManager.LeaveLobby(p)
+	m = m.unsubscribe()
 	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 }
 
@@ -134,6 +144,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
 		p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
+		m = m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 	}
 
@@ -153,25 +164,37 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
+	if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
 		Cards: []deck.Card{card},
-	})
+	}); err != nil {
+		m.lastActionErr = err
+	} else {
+		m.lastActionErr = nil
+	}
 	return m, nil
 }
 
 func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 	chosenSuit := deck.Suit(m.suitCursor)
-	_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
+	if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 		Suit:  chosenSuit,
-	})
+	}); err != nil {
+		m.lastActionErr = err
+	} else {
+		m.lastActionErr = nil
+	}
 	m.pickingSuit = false
 	return m, nil
 }
 
 func (m Model) handleDraw() (tea.Model, tea.Cmd) {
 	if m.baseState.MyTurn && !m.pickingSuit {
-		_ = m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionDrawCard{})
+		if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionDrawCard{}); err != nil {
+			m.lastActionErr = err
+		} else {
+			m.lastActionErr = nil
+		}
 	}
 	return m, nil
 }

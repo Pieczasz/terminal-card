@@ -17,6 +17,14 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+// ViewFactory builds a TUI model for a started game engine.
+type ViewFactory func(g router.GlobalContext, e *game.Engine) tea.Model
+
+// gameViews maps module slug → TUI factory. Add an entry when registering a new Module.
+var gameViews = map[string]ViewFactory{
+	"crazy_eights": crazyeight.New,
+}
+
 func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
 	global := router.GlobalContext{
 		User:            &user,
@@ -57,18 +65,38 @@ func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepositor
 	})
 
 	r.Register("lobby", func(g router.GlobalContext, ctx any) tea.Model {
-		// ctx should be the *lobby.Lobby
-		l, _ := ctx.(*internallobby.Lobby)
+		l, ok := ctx.(*internallobby.Lobby)
+		if !ok {
+			return home.New(g)
+		}
 		return lobby.New(g, l)
 	})
 
-	r.Register("game_crazy_eights", func(g router.GlobalContext, ctx any) tea.Model {
-		// ctx should be the *game.Engine
-		e, _ := ctx.(*game.Engine)
-		return crazyeight.New(g, e)
-	})
-	// TODO: after adding new games, register their view here
+	registerGameViews(r, gameRegistry)
+
 	r.Goto("home", nil)
 
 	return r
+}
+
+func registerGameViews(r *router.Router, gameRegistry *game.Registry) {
+	for _, name := range gameRegistry.GameNames() {
+		mod, ok := gameRegistry.Module(name)
+		if !ok {
+			continue
+		}
+		viewFactory, ok := gameViews[mod.Slug]
+		if !ok {
+			continue
+		}
+		route := mod.RouteName()
+		vf := viewFactory
+		r.Register(route, func(g router.GlobalContext, ctx any) tea.Model {
+			e, ok := ctx.(*game.Engine)
+			if !ok {
+				return home.New(g)
+			}
+			return vf(g, e)
+		})
+	}
 }

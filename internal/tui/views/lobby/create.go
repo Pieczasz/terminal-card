@@ -24,12 +24,16 @@ type createModel struct {
 }
 
 func NewCreate(global router.GlobalContext) tea.Model {
+	gameOptions := global.GameRegistry.GameNames()
+	if len(gameOptions) == 0 {
+		gameOptions = []string{"Crazy Eights"}
+	}
 	return createModel{
 		global:      global,
 		cursor:      0, // 0: Game, 1: Players, 2: Visibility, 3: Create Button
 		isPrivate:   true,
 		maxPlayers:  4,
-		gameOptions: []string{"Crazy Eights"}, // TODO: automate this
+		gameOptions: gameOptions,
 		gameIndex:   0,
 	}
 }
@@ -69,6 +73,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case 0:
 				if m.gameIndex > 0 {
 					m.gameIndex--
+					m.clampMaxPlayers()
 				}
 			case 1:
 				if m.maxPlayers > 2 {
@@ -82,9 +87,10 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case 0:
 				if m.gameIndex < len(m.gameOptions)-1 {
 					m.gameIndex++
+					m.clampMaxPlayers()
 				}
 			case 1:
-				if m.maxPlayers < 8 { // hard limit example
+				if m.maxPlayers < m.gameMaxPlayers() {
 					m.maxPlayers++
 				}
 			case 2:
@@ -108,6 +114,28 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func (m *createModel) gameMaxPlayers() int {
+	rules, err := m.global.GameRegistry.Create(m.gameOptions[m.gameIndex])
+	if err != nil {
+		return 8
+	}
+	return rules.MaxPlayers()
+}
+
+func (m *createModel) clampMaxPlayers() {
+	maxP := m.gameMaxPlayers()
+	minP := 2
+	if rules, err := m.global.GameRegistry.Create(m.gameOptions[m.gameIndex]); err == nil {
+		minP = rules.MinPlayers()
+	}
+	if m.maxPlayers > maxP {
+		m.maxPlayers = maxP
+	}
+	if m.maxPlayers < minP {
+		m.maxPlayers = minP
+	}
 }
 
 func (m createModel) View() tea.View {

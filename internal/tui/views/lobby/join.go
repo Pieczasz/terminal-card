@@ -23,8 +23,8 @@ type joinModel struct {
 
 func NewJoin(global router.GlobalContext) tea.Model {
 	ti := textinput.New()
-	ti.Placeholder = "6-character code"
-	ti.CharLimit = 6
+	ti.Placeholder = "8-character code"
+	ti.CharLimit = 8
 	ti.SetWidth(20)
 
 	return joinModel{

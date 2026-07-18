@@ -151,10 +151,13 @@ func (m Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
 	handView := gameview.RenderHand(m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
 
-	return lg.JoinVertical(lg.Center,
-		statusView,
-		handView,
-	)
+	sections := []string{statusView, handView}
+	if m.lastActionErr != nil {
+		errView := lg.NewStyle().Foreground(lg.Color("196")).Render(m.lastActionErr.Error())
+		sections = append(sections, errView)
+	}
+
+	return lg.JoinVertical(lg.Center, sections...)
 }
 
 func (m Model) renderSuitPicker() string {

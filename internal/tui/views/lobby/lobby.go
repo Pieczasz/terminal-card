@@ -3,7 +3,7 @@ package lobby
 import (
 	"fmt"
 	"log/slog"
-	"strings"
+	"terminalcard/internal/elo"
 	"terminalcard/internal/game"
 	"terminalcard/internal/lobby"
 	"terminalcard/internal/player"
@@ -45,16 +45,29 @@ func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
 
 // New returns a new lobby model. We pass the current active lobby through Context.
 func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
-	ch := activeLobby.Broadcaster().Subscribe()
+	var ch <-chan lobby.Event
+	if activeLobby != nil {
+		if b := activeLobby.Broadcaster(); b != nil {
+			ch = b.Subscribe()
+		}
+	}
+	gameName := ""
+	isPrivate := true
+	maxPlayers := 4
+	if activeLobby != nil {
+		gameName = activeLobby.GameName()
+		isPrivate = activeLobby.IsPrivate()
+		maxPlayers = activeLobby.MaxPlayers()
+	}
 	return model{
 		global:       global,
 		currentLobby: activeLobby,
 		lobbyChan:    ch,
 		cursor:       0,
-		gameOptions:  []string{activeLobby.GameName()},
+		gameOptions:  []string{gameName},
 		gameIndex:    0,
-		isPrivate:    activeLobby.IsPrivate(),
-		maxPlayers:   activeLobby.MaxPlayers(),
+		isPrivate:    isPrivate,
+		maxPlayers:   maxPlayers,
 	}
 }
 
@@ -62,10 +75,10 @@ func (m model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
-// TODO: better elo retrieving system?
+// Elo is retrieved from preloaded Rankings, which is updated whenever a game ends.
 func (m model) getElo(p *player.Player) uint32 {
 	if p == nil || p.DatabaseUser == nil {
-		return 1000
+		return uint32(elo.DefaultRating)
 	}
 	gameName := m.currentLobby.GameName()
 	for _, r := range p.DatabaseUser.Rankings {
@@ -73,7 +86,33 @@ func (m model) getElo(p *player.Player) uint32 {
 			return r.Elo
 		}
 	}
-	return 1000
+	return uint32(elo.DefaultRating)
+}
+
+func (m model) unsubscribe() model {
+	if m.currentLobby != nil && m.lobbyChan != nil {
+		if b := m.currentLobby.Broadcaster(); b != nil {
+			b.Unsubscribe(m.lobbyChan)
+		}
+		m.lobbyChan = nil
+	}
+	return m
+}
+
+func (m model) gamePlayerBounds() (minPlayers, maxPlayers int) {
+	minPlayers, maxPlayers = 2, 6
+	if m.global.GameRegistry == nil || m.currentLobby == nil {
+		return minPlayers, maxPlayers
+	}
+	rules, err := m.global.GameRegistry.Create(m.currentLobby.GameName())
+	if err != nil {
+		return minPlayers, maxPlayers
+	}
+	return rules.MinPlayers(), rules.MaxPlayers()
+}
+
+func (m model) selfPlayer() *player.Player {
+	return &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -88,6 +127,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "y", "Y":
 				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 				m.global.LobbyManager.LeaveLobby(p)
+				m = m.unsubscribe()
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n", "N", "esc":
 				m.showLeaveConfirm = false
@@ -95,23 +135,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 
-		isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
+		isLeader := m.currentLobby.IsLeader(&player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User})
+		self := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 
 		switch msg.String() {
 		case "esc", "x":
 			m.showLeaveConfirm = true
 			return m, nil
 		case "n":
+			m = m.unsubscribe()
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
 		case "f":
+			m = m.unsubscribe()
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 		case "p":
+			m = m.unsubscribe()
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 		case "t":
+			m = m.unsubscribe()
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 		case "r":
-			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-			if err := m.currentLobby.ToggleReady(p, m.global.GameRegistry); err != nil {
+			if err := m.currentLobby.ToggleReady(self, m.global.GameRegistry); err != nil {
 				slog.Error("failed to toggle ready or start game engine", "error", err)
 			}
 			return m, nil
@@ -128,26 +172,40 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if isLeader {
 				switch m.cursor {
 				case 1:
-					if m.maxPlayers > 2 {
+					rulesMin, rulesMax := m.gamePlayerBounds()
+					if m.maxPlayers > rulesMin && m.maxPlayers > m.currentLobby.CurrentPlayers() {
 						m.maxPlayers--
-						m.currentLobby.SetMaxPlayers(m.maxPlayers)
+						if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
+							m.maxPlayers++
+							slog.Error("failed to set max players", "error", err)
+						}
 					}
 				case 2:
 					m.isPrivate = !m.isPrivate
-					m.currentLobby.SetPrivate(m.isPrivate)
+					if err := m.currentLobby.SetPrivate(self, m.isPrivate); err != nil {
+						m.isPrivate = !m.isPrivate
+						slog.Error("failed to set privacy", "error", err)
+					}
 				}
 			}
 		case "right", "l":
 			if isLeader {
 				switch m.cursor {
 				case 1:
-					if m.maxPlayers < 8 {
+					rulesMin, rulesMax := m.gamePlayerBounds()
+					if m.maxPlayers < rulesMax {
 						m.maxPlayers++
-						m.currentLobby.SetMaxPlayers(m.maxPlayers)
+						if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
+							m.maxPlayers--
+							slog.Error("failed to set max players", "error", err)
+						}
 					}
 				case 2:
 					m.isPrivate = !m.isPrivate
-					m.currentLobby.SetPrivate(m.isPrivate)
+					if err := m.currentLobby.SetPrivate(self, m.isPrivate); err != nil {
+						m.isPrivate = !m.isPrivate
+						slog.Error("failed to set privacy", "error", err)
+					}
 				}
 			}
 		case "enter":
@@ -155,22 +213,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				guestIdx := m.cursor - 3
 				guests := m.currentLobby.Guests()
 				if guestIdx < len(guests) {
-					m.currentLobby.RemovePlayer(guests[guestIdx])
+					if err := m.global.LobbyManager.Kick(self, guests[guestIdx]); err != nil {
+						slog.Error("failed to kick player", "error", err)
+					}
 				}
 			}
 		}
 
 	case lobbyMsg:
 		if msg.Type == "LOBBY_CLOSED" {
-			// TODO: show user some message
+			m = m.unsubscribe()
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		}
 		if msg.Type == "GAME_STARTED" {
-			engine := msg.Payload.(*game.Engine)
+			engine, ok := msg.Payload.(*game.Engine)
+			if !ok || engine == nil {
+				slog.Error("GAME_STARTED payload was not a game engine")
+				return m, listenToLobbyBroadcaster(m.lobbyChan)
+			}
 
-			// Format game name for routing (e.g. "Crazy Eights" -> "game_crazy_eights")
-			gameRouteName := "game_" + strings.ReplaceAll(strings.ToLower(m.currentLobby.GameName()), " ", "_")
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: gameRouteName, Context: engine} }
+			routeName, err := m.global.GameRegistry.RouteName(m.currentLobby.GameName())
+			if err != nil {
+				slog.Error("no TUI route for game", "game", m.currentLobby.GameName(), "error", err)
+				return m, nil
+			}
+			m = m.unsubscribe()
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: routeName, Context: engine} }
 		}
 		if msg.Type == "SETTINGS_UPDATED" || msg.Type == "PLAYERS_UPDATED" {
 			p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
@@ -185,6 +253,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 				if !found {
+					m = m.unsubscribe()
 					return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 				}
 			}
@@ -212,7 +281,7 @@ func (m model) View() tea.View {
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 
-	isLeader := m.currentLobby.Leader().DatabaseUser.ID == m.global.User.ID
+	isLeader := m.currentLobby.IsLeader(m.selfPlayer())
 
 	var footerActions []string
 	footerActions = append(footerActions, "x - Leave Lobby")
@@ -256,7 +325,7 @@ func (m model) View() tea.View {
 	if m.currentLobby.IsReady(leader) {
 		leaderReadyStr = lg.NewStyle().Foreground(lg.Color("46")).Render(" - Ready")
 	}
-	playerList = append(playerList, fmt.Sprintf("  %s %s (Elo: %d)%s", styles.HostTag.Render("[Leader]"), leader.DatabaseUser.Username, leaderElo, leaderReadyStr))
+	playerList = append(playerList, fmt.Sprintf("  %s %s (Elo: %d)%s", styles.HostTag.Render("[Leader]"), leader.Username(), leaderElo, leaderReadyStr))
 
 	guests := m.currentLobby.Guests()
 	for i, g := range guests {
@@ -270,7 +339,7 @@ func (m model) View() tea.View {
 		if m.currentLobby.IsReady(g) {
 			guestReadyStr = lg.NewStyle().Foreground(lg.Color("46")).Render(" - Ready")
 		}
-		row := fmt.Sprintf("%s%s %s (Elo: %d)%s", cursor, styles.GuestTag.Render("[Guest] "), g.DatabaseUser.Username, guestElo, guestReadyStr)
+		row := fmt.Sprintf("%s%s %s (Elo: %d)%s", cursor, styles.GuestTag.Render("[Guest] "), g.Username(), guestElo, guestReadyStr)
 		if isSelected {
 			row = styles.PlayerItemSelected.Render(row)
 		}
