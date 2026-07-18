@@ -76,6 +76,19 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	}
 }
 
+func TestBroadcaster_SubscribeAfterClose(t *testing.T) {
+	t.Parallel()
+	b := New[int](10)
+	b.Close()
+
+	ch := b.Subscribe()
+	_, ok := <-ch
+	assert.False(t, ok)
+
+	// Double close is safe.
+	b.Close()
+}
+
 func TestBroadcaster_Close(t *testing.T) {
 	t.Parallel()
 	b := New[int](10)
@@ -102,8 +115,8 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 
 	ch := b.Subscribe()
 
-	// TODO: update this if we change broadcaster size
-	for i := range 1000 {
+	// The channel size is 10000, so broadcast 10000 times
+	for i := range 10000 {
 		b.Broadcast(i)
 	}
 

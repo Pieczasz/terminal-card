@@ -3,17 +3,23 @@ package ssh
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
+	"strings"
+
 	"terminalcard/internal/db"
+	"terminalcard/internal/repository"
 
 	"github.com/charmbracelet/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
 var (
-	ErrNoPublicKey = errors.New("SSH key authentication is required")
-	ErrInternal    = errors.New("internal server error")
+	ErrNoPublicKey      = errors.New("SSH key authentication is required")
+	ErrInternal         = errors.New("internal server error")
+	ErrUsernameTaken    = errors.New("username already taken, please choose another via ssh config")
+	ErrInvalidUsername  = errors.New("invalid username")
+	ErrKeyAlreadyUsed   = errors.New("public key already registered")
+	ErrRegistrationFail = errors.New("registration failed")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
@@ -35,11 +41,26 @@ func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUser
 		user, _, err = userRepo.RegisterUserWithKey(ctx, sshUsername, fingerprint)
 		if err != nil {
 			slog.Error("failed to register new user", "error", err)
-			return nil, fmt.Errorf("failed to register new user: %w", err)
+			return nil, mapRegisterError(err)
 		}
 	} else {
 		userRepo.UpdateUserActivity(ctx, user, key)
 	}
 
 	return user, nil
+}
+
+func mapRegisterError(err error) error {
+	switch {
+	case errors.Is(err, repository.ErrUsernameTaken):
+		return ErrUsernameTaken
+	case errors.Is(err, repository.ErrInvalidUsername):
+		return ErrInvalidUsername
+	case errors.Is(err, repository.ErrKeyAlreadyRegistered):
+		return ErrKeyAlreadyUsed
+	case strings.Contains(err.Error(), "invalid username"):
+		return ErrInvalidUsername
+	default:
+		return ErrRegistrationFail
+	}
 }
