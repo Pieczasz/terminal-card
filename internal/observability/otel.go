@@ -29,7 +29,7 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 		return err
 	}
 
-	res, err := newResource()
+	res, err := newResource(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
@@ -50,12 +50,15 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 	return
 }
 
-func newResource() (*resource.Resource, error) {
+func newResource(cfg *config.Config) (*resource.Resource, error) {
+	version := cfg.ServiceVersion
+	if version == "" {
+		version = "0.1.0"
+	}
 	r, err := resource.Merge(resource.Default(),
 		resource.NewWithAttributes(resource.Default().SchemaURL(),
-			// TODO: change this in prod/setup envs
-			semconv.ServiceName("terminal-card-server"),
-			semconv.ServiceVersion("1.0.0"),
+			semconv.ServiceName(cfg.Env+"-terminal-card-server"),
+			semconv.ServiceVersion(version),
 		))
 	if err != nil {
 		return nil, fmt.Errorf("failed to merge default resource attributes: %w", err)
@@ -64,10 +67,14 @@ func newResource() (*resource.Resource, error) {
 }
 
 func newLoggerProvider(ctx context.Context, cfg *config.Config, res *resource.Resource) (*sdklog.LoggerProvider, error) {
-	logExporter, err := otlploggrpc.New(ctx,
-		otlploggrpc.WithInsecure(),
+	opts := []otlploggrpc.Option{
 		otlploggrpc.WithEndpoint(cfg.OTelEndpoint),
-	)
+	}
+	if cfg.OTelInsecure {
+		opts = append(opts, otlploggrpc.WithInsecure())
+	}
+
+	logExporter, err := otlploggrpc.New(ctx, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create otlp log exporter: %w", err)
 	}

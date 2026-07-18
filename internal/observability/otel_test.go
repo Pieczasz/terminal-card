@@ -42,6 +42,8 @@ func TestOTel_Integration(t *testing.T) {
 	addr := lis.Addr().String()
 	cfg := &config.Config{
 		OTelEndpoint: addr,
+		OTelInsecure: true,
+		Env:          "development",
 	}
 
 	ctx := context.Background()
@@ -62,5 +64,5 @@ func TestOTel_Integration(t *testing.T) {
 	req := mockSvc.requests[0]
 
 	require.NotEmpty(t, req.ResourceLogs)
-	assert.Equal(t, "terminal-card-server", req.ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue())
+	assert.Equal(t, "development-terminal-card-server", req.ResourceLogs[0].Resource.Attributes[0].Value.GetStringValue())
 }
