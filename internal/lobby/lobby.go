@@ -11,6 +11,7 @@ import (
 	"terminalcard/internal/broadcaster"
 	"terminalcard/internal/db"
 	"terminalcard/internal/game"
+	"terminalcard/internal/observability"
 	"terminalcard/internal/player"
 )
 
@@ -49,9 +50,9 @@ type options struct {
 	isRanked   bool
 }
 
-func WithCardGame(game *db.Game) Option {
+func WithCardGame(g *db.Game) Option {
 	return func(o *options) {
-		o.cardGame = game
+		o.cardGame = g
 	}
 }
 
@@ -81,33 +82,93 @@ func setupDefaultOptions() *options {
 	}
 }
 
-func (l *Lobby) SetPrivate(isPrivate bool) {
+func (l *Lobby) broadcastUnlocked(event Event) {
+	if l.broadcaster != nil {
+		l.broadcaster.Broadcast(event)
+	}
+}
+
+func (l *Lobby) takeBroadcaster() *broadcaster.Broadcaster[Event] {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.broadcaster
+}
+
+// SetPrivate updates lobby visibility. Only the current leader may change settings.
+func (l *Lobby) SetPrivate(actor *player.Player, isPrivate bool) error {
 	l.mu.Lock()
+	if !l.leader.Compare(actor) {
+		l.mu.Unlock()
+		return errors.New("only the leader can change settings")
+	}
+	if l.state != Waiting {
+		l.mu.Unlock()
+		return errors.New("cannot change settings while a game is in progress")
+	}
 	l.options.isPrivate = isPrivate
+	bc := l.broadcaster
 	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	if bc != nil {
+		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
 	}
+	return nil
 }
 
-func (l *Lobby) SetMaxPlayers(limit int) {
+// SetMaxPlayers updates capacity. Clamped to current roster size and optional game rules bounds.
+func (l *Lobby) SetMaxPlayers(actor *player.Player, limit int, rulesMin, rulesMax int) error {
 	l.mu.Lock()
+	if !l.leader.Compare(actor) {
+		l.mu.Unlock()
+		return errors.New("only the leader can change settings")
+	}
+	if l.state != Waiting {
+		l.mu.Unlock()
+		return errors.New("cannot change settings while a game is in progress")
+	}
+	current := 1 + len(l.guests)
+	if limit < current {
+		l.mu.Unlock()
+		return fmt.Errorf("max players cannot be below current roster (%d)", current)
+	}
+	if rulesMin > 0 && limit < rulesMin {
+		l.mu.Unlock()
+		return fmt.Errorf("max players must be at least %d for this game", rulesMin)
+	}
+	if rulesMax > 0 && limit > rulesMax {
+		l.mu.Unlock()
+		return fmt.Errorf("max players cannot exceed %d for this game", rulesMax)
+	}
 	l.options.maxPlayers = limit
+	bc := l.broadcaster
 	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	if bc != nil {
+		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
 	}
+	return nil
 }
 
-func (l *Lobby) SetCardGame(game *db.Game) {
+// SetCardGame updates the selected game. Only the leader may change it while waiting.
+func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
 	l.mu.Lock()
-	l.options.cardGame = game
-	l.mu.Unlock()
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	if !l.leader.Compare(actor) {
+		l.mu.Unlock()
+		return errors.New("only the leader can change settings")
 	}
+	if l.state != Waiting {
+		l.mu.Unlock()
+		return errors.New("cannot change settings while a game is in progress")
+	}
+	l.options.cardGame = g
+	bc := l.broadcaster
+	l.mu.Unlock()
+	if bc != nil {
+		bc.Broadcast(Event{Type: "SETTINGS_UPDATED"})
+	}
+	return nil
 }
 
+// RemovePlayer removes a player. Returns true if the lobby should be closed (empty).
+// Prefer Manager.LeaveLobby / Manager.Kick so playerLobby stays consistent.
 func (l *Lobby) RemovePlayer(p *player.Player) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -120,23 +181,19 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
 			l.guests = l.guests[1:]
-			if l.broadcaster != nil {
-				l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-			}
+			delete(l.ready, p.ID)
+			l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
 			return false
 		}
 
-		if l.broadcaster != nil {
-			l.broadcaster.Broadcast(Event{Type: "LOBBY_CLOSED"})
-		}
+		l.broadcastUnlocked(Event{Type: "LOBBY_CLOSED"})
 		return true
 	}
 
 	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
 		l.guests = slices.Delete(l.guests, idx, idx+1)
-		if l.broadcaster != nil {
-			l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-		}
+		delete(l.ready, p.ID)
+		l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
 	}
 
 	return false
@@ -144,57 +201,85 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 
 func (l *Lobby) ToggleReady(p *player.Player, registry *game.Registry) error {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 
 	if l.state == InGame {
 		if l.activeEngine != nil && l.activeEngine.IsFinished() {
+			old := l.activeEngine
 			l.state = Waiting
 			l.activeEngine = nil
 			clear(l.ready)
+			old.Close()
 		} else {
-			l.mu.Unlock()
 			return errors.New("game is already in progress")
 		}
 	}
 
 	if !l.hasPlayerNoLock(p) {
-		l.mu.Unlock()
 		return errors.New("player not in lobby")
 	}
 
 	l.ready[p.ID] = !l.ready[p.ID]
 
-	allReady := true
-	if !l.ready[l.leader.ID] {
-		allReady = false
-	} else {
-		for _, g := range l.guests {
-			if !l.ready[g.ID] {
-				allReady = false
-				break
-			}
-		}
+	if !l.allReadyNoLock() {
+		l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
+		return nil
 	}
 
-	l.mu.Unlock()
-
-	if allReady {
-		_, err := l.startGame(registry)
-		return err
-	}
-
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-	}
-
-	return nil
+	_, err := l.startGameLocked(registry)
+	return err
 }
 
-func (l *Lobby) Code() string                                 { return l.code }
-func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[Event] { return l.broadcaster }
-func (l *Lobby) GameName() string                             { return l.options.cardGame.Name }
-func (l *Lobby) MaxPlayers() int                              { return l.options.maxPlayers }
-func (l *Lobby) IsPrivate() bool                              { return l.options.isPrivate }
-func (l *Lobby) Leader() *player.Player                       { return l.leader }
+func (l *Lobby) allReadyNoLock() bool {
+	if !l.ready[l.leader.ID] {
+		return false
+	}
+	for _, g := range l.guests {
+		if !l.ready[g.ID] {
+			return false
+		}
+	}
+	return true
+}
+
+func (l *Lobby) Code() string { return l.code }
+
+func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[Event] {
+	return l.takeBroadcaster()
+}
+
+func (l *Lobby) GameName() string {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	if l.options.cardGame == nil {
+		return ""
+	}
+	return l.options.cardGame.Name
+}
+
+func (l *Lobby) MaxPlayers() int {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.options.maxPlayers
+}
+
+func (l *Lobby) IsPrivate() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.options.isPrivate
+}
+
+func (l *Lobby) IsWaiting() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.state == Waiting
+}
+
+func (l *Lobby) Leader() *player.Player {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.leader
+}
 
 func (l *Lobby) Guests() []*player.Player {
 	l.mu.RLock()
@@ -213,16 +298,7 @@ func (l *Lobby) CurrentPlayers() int {
 func (l *Lobby) HasPlayer(p *player.Player) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-
-	if l.leader.Compare(p) {
-		return true
-	}
-	for _, g := range l.guests {
-		if g.Compare(p) {
-			return true
-		}
-	}
-	return false
+	return l.hasPlayerNoLock(p)
 }
 
 func (l *Lobby) IsReady(p *player.Player) bool {
@@ -231,39 +307,39 @@ func (l *Lobby) IsReady(p *player.Player) bool {
 	return l.ready[p.ID]
 }
 
+func (l *Lobby) IsLeader(p *player.Player) bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.leader.Compare(p)
+}
+
+func playerEloForGame(p *player.Player, gameName string) uint32 {
+	if p == nil || p.DatabaseUser == nil {
+		return 1500
+	}
+	for _, r := range p.DatabaseUser.Rankings {
+		if r.Game.Name == gameName {
+			return r.Elo
+		}
+	}
+	return 1500
+}
+
 func (l *Lobby) averageElo() uint32 {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
+	if l.options.cardGame == nil {
+		return 1500
+	}
+	gameName := l.options.cardGame.Name
 	var totalElo uint32
 	var count uint32
-	// check leader
-	found := false
-	for _, r := range l.leader.DatabaseUser.Rankings {
-		if r.Game.Name == l.options.cardGame.Name {
-			totalElo += r.Elo
-			count++
-			found = true
-			break
-		}
-	}
-	if !found {
-		totalElo += 1500
-		count++
-	}
+
+	totalElo += playerEloForGame(l.leader, gameName)
+	count++
 	for _, g := range l.guests {
-		found := false
-		for _, r := range g.DatabaseUser.Rankings {
-			if r.Game.Name == l.options.cardGame.Name {
-				totalElo += r.Elo
-				count++
-				found = true
-				break
-			}
-		}
-		if !found {
-			totalElo += 1500
-			count++
-		}
+		totalElo += playerEloForGame(g, gameName)
+		count++
 	}
 	return totalElo / count
 }
@@ -275,25 +351,29 @@ func abs(x int) int {
 	return x
 }
 
-func (l *Lobby) addGuest(player *player.Player) error {
+func (l *Lobby) addGuest(p *player.Player) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+
+	if l.state != Waiting {
+		return errors.New("lobby is not accepting players")
+	}
 
 	if 1+len(l.guests) >= l.options.maxPlayers {
 		return errors.New("this lobby is full")
 	}
 
-	if l.leader.Compare(player) {
+	if l.leader.Compare(p) {
 		return errors.New("player is already the leader of this lobby")
 	}
-	if slices.Contains(l.guests, player) {
-		return errors.New("player is already in this lobby")
+	for _, g := range l.guests {
+		if g.Compare(p) {
+			return errors.New("player is already in this lobby")
+		}
 	}
 
-	l.guests = append(l.guests, player)
-	if l.broadcaster != nil {
-		l.broadcaster.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-	}
+	l.guests = append(l.guests, p)
+	l.broadcastUnlocked(Event{Type: "PLAYERS_UPDATED"})
 	return nil
 }
 
@@ -309,17 +389,20 @@ func (l *Lobby) hasPlayerNoLock(p *player.Player) bool {
 	return false
 }
 
-func (l *Lobby) startGame(registry *game.Registry) (*game.Engine, error) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-
+// startGameLocked starts a match. Caller must hold l.mu.
+func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	if l.state != Waiting {
 		return nil, errors.New("lobby is not in waiting state")
+	}
+	if !l.allReadyNoLock() {
+		return nil, errors.New("not all players are ready")
+	}
+	if l.options.cardGame == nil {
+		return nil, errors.New("no card game selected")
 	}
 
 	rules, err := registry.Create(l.options.cardGame.Name)
 	if err != nil {
-		slog.Error("how did we end up here, user selected a game that doesn't exist", "error", err)
 		return nil, fmt.Errorf("failed to create game rules: %w", err)
 	}
 
@@ -338,16 +421,21 @@ func (l *Lobby) startGame(registry *game.Registry) (*game.Engine, error) {
 		return nil, fmt.Errorf("failed to start game engine: %w", err)
 	}
 
-	if l.manager.matchRepo != nil {
+	if l.manager != nil && l.manager.matchRepo != nil {
 		ch := engine.Broadcaster().Subscribe()
-		go l.handleBroadcasterEvents(ch, engine)
+		go func() {
+			defer engine.Close()
+			l.handleBroadcasterEvents(ch, engine)
+		}()
 	}
 
 	l.state = InGame
 	l.activeEngine = engine
 	clear(l.ready)
 
-	l.broadcaster.Broadcast(Event{
+	observability.GamesStartedTotal.Add(1)
+
+	l.broadcastUnlocked(Event{
 		Type:    "GAME_STARTED",
 		Payload: engine,
 	})
@@ -357,28 +445,40 @@ func (l *Lobby) startGame(registry *game.Registry) (*game.Engine, error) {
 
 func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engine) {
 	for event := range ch {
-		if event.Type == game.EventGameEnded {
-			standings := engine.Standings()
-			userIDs := make([]uint, len(standings))
-			for i, p := range standings {
-				userIDs[i] = p.DatabaseUser.ID
-			}
-			if l.options.isRanked && l.options.cardGame != nil {
-				game, err := l.manager.matchRepo.GetOrCreateGame(context.Background(), l.options.cardGame.Name)
-				if err != nil {
-					slog.Error("failed to get or create game", "error", err)
-					break
-				}
-				deltas, err := l.manager.matchRepo.UpdateRankings(context.Background(), game.ID, userIDs)
-				if err != nil {
-					slog.Error("failed to update game rankings", "error", err)
-				} else {
-					if err := l.manager.matchRepo.RecordMatch(context.Background(), game.ID, userIDs, deltas); err != nil {
-						slog.Error("failed to record match history", "error", err)
-					}
-				}
-			}
-			break
+		if event.Type != game.EventGameEnded {
+			continue
 		}
+
+		standings := engine.Standings()
+		userIDs := make([]uint, 0, len(standings))
+		for _, p := range standings {
+			if p == nil || p.DatabaseUser == nil {
+				slog.Error("standing player missing database user; skipping ranked finalize")
+				return
+			}
+			userIDs = append(userIDs, p.DatabaseUser.ID)
+		}
+
+		l.mu.RLock()
+		isRanked := l.options.isRanked
+		gameName := ""
+		if l.options.cardGame != nil {
+			gameName = l.options.cardGame.Name
+		}
+		parentCtx := context.Background()
+		if l.manager != nil && l.manager.appCtx != nil {
+			parentCtx = l.manager.appCtx
+		}
+		l.mu.RUnlock()
+
+		if isRanked && gameName != "" && l.manager != nil && l.manager.matchRepo != nil {
+			ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
+			err := l.manager.matchRepo.FinalizeRankedMatch(ctx, gameName, userIDs)
+			cancel()
+			if err != nil {
+				slog.Error("failed to finalize ranked match", "error", err, "game", gameName)
+			}
+		}
+		return
 	}
 }

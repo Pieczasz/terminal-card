@@ -1,10 +1,13 @@
 package lobby
 
 import (
+	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math/big"
+	"regexp"
 	"slices"
 	"sync"
 	"time"
@@ -12,7 +15,17 @@ import (
 	"terminalcard/internal/broadcaster"
 	"terminalcard/internal/db"
 	"terminalcard/internal/player"
+	"terminalcard/internal/ratelimit"
 )
+
+const (
+	lobbyCodeLength       = 8
+	rankedFinalizeTimeout = 15 * time.Second
+	joinRateLimitCount    = 10
+	joinRateLimitWindow   = time.Second
+)
+
+var lobbyCodePattern = regexp.MustCompile(`^[A-Z0-9]{8}$`)
 
 type Manager struct {
 	mu                  sync.RWMutex
@@ -21,13 +34,24 @@ type Manager struct {
 	cachedPublicLobbies []*Lobby
 	cacheLastUpdated    time.Time
 	matchRepo           db.MatchRepository
+	appCtx              context.Context
+	joinLimiter         *ratelimit.SlidingWindowLimiter
 }
 
 func NewManager(matchRepo db.MatchRepository) *Manager {
+	return NewManagerWithContext(context.Background(), matchRepo)
+}
+
+func NewManagerWithContext(ctx context.Context, matchRepo db.MatchRepository) *Manager {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	return &Manager{
 		lobbies:     make(map[string]*Lobby),
 		playerLobby: make(map[string]*Lobby),
 		matchRepo:   matchRepo,
+		appCtx:      ctx,
+		joinLimiter: ratelimit.NewSlidingWindowLimiter(joinRateLimitCount, joinRateLimitWindow),
 	}
 }
 
@@ -38,10 +62,13 @@ func (m *Manager) generateLobbyCode() (string, error) {
 	maxAttempts := 10
 
 	for range maxAttempts {
-		rawCode := make([]byte, 6)
+		rawCode := make([]byte, lobbyCodeLength)
 		charsetLen := big.NewInt(int64(len(charset)))
 		for i := range rawCode {
-			n, _ := rand.Int(rand.Reader, charsetLen)
+			n, err := rand.Int(rand.Reader, charsetLen)
+			if err != nil {
+				return "", fmt.Errorf("generating lobby code: %w", err)
+			}
 			rawCode[i] = charset[n.Int64()]
 		}
 		code = string(rawCode)
@@ -53,19 +80,41 @@ func (m *Manager) generateLobbyCode() (string, error) {
 	return "", errors.New("failed to generate lobby code")
 }
 
-func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
-	if m.FindLobbyByPlayer(leader) != nil {
-		return nil, errors.New("player is already in a lobby")
+func ValidLobbyCode(code string) bool {
+	return lobbyCodePattern.MatchString(code)
+}
+
+func (m *Manager) playerInLobbyLocked(p *player.Player) bool {
+	lobby, exists := m.playerLobby[p.ID]
+	if !exists {
+		return false
 	}
+	if lobby.HasPlayer(p) {
+		return true
+	}
+	delete(m.playerLobby, p.ID)
+	return false
+}
 
+func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	options := setupDefaultOptions()
-
 	for _, opt := range opts {
 		opt(options)
 	}
 
+	if options.cardGame == nil || options.cardGame.Name == "" {
+		return nil, errors.New("card game is required")
+	}
+	if options.maxPlayers < 2 {
+		return nil, errors.New("max players must be at least 2")
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if m.playerInLobbyLocked(leader) {
+		return nil, errors.New("player is already in a lobby")
+	}
 
 	code, err := m.generateLobbyCode()
 	if err != nil {
@@ -113,44 +162,56 @@ func (m *Manager) PublicLobbies(p *player.Player) []*Lobby {
 	return lobbies
 }
 
-func (m *Manager) JoinLobbyByCode(code string, player *player.Player) error {
-	if m.FindLobbyByPlayer(player) != nil {
+func (m *Manager) JoinLobbyByCode(code string, p *player.Player) error {
+	if !ValidLobbyCode(code) {
+		return errors.New("invalid lobby code")
+	}
+	if m.joinLimiter != nil && !m.joinLimiter.Allow("join:"+p.ID) {
+		return errors.New("too many join attempts, please try again later")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.playerInLobbyLocked(p) {
 		return errors.New("player is already in a lobby")
 	}
 
-	lobby, err := m.FindLobbyByCode(code)
-	if err != nil {
+	lobby, exists := m.lobbies[code]
+	if !exists {
+		return errors.New("lobby not found")
+	}
+
+	if err := lobby.addGuest(p); err != nil {
 		return err
 	}
-
-	err = lobby.addGuest(player)
-	if err == nil {
-		m.mu.Lock()
-		m.playerLobby[player.ID] = lobby
-		m.mu.Unlock()
-	}
-	return err
+	m.playerLobby[p.ID] = lobby
+	return nil
 }
 
-func (m *Manager) FindLobbyByPlayer(player *player.Player) *Lobby {
+func (m *Manager) FindLobbyByPlayer(p *player.Player) *Lobby {
 	m.mu.RLock()
-	lobby, exists := m.playerLobby[player.ID]
+	lobby, exists := m.playerLobby[p.ID]
 	m.mu.RUnlock()
 
-	if exists {
-		if lobby.HasPlayer(player) {
-			return lobby
-		}
-		m.mu.Lock()
-		if m.playerLobby[player.ID] == lobby {
-			delete(m.playerLobby, player.ID)
-		}
-		m.mu.Unlock()
+	if !exists {
+		return nil
 	}
+	if lobby.HasPlayer(p) {
+		return lobby
+	}
+	m.mu.Lock()
+	if m.playerLobby[p.ID] == lobby {
+		delete(m.playerLobby, p.ID)
+	}
+	m.mu.Unlock()
 	return nil
 }
 
 func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
+	if !ValidLobbyCode(code) {
+		return nil, errors.New("invalid lobby code")
+	}
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -158,7 +219,6 @@ func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
 	if !exists {
 		return nil, errors.New("lobby not found")
 	}
-
 	return lobby, nil
 }
 
@@ -177,28 +237,73 @@ func (m *Manager) LeaveLobby(p *player.Player) {
 	}
 }
 
+// Kick removes a guest from the lobby. Only the current leader may kick guests.
+func (m *Manager) Kick(host, target *player.Player) error {
+	l := m.FindLobbyByPlayer(host)
+	if l == nil {
+		return errors.New("host is not in a lobby")
+	}
+	if !l.IsLeader(host) {
+		return errors.New("only the leader can kick players")
+	}
+	if host.Compare(target) {
+		return errors.New("cannot kick yourself")
+	}
+	if !l.HasPlayer(target) {
+		return errors.New("player not in lobby")
+	}
+	if l.IsLeader(target) {
+		return errors.New("cannot kick the lobby leader")
+	}
+
+	closed := l.RemovePlayer(target)
+	m.mu.Lock()
+	delete(m.playerLobby, target.ID)
+	m.mu.Unlock()
+	if closed {
+		m.RemoveLobby(l.Code())
+	}
+	return nil
+}
+
 func (m *Manager) RemoveLobby(code string) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	l, exists := m.lobbies[code]
 	if !exists {
+		m.mu.Unlock()
 		return
 	}
+	delete(m.lobbies, code)
 
 	l.mu.Lock()
-	if l.broadcaster != nil {
-		l.broadcaster.Close()
-		l.broadcaster = nil
+	leaderID := ""
+	if l.leader != nil {
+		leaderID = l.leader.ID
 	}
-
-	delete(m.playerLobby, l.leader.ID)
-	for _, g := range l.guests {
-		delete(m.playerLobby, g.ID)
+	guestIDs := make([]string, len(l.guests))
+	for i, g := range l.guests {
+		guestIDs[i] = g.ID
 	}
+	engine := l.activeEngine
+	l.activeEngine = nil
+	bc := l.broadcaster
+	l.broadcaster = nil
 	l.mu.Unlock()
 
-	delete(m.lobbies, code)
+	if leaderID != "" {
+		delete(m.playerLobby, leaderID)
+	}
+	for _, id := range guestIDs {
+		delete(m.playerLobby, id)
+	}
+	m.mu.Unlock()
+
+	if engine != nil {
+		engine.Close()
+	}
+	if bc != nil {
+		bc.Close()
+	}
 }
 
 func (m *Manager) getCachedPublicLobbies() []*Lobby {
@@ -221,7 +326,7 @@ func (m *Manager) getCachedPublicLobbies() []*Lobby {
 
 	var publicLobbies []*Lobby
 	for _, l := range m.lobbies {
-		if !l.IsPrivate() && l.state == Waiting {
+		if !l.IsPrivate() && l.IsWaiting() {
 			publicLobbies = append(publicLobbies, l)
 		}
 	}
