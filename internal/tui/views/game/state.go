@@ -2,6 +2,8 @@ package game
 
 import (
 	"fmt"
+	"slices"
+
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
 	"terminalcard/internal/tui/router"
@@ -27,7 +29,9 @@ func SyncBaseState(global router.GlobalContext, engine *game.Engine) BaseState {
 	engine.WithState(func(state *game.State) {
 		base.Phase = state.Phase
 		if base.Phase == game.Finished {
-			base.Winner = state.Winner.DatabaseUser.Username
+			if state.Winner != nil {
+				base.Winner = state.Winner.Username()
+			}
 			return
 		}
 
@@ -35,22 +39,35 @@ func SyncBaseState(global router.GlobalContext, engine *game.Engine) BaseState {
 			return
 		}
 
-		base.CurrentPlayer = state.Players[state.CurrentTurn].DatabaseUser.Username
-		base.MyTurn = base.CurrentPlayer == global.User.Username
+		if state.CurrentTurn < 0 || state.CurrentTurn >= len(state.Players) {
+			return
+		}
+
+		current := state.Players[state.CurrentTurn]
+		base.CurrentPlayer = current.Username()
+		if global.User != nil {
+			base.MyTurn = current.ID == fmt.Sprint(global.User.ID)
+		}
 
 		for _, p := range state.Players {
-			if fmt.Sprint(p.DatabaseUser.ID) == fmt.Sprint(global.User.ID) {
-				base.Hand = p.Cards
+			if p == nil {
+				continue
+			}
+			if global.User != nil && p.ID == fmt.Sprint(global.User.ID) {
+				base.Hand = slices.Clone(p.Cards)
 			} else {
 				base.Opponents = append(base.Opponents, game.PlayerSnapshot{
-					ID:       p.DatabaseUser.Username,
+					ID:       p.Username(),
 					HandSize: len(p.Cards),
 				})
 			}
 		}
 
-		top, _ := state.Discard.Peak()
-		base.TopDiscard = top
+		if state.Discard != nil {
+			if top, ok := state.Discard.Peek(); ok {
+				base.TopDiscard = top
+			}
+		}
 	})
 
 	return base
