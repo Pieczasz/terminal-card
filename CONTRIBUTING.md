@@ -1,67 +1,107 @@
 # Contributing to Terminal Card
 
-First off, thank you for considering contributing to Terminal Card! We appreciate your time and effort. 
-
-The following is a set of guidelines for contributing to this project. These are mostly guidelines, not strict rules. Use your best judgment, and feel free to propose changes to this document in a pull request.
+Thanks for contributing. These guidelines keep the project consistent and easy to extend with new card games.
 
 ## How Can I Contribute?
 
 ### Reporting Bugs
-If you find a bug, please create an issue detailing:
-- What you were doing when the bug occurred.
-- What you expected to happen.
-- What actually happened.
-- Details about your terminal emulator, OS, and SSH client.
+
+Open an issue with:
+
+- What you were doing
+- What you expected vs what happened
+- Terminal emulator, OS, and SSH client
 
 ### Suggesting Enhancements
-Enhancement suggestions are highly encouraged! Please create an issue explaining:
-- The new feature or improvement you'd like to see.
-- Why it would be useful.
-- Any ideas on how to implement it (if applicable).
-- E.g., proposing new card games to be added to the registry!
+
+Open an issue describing the idea, why it helps players or operators, and any implementation notes (e.g. a new game for the registry).
 
 ### Code Contributions
-If you want to contribute code:
-1. Fork the repository.
-2. Create a new branch for your feature or bugfix (`git checkout -b feature/my-awesome-feature`).
-3. Make your changes.
-4. Run tests and formatting tools (see Development Environment below).
-5. Commit your changes with clear, descriptive commit messages.
-6. Push to your fork and submit a Pull Request against the `main` branch.
 
-## Development Environment Setup
+1. Fork and branch (`git checkout -b feature/my-awesome-feature`)
+2. Make focused changes
+3. Run `make test-short` (and `make lint` if you have golangci-lint)
+4. Open a PR against `main` with a clear description
 
-This project uses Go 1.26. We use a `Makefile` to simplify common development tasks.
+## Development Environment
 
-### Quick Commands
+Requires **Go 1.26+**.
 
-- `make all`: Runs formatting, linting, tests, and builds the project.
-- `make build`: Compiles the server binary into `bin/server`.
-- `make test`: Runs all unit tests.
-- `make lint`: Runs `golangci-lint` (you will need to install it: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`).
-- `make fmt`: Runs `go fmt` on the codebase.
-- `make fix`: Runs `go fix` on the codebase.
+```bash
+cp .env.example .env
+# start PostgreSQL, set DB_* in .env
 
-### Code Style and Guidelines
+export DB_DSN='postgres://postgres:PASSWORD@localhost:5432/terminal_card?sslmode=disable'
+make install-tools   # golang-migrate
+make migrate-up
+make test-short
+make build
+```
 
-- **Go Standards:** We follow standard Go conventions. Your code must pass `make fmt` and `make lint` without errors.
-- **TUI Guidelines:** When adding or modifying the UI in `internal/tui/`, rely on `lipgloss` for styling and keep components modular as standard `bubbletea.Model`s.
-- **Game Logic:** New games should be implemented in their own subpackage under `internal/game/` and must implement the `game.Rules` interface. Remember to register new games in `cmd/server/main.go`.
-- **Database Changes:** If you alter models in `internal/repository/`, ensure GORM auto-migrations are correctly handled or provide migration steps if necessary.
+### Make targets
 
-## Pull Request Process
+| Target | Purpose |
+|--------|---------|
+| `make all` | fmt, fix, lint, short tests, build |
+| `make test-short` | Unit tests without Docker |
+| `make test` / `make test-integration` | Full suite (testcontainers / Docker) |
+| `make lint` | golangci-lint |
+| `make migrate-up` / `make migrate-down` | Apply SQL migrations via `$DB_DSN` |
 
-1. **Keep it focused:** Try to make one PR per feature or bugfix. This makes it much easier to review.
-2. **Describe your changes:** In the PR description, explain *what* you changed and *why*.
-3. **Pass CI:** Ensure all GitHub Actions (tests, linters) pass. If you've run `make all` locally, you should be good to go.
-4. **Review:** A maintainer will review your code. We may request changes or suggest alternative approaches. Don't be discouraged! It's part of the collaborative process.
+### Database migrations
 
-## Adding a New Game
+Schema changes live in `internal/db/migrations/` and are applied with [golang-migrate](https://github.com/golang-migrate/migrate).
 
-Adding a new card game is a great way to contribute!
-1. Create a new directory under `internal/game/` (e.g., `internal/game/hearts`).
-2. Implement the `game.Rules` interface for your game.
-3. Hook up any specific TUI elements if your game requires custom views.
-4. Register the game in `cmd/server/main.go` using `gameRegistry.Register(...)`.
+- Do **not** rely on GORM AutoMigrate for production (tests may still AutoMigrate for speed).
+- Add a new pair with `make migrate-create` when changing tables.
+- Compose runs migrations automatically before the backend starts.
 
-Happy coding! 🃏
+## Code style
+
+- Pass `make fmt` and `make lint`
+- Prefer table-driven tests with named subtests; use `t.Parallel()` when safe
+- Wrap errors with `%w` and keep messages lowercase
+- TUI: Lip Gloss for style; keep Bubble Tea models modular
+
+## Adding a new card game
+
+Crazy Eights is the reference implementation. Poker under `internal/game/poker` is **WIP** and intentionally unregistered.
+
+### Steps
+
+1. **Rules** — create `internal/game/<name>/` implementing `game.Rules` (and a compile-time `var _ game.Rules = (*YourRules)(nil)`).
+2. **Register the module** in [`cmd/server/main.go`](cmd/server/main.go):
+
+   ```go
+   gameRegistry.RegisterModule(game.Module{
+       Name:    "My Game",
+       Slug:    "my_game",
+       Factory: func() game.Rules { return &mygame.Rules{} },
+   })
+   ```
+
+3. **TUI view** — add `internal/tui/views/game/<name>/` and register the factory in [`internal/tui/app.go`](internal/tui/app.go):
+
+   ```go
+   var gameViews = map[string]ViewFactory{
+       "crazy_eights": crazyeight.New,
+       "my_game":      mygame.New,
+   }
+   ```
+
+4. **Tests** — unit-test rules (and engine interactions if needed).
+5. **Games table** — match recording calls `GetOrCreateGame` / `FinalizeRankedMatch` lazily; you do not need to seed a `games` row manually for development.
+6. **Tests** — unit-test rules (and engine interactions if needed).
+
+Lobby create options and route names (`game_<slug>`) are derived from the registry — you should not hardcode game lists.
+
+> **Note:** Production uses SQL migrations under `internal/db/migrations/`. Tests may use GORM AutoMigrate for speed; do not rely on AutoMigrate in production.
+
+## Pull request process
+
+1. Keep PRs focused (one concern per PR when possible)
+2. Describe *what* and *why*
+3. Ensure CI passes (short tests + integration + lint)
+4. Expect review feedback
+
+Happy coding.
