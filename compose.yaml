@@ -1,41 +1,70 @@
 services:
+  migrate:
+    image: migrate/migrate:v4.18.3
+    volumes:
+      - ./internal/db/migrations:/migrations:ro
+    # migrate's scratch image has no shell, so the DSN must be passed as an arg.
+    # Prefer an external migrate job / Docker secret in hardened deployments.
+    command:
+      [
+        "-path=/migrations",
+        "-database=postgres://${DB_USER:-postgres}:${DB_PASSWORD}@db:5432/${DB_NAME:-terminal_card}?sslmode=disable",
+        "up",
+      ]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "on-failure"
+
   backend:
     build:
       context: .
       dockerfile: cmd/server/Dockerfile
-      target: builder
     environment:
       - ENV=production
+      - SERVER_HOST=0.0.0.0
       - SERVER_PORT=6969
       - DB_HOST=db
       - DB_PORT=5432
-      - DB_USER=postgres
-      - DB_NAME=terminal_card
+      - DB_USER=${DB_USER:-postgres}
+      - DB_NAME=${DB_NAME:-terminal_card}
       - DB_PASSWORD=${DB_PASSWORD}
+      # Internal compose Postgres has no TLS. Do not copy this for external DBs.
       - DB_SSLMODE=disable
-      - OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4317
+      - ALLOW_INSECURE_DB=true
+      - SSH_KEY_PATH=/data/ssh/server
+      - OTEL_EXPORTER_OTLP_ENDPOINT=alloy:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - RATE_LIMIT_CONNECTIONS=5
+      - RATE_LIMIT_WINDOW_MS=1000
+      - MAX_CONNECTIONS=1000
+    volumes:
+      - ssh-keys:/data/ssh
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   db:
-    image: postgres:latest
+    image: postgres:16-alpine
     restart: always
     volumes:
-      - db-data:/var/lib/postgresql
+      - db-data:/var/lib/postgresql/data
     environment:
-      - POSTGRES_DB=terminal_card
+      - POSTGRES_DB=${DB_NAME:-terminal_card}
+      - POSTGRES_USER=${DB_USER:-postgres}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     expose:
       - 5432
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "postgres"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   proxy:
-    image: nginx
+    image: nginx:1.27-alpine
     volumes:
       - type: bind
         source: ./internal/config/nginx.conf
@@ -46,8 +75,11 @@ services:
     depends_on:
       - backend
 
+  # Observability stack is for local/dev monitoring only.
+  # Disable anonymous Grafana admin before exposing these ports publicly.
   alloy:
-    image: grafana/alloy:latest
+    image: grafana/alloy:v1.8.3
+    profiles: ["observability"]
     volumes:
       - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
     command:
@@ -55,19 +87,21 @@ services:
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
     ports:
-      - "4317:4317"
-      - "4318:4318"
+      - "127.0.0.1:4317:4317"
+      - "127.0.0.1:4318:4318"
     depends_on:
       - loki
 
   loki:
-    image: grafana/loki:latest
+    image: grafana/loki:3.4.2
+    profiles: ["observability"]
     command: -config.file=/etc/loki/local-config.yaml
     ports:
-      - "3100:3100"
+      - "127.0.0.1:3100:3100"
 
   grafana:
-    image: grafana/grafana:latest
+    image: grafana/grafana:11.5.2
+    profiles: ["observability"]
     volumes:
       - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
     environment:
@@ -75,9 +109,10 @@ services:
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     depends_on:
       - loki
 
 volumes:
   db-data:
+  ssh-keys:

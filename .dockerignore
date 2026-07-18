@@ -1,0 +1,14 @@
+.env
+.wishlist/
+.git/
+.github/
+.idea/
+.gocache/
+bin/
+coverage.out
+*.md
+LICENSE
+Makefile
+compose.yaml
+.DS_Store
+rules/
