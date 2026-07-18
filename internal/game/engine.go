@@ -3,11 +3,13 @@
 package game
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
-	"log/slog"
-	"math/rand/v2"
+	"math/big"
+	"slices"
 	"sync"
+
 	"terminalcard/internal/broadcaster"
 	"terminalcard/internal/deck"
 	"terminalcard/internal/player"
@@ -18,7 +20,6 @@ type Engine struct {
 	state       *State
 	turnManager *TurnManager
 	broadcaster *broadcaster.Broadcaster[Event]
-	registry    *Registry
 }
 
 func NewGameEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine {
@@ -26,11 +27,19 @@ func NewGameEngine(rules Rules, players []*player.Player, cards []deck.Card) *En
 		state:       NewState(rules, players, cards),
 		turnManager: NewTurnManager(len(players)),
 		broadcaster: broadcaster.New[Event](len(players)),
-		registry:    NewRegistry(),
 	}
 }
 
-func (e *Engine) CurrentPlayer() *player.Player {
+// CurrentPlayerID returns the ID of the player whose turn it is.
+func (e *Engine) CurrentPlayerID() string {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+	return e.currentPlayerLocked().ID
+}
+
+func (e *Engine) currentPlayerLocked() *player.Player {
 	return e.state.Players[e.turnManager.Current()]
 }
 
@@ -38,6 +47,31 @@ func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
 	return e.broadcaster
 }
 
+// StandingsIDs returns standing player IDs from first to last, including players who left.
+func (e *Engine) StandingsIDs() []string {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+
+	standings := e.state.Rules.GetStandings(e.state)
+	ids := make([]string, 0, len(standings)+len(e.state.LeftPlayers))
+	for _, p := range standings {
+		if p != nil {
+			ids = append(ids, p.ID)
+		}
+	}
+	for i := len(e.state.LeftPlayers) - 1; i >= 0; i-- {
+		if e.state.LeftPlayers[i] != nil {
+			ids = append(ids, e.state.LeftPlayers[i].ID)
+		}
+	}
+	return ids
+}
+
+// Standings returns players ordered from first to last place.
+// Callers must treat returned pointers as read-only snapshots of identity; card
+// slices may still be shared — prefer WithState for hand inspection.
 func (e *Engine) Standings() []*player.Player {
 	e.mu.Lock()
 	e.state.mu.Lock()
@@ -45,12 +79,12 @@ func (e *Engine) Standings() []*player.Player {
 	defer e.mu.Unlock()
 
 	standings := e.state.Rules.GetStandings(e.state)
-
+	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
+	out = append(out, standings...)
 	for i := len(e.state.LeftPlayers) - 1; i >= 0; i-- {
-		standings = append(standings, e.state.LeftPlayers[i])
+		out = append(out, e.state.LeftPlayers[i])
 	}
-
-	return standings
+	return out
 }
 
 // WithState allows thread-safe read access to the game state.
@@ -68,21 +102,27 @@ func (e *Engine) Start() error {
 	defer e.mu.Unlock()
 	e.state.Phase = Dealing
 
+	if len(e.state.Players) == 0 {
+		return errors.New("cannot start game with no players")
+	}
+
 	for playerIdx := range e.state.Players {
 		cards, ok := e.state.Deck.DrawNCards(e.state.Rules.InitialDealCount())
 		if !ok {
-			slog.Error("miscalculated maximum number of players/some bug with dealing happen", "engine", e)
 			return errors.New("insufficient number of cards to deal for all players")
 		}
 		e.state.Players[playerIdx].Cards = cards
 	}
 
 	e.state.Phase = Playing
-	e.turnManager.SetCurrent(rand.IntN(len(e.state.Players)))
+	startIdx, err := cryptoIntN(len(e.state.Players))
+	if err != nil {
+		return fmt.Errorf("selecting first player: %w", err)
+	}
+	e.turnManager.SetCurrent(startIdx)
 	e.state.CurrentTurn = e.turnManager.Current()
 
 	if err := e.state.Rules.OnGameStart(e.state); err != nil {
-		slog.Error("failed to setup game", "error", err)
 		return fmt.Errorf("failed to setup game: %w", err)
 	}
 
@@ -92,6 +132,17 @@ func (e *Engine) Start() error {
 	})
 
 	return nil
+}
+
+func cryptoIntN(n int) (int, error) {
+	if n <= 0 {
+		return 0, errors.New("n must be positive")
+	}
+	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
+	if err != nil {
+		return 0, err
+	}
+	return int(v.Int64()), nil
 }
 
 func (e *Engine) SubmitAction(playerID string, action Action) error {
@@ -104,39 +155,44 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 		return errors.New("game not in playing phase")
 	}
 
-	currentPlayer := e.CurrentPlayer()
+	currentPlayer := e.currentPlayerLocked()
 	if currentPlayer.ID != playerID {
-		// TODO: cheating?
 		return errors.New("wait for your turn to perform an action")
 	}
 
 	if err := e.state.Rules.PreActionCondition(e.state, action); err != nil {
-		return fmt.Errorf("you can't perform that action %w", err)
+		return fmt.Errorf("you can't perform that action: %w", err)
 	}
 
+	// Apply only after pre-conditions pass. Post-conditions run before any broadcast
+	// so clients never observe a rejected mutation. On post-condition failure the
+	// game is finished to avoid continued play on inconsistent state; rules that can
+	// fully validate beforehand should do so in PreActionCondition.
 	e.state.Rules.ApplyAction(e.state, action)
 
+	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
+		e.state.Phase = Finished
+		return fmt.Errorf("post condition doesn't hold: %w", err)
+	}
+
 	e.broadcaster.Broadcast(Event{
-		Sequence: int64(e.turnManager.Current()), // Basic sequence for now
+		Sequence: int64(e.turnManager.Current()),
 		Type:     EventActionApplied,
 		PlayerID: playerID,
 		Action:   action,
-		// State snapshot could be built here
 	})
-
-	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
-		// TODO:
-		// this can mean cheating, we should detect that and prevent it
-		slog.Error("post condition doesn't hold for a game, cheating?", "error", err)
-		return fmt.Errorf("post condition doesn't hold %w", err)
-	}
 
 	if e.state.Rules.CheckWinCondition(e.state) {
 		e.state.Phase = Finished
-		e.state.Winner = currentPlayer
+		standings := e.state.Rules.GetStandings(e.state)
+		if len(standings) > 0 {
+			e.state.Winner = standings[0]
+		} else {
+			e.state.Winner = currentPlayer
+		}
 		e.broadcaster.Broadcast(Event{
 			Type:     EventGameEnded,
-			PlayerID: currentPlayer.ID,
+			PlayerID: e.state.Winner.ID,
 		})
 		return nil
 	}
@@ -190,7 +246,7 @@ func (e *Engine) RemovePlayer(playerID string) {
 	removedPlayer := e.state.Players[playerIndex]
 	e.state.LeftPlayers = append(e.state.LeftPlayers, removedPlayer)
 
-	e.state.Players = append(e.state.Players[:playerIndex], e.state.Players[playerIndex+1:]...)
+	e.state.Players = slices.Delete(e.state.Players, playerIndex, playerIndex+1)
 
 	e.turnManager.RemovePlayer(playerIndex)
 	e.state.CurrentTurn = e.turnManager.Current()
@@ -207,5 +263,14 @@ func (e *Engine) RemovePlayer(playerID string) {
 			Sequence: int64(e.turnManager.Current()),
 			Type:     EventTurnAdvanced,
 		})
+	}
+}
+
+// Close releases engine broadcaster resources. Safe to call multiple times.
+func (e *Engine) Close() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.broadcaster != nil {
+		e.broadcaster.Close()
 	}
 }

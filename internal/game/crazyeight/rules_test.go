@@ -95,7 +95,7 @@ func TestCrazyEightsRules_ApplyAction(t *testing.T) {
 		assert.Equal(t, deck.Spades, extra.CurrentSuit)
 		assert.Len(t, state.Players[0].Cards, 2)
 
-		top, _ := state.Discard.Peak()
+		top, _ := state.Discard.Peek()
 		assert.Equal(t, deck.Two, top.Rank)
 		assert.Equal(t, deck.Spades, top.Suit)
 	})
@@ -156,7 +156,7 @@ func TestCrazyEightsRules_Init(t *testing.T) {
 	extra := state.Extra.(*State)
 	assert.NotNil(t, extra)
 
-	top, ok := state.Discard.Peak()
+	top, ok := state.Discard.Peek()
 	assert.True(t, ok)
 	assert.Equal(t, top.Suit, extra.CurrentSuit)
 }

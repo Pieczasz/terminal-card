@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log/slog"
 	"slices"
+
 	"terminalcard/internal/deck"
 	"terminalcard/internal/game"
 	"terminalcard/internal/player"
@@ -26,13 +27,8 @@ func (r *CrazyEightsRules) InitialDealCount() int {
 }
 
 func (r *CrazyEightsRules) OnGameStart(state *game.State) error {
-	state.Extra = &State{
-		Direction:   1,
-		SkipNext:    false,
-		DrawStack:   0,
-		CurrentSuit: deck.NoSuit,
-	}
-
+	extra := &State{CurrentSuit: deck.NoSuit}
+	state.Extra = extra
 	state.Discard = deck.New([]deck.Card{})
 
 	firstCard, ok := state.Deck.Draw()
@@ -40,8 +36,6 @@ func (r *CrazyEightsRules) OnGameStart(state *game.State) error {
 		return errors.New("not enough cards to start the game")
 	}
 	state.Discard.AddCard(firstCard)
-
-	extra := state.Extra.(*State)
 	extra.CurrentSuit = firstCard.Suit
 
 	return nil
@@ -64,8 +58,17 @@ type ActionPickSuit struct {
 
 func (a ActionPickSuit) Name() string { return "crazyeight.PickSuit" }
 
+func validSuit(s deck.Suit) bool {
+	switch s {
+	case deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs:
+		return true
+	default:
+		return false
+	}
+}
+
 func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Action) error {
-	topCard, ok := state.Discard.Peak()
+	topCard, ok := state.Discard.Peek()
 	if !ok {
 		return errors.New("no cards in discard pile")
 	}
@@ -83,11 +86,14 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		card := action.Cards[0]
 
 		if !slices.Contains(state.Players[state.CurrentTurn].Cards, card) {
-			slog.Warn("someone tried to play a card without having it on his hand", "player", state.Players[state.CurrentTurn])
+			slog.Warn("illegal play attempted", "player_id", state.Players[state.CurrentTurn].ID)
 			return errors.New("you don't have that card")
 		}
 
 		if card.Rank == deck.Eight {
+			if action.Suit != deck.NoSuit && !validSuit(action.Suit) {
+				return errors.New("invalid suit")
+			}
 			return nil
 		}
 		if card.Suit == extra.CurrentSuit {
@@ -105,30 +111,34 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		return nil
 
 	case ActionPickSuit:
-		return nil
+		// Suit changes must go through ActionPlayCard when playing an eight.
+		return errors.New("pick suit is not a standalone action")
 	}
 
 	return errors.New("unknown action")
 }
 
 func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
-	extra := state.Extra.(*State)
-	player := state.Players[state.CurrentTurn]
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return
+	}
+	p := state.Players[state.CurrentTurn]
 
 	switch action := action.(type) {
 	case ActionPlayCard:
 		card := action.Cards[0]
 
-		newHand := make([]deck.Card, 0, len(player.Cards)-1)
+		newHand := make([]deck.Card, 0, len(p.Cards)-1)
 		removed := false
-		for _, c := range player.Cards {
+		for _, c := range p.Cards {
 			if c == card && !removed {
 				removed = true
 				continue
 			}
 			newHand = append(newHand, c)
 		}
-		player.Cards = newHand
+		p.Cards = newHand
 
 		state.Discard.AddCard(card)
 
@@ -139,11 +149,11 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 		}
 
 	case ActionDrawCard:
-		drawn, _ := state.Deck.Draw()
-		player.Cards = append(player.Cards, drawn)
-
-	case ActionPickSuit:
-		extra.CurrentSuit = action.Suit
+		drawn, ok := state.Deck.Draw()
+		if !ok {
+			return
+		}
+		p.Cards = append(p.Cards, drawn)
 	}
 }
 
