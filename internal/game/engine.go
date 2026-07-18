@@ -10,9 +10,9 @@ import (
 	"slices"
 	"sync"
 
-	"terminalcard/internal/broadcaster"
-	"terminalcard/internal/deck"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/broadcaster"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Engine struct {
@@ -89,10 +89,47 @@ func (e *Engine) Standings() []*player.Player {
 
 // WithState allows thread-safe read access to the game state.
 // The provided function is executed while holding the state lock.
+// Prefer SnapshotFor / BoundEngine for TUI and untrusted callers.
 func (e *Engine) WithState(fn func(state *State)) {
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
 	fn(e.state)
+}
+
+// SnapshotFor returns a redacted snapshot for viewerID (own hand size only for others).
+func (e *Engine) SnapshotFor(viewerID string) StateSnapshot {
+	var snap StateSnapshot
+	e.WithState(func(state *State) {
+		snap.Phase = state.Phase
+		if state.Deck != nil {
+			snap.DeckSize = state.Deck.Size()
+		}
+		if state.Discard != nil {
+			if top, ok := state.Discard.Peek(); ok {
+				snap.TopDiscard = top
+			}
+		}
+		if state.Winner != nil {
+			snap.Winner = state.Winner.Username()
+		}
+		snap.HandSize = make(map[string]int, len(state.Players))
+		snap.Players = make([]PlayerSnapshot, 0, len(state.Players))
+		if state.CurrentTurn >= 0 && state.CurrentTurn < len(state.Players) {
+			snap.CurrentPlayer = state.Players[state.CurrentTurn].Username()
+		}
+		for _, p := range state.Players {
+			if p == nil {
+				continue
+			}
+			snap.HandSize[p.ID] = len(p.Cards)
+			snap.Players = append(snap.Players, PlayerSnapshot{
+				ID:       p.Username(),
+				HandSize: len(p.Cards),
+			})
+		}
+		_ = viewerID // hand contents intentionally omitted; use BoundEngine.Hand()
+	})
+	return snap
 }
 
 func (e *Engine) Start() error {
@@ -104,6 +141,10 @@ func (e *Engine) Start() error {
 
 	if len(e.state.Players) == 0 {
 		return errors.New("cannot start game with no players")
+	}
+
+	if err := e.state.Deck.Shuffle(); err != nil {
+		return fmt.Errorf("shuffle deck: %w", err)
 	}
 
 	for playerIdx := range e.state.Players {

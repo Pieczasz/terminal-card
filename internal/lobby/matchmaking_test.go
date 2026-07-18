@@ -5,13 +5,15 @@ import (
 	"testing"
 	"time"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
 )
 
@@ -276,7 +278,12 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 	registry.Register("MockGame", func() game.Rules { return mockRules })
 
-	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}).Return(nil)
+	done := make(chan struct{})
+	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}).
+		Run(func(mock.Arguments) {
+			close(done)
+		}).
+		Return(nil)
 
 	ch := l.Broadcaster().Subscribe()
 
@@ -294,8 +301,11 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 		Type: game.EventGameEnded,
 	})
 
-	// Wait a bit for the goroutine to finish processing
-	time.Sleep(100 * time.Millisecond)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for ranked finalize")
+	}
 
 	l.Broadcaster().Unsubscribe(ch)
 	mockRepo.AssertExpectations(t)
@@ -450,17 +460,47 @@ func TestManager_Kick(t *testing.T) {
 	m := NewManager(nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
+	guest2 := mockPlayer("p4", 4)
 	intruder := mockPlayer("p3", 3)
 
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
 	assert.NoError(t, err)
 	assert.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	assert.NoError(t, m.JoinLobbyByCode(l.Code(), guest2))
 
-	assert.Error(t, m.Kick(guest, leader))
-	assert.Error(t, m.Kick(intruder, guest))
+	assert.ErrorContains(t, m.Kick(guest, leader), "only the leader")
+	assert.ErrorContains(t, m.Kick(intruder, guest), "host is not in a lobby")
+	assert.ErrorContains(t, m.Kick(leader, leader), "cannot kick yourself")
+	assert.ErrorContains(t, m.Kick(nil, guest), "required")
 	assert.NoError(t, m.Kick(leader, guest))
 	assert.False(t, l.HasPlayer(guest))
 	assert.Nil(t, m.FindLobbyByPlayer(guest))
+	assert.True(t, l.HasPlayer(guest2))
+	assert.ErrorContains(t, m.Kick(leader, guest), "player not in lobby")
+}
+
+func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
+	t.Parallel()
+	m := NewManager(nil)
+	m.joinLimiter = ratelimit.NewSlidingWindowLimiter(2, time.Minute)
+
+	leader := mockPlayer("leader", 1)
+	joiner := mockPlayer("joiner", 2)
+	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+
+	assert.NoError(t, m.JoinLobbyByCode(l.Code(), joiner))
+	m.LeaveLobby(joiner)
+
+	other := mockPlayer("other", 3)
+	_, err = m.New(other, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame2"}))
+	require.NoError(t, err)
+
+	// Second attempt still under limit.
+	assert.ErrorContains(t, m.JoinLobbyByCode("ZZZZZZZZ", joiner), "lobby not found")
+	// Third attempt exceeds limit.
+	err = m.JoinLobbyByCode("ZZZZZZZZ", joiner)
+	assert.ErrorContains(t, err, "too many join attempts")
 }
 
 func TestValidLobbyCode(t *testing.T) {

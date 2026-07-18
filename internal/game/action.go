@@ -1,6 +1,6 @@
 package game
 
-import "terminalcard/internal/deck"
+import "github.com/Pieczasz/terminal-card/internal/deck"
 
 type Action interface {
 	Name() string

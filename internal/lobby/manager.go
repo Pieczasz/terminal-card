@@ -12,10 +12,10 @@ import (
 	"sync"
 	"time"
 
-	"terminalcard/internal/broadcaster"
-	"terminalcard/internal/db"
-	"terminalcard/internal/player"
-	"terminalcard/internal/ratelimit"
+	"github.com/Pieczasz/terminal-card/internal/broadcaster"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 )
 
 const (
@@ -129,6 +129,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 		code:        code,
 		ready:       make(map[string]bool),
 		broadcaster: broadcaster.New[Event](options.maxPlayers),
+		playerSubs:  make(map[string][]<-chan Event),
 	}
 
 	m.lobbies[code] = lobby
@@ -237,31 +238,66 @@ func (m *Manager) LeaveLobby(p *player.Player) {
 	}
 }
 
+func (m *Manager) shutdownCtx() context.Context {
+	if m == nil || m.appCtx == nil {
+		return context.Background()
+	}
+	return m.appCtx
+}
+
 // Kick removes a guest from the lobby. Only the current leader may kick guests.
 func (m *Manager) Kick(host, target *player.Player) error {
-	l := m.FindLobbyByPlayer(host)
-	if l == nil {
-		return errors.New("host is not in a lobby")
-	}
-	if !l.IsLeader(host) {
-		return errors.New("only the leader can kick players")
+	if host == nil || target == nil {
+		return errors.New("host and target are required")
 	}
 	if host.Compare(target) {
 		return errors.New("cannot kick yourself")
 	}
-	if !l.HasPlayer(target) {
-		return errors.New("player not in lobby")
+
+	m.mu.Lock()
+	l, ok := m.playerLobby[host.ID]
+	if !ok || l == nil {
+		m.mu.Unlock()
+		return errors.New("host is not in a lobby")
 	}
-	if l.IsLeader(target) {
+	// Hold manager lock while mutating lobby so join/leave cannot interleave.
+	l.mu.Lock()
+	if l.state == Closed {
+		l.mu.Unlock()
+		m.mu.Unlock()
+		return errors.New("lobby is closed")
+	}
+	if !l.leader.Compare(host) {
+		l.mu.Unlock()
+		m.mu.Unlock()
+		return errors.New("only the leader can kick players")
+	}
+	if l.leader.Compare(target) {
+		l.mu.Unlock()
+		m.mu.Unlock()
 		return errors.New("cannot kick the lobby leader")
 	}
+	idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(target) })
+	if idx == -1 {
+		l.mu.Unlock()
+		m.mu.Unlock()
+		return errors.New("player not in lobby")
+	}
 
-	closed := l.RemovePlayer(target)
-	m.mu.Lock()
+	engine := l.activeEngine
+	l.unsubscribePlayerLocked(target.ID)
+	l.guests = slices.Delete(l.guests, idx, idx+1)
+	delete(l.ready, target.ID)
+	bc := l.broadcaster
 	delete(m.playerLobby, target.ID)
+	l.mu.Unlock()
 	m.mu.Unlock()
-	if closed {
-		m.RemoveLobby(l.Code())
+
+	if engine != nil {
+		engine.RemovePlayer(target.ID)
+	}
+	if bc != nil {
+		bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
 	}
 	return nil
 }

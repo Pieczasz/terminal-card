@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"terminalcard/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/config"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"

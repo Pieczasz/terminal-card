@@ -12,17 +12,15 @@ type Pile struct {
 }
 
 func New(cards []Card) *Pile {
-	pile := &Pile{
+	return &Pile{
 		cards: slices.Clone(cards),
 	}
-	_ = pile.Shuffle()
-	return pile
 }
 
-// TODO: wtf is this shit
-// MustNew is like New but panics if crypto/rand fails during shuffle.
+// MustNew creates a pile and panics if Shuffle fails. Prefer New + Shuffle in
+// production paths that can return errors (e.g. Engine.Start).
 func MustNew(cards []Card) *Pile {
-	pile := &Pile{cards: slices.Clone(cards)}
+	pile := New(cards)
 	if err := pile.Shuffle(); err != nil {
 		panic(err)
 	}

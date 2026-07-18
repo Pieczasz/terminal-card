@@ -2,7 +2,7 @@ package poker
 
 import (
 	"sort"
-	"terminalcard/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
 type HandRank int

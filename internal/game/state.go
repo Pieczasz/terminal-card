@@ -2,8 +2,8 @@ package game
 
 import (
 	"sync"
-	"terminalcard/internal/deck"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type State struct {

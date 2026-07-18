@@ -3,9 +3,9 @@ package poker
 import (
 	"testing"
 
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	"terminalcard/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 )
