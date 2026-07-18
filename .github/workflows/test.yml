@@ -39,7 +39,7 @@ jobs:
       run: go mod download
 
     - name: Run integration tests
-      run: go test ./... -race -count=1 -timeout 15m
+      run: go test ./... -race -tags=integration -count=1 -timeout 15m
 
   lint:
     runs-on: ubuntu-latest

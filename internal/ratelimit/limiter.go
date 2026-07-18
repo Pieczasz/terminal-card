@@ -5,27 +5,41 @@ import (
 	"time"
 )
 
+const defaultMaxKeys = 10_000
+
 type SlidingWindowLimiter struct {
-	mu     sync.Mutex
-	limit  int
-	window time.Duration
-	logs   map[string][]time.Time
-	ops    uint64
+	mu      sync.Mutex
+	limit   int
+	window  time.Duration
+	logs    map[string][]time.Time
+	ops     uint64
+	maxKeys int
+	now     func() time.Time
 }
 
 func NewSlidingWindowLimiter(limit int, window time.Duration) *SlidingWindowLimiter {
 	return &SlidingWindowLimiter{
-		limit:  limit,
-		window: window,
-		logs:   make(map[string][]time.Time),
+		limit:   limit,
+		window:  window,
+		logs:    make(map[string][]time.Time),
+		maxKeys: defaultMaxKeys,
+		now:     time.Now,
 	}
+}
+
+// WithMaxKeys caps the number of tracked keys to bound memory under abuse.
+func (s *SlidingWindowLimiter) WithMaxKeys(n int) *SlidingWindowLimiter {
+	if n > 0 {
+		s.maxKeys = n
+	}
+	return s
 }
 
 func (s *SlidingWindowLimiter) Allow(ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := time.Now()
+	now := s.now()
 	threshold := now.Add(-s.window)
 
 	timestamps := filterExpired(s.logs[ip], threshold)
@@ -37,6 +51,14 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 
 	if len(timestamps) >= s.limit {
 		return false
+	}
+
+	_, exists := s.logs[ip]
+	if !exists && len(s.logs) >= s.maxKeys {
+		s.evictExpiredLocked(threshold)
+		if len(s.logs) >= s.maxKeys {
+			return false
+		}
 	}
 
 	s.logs[ip] = append(timestamps, now)

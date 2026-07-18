@@ -1,13 +1,15 @@
+//go:build integration
+
 package repository_test
 
 import (
 	"context"
 	"testing"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/elo"
-	"terminalcard/internal/repository"
-	"terminalcard/internal/testutil"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/elo"
+	"github.com/Pieczasz/terminal-card/internal/repository"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

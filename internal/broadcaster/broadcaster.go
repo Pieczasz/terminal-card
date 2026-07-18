@@ -7,6 +7,8 @@ import (
 	"sync"
 )
 
+const defaultMaxSubscribers = 64
+
 type subscriber[T any] struct {
 	id int
 	ch chan T
@@ -16,15 +18,20 @@ type subscriber[T any] struct {
 // servers, we should consider replacing this custom broadcaster with a
 // pub/sub library like Watermill (using Redis or go channels).
 type Broadcaster[T any] struct {
-	mu          sync.RWMutex
-	subscribers map[int]*subscriber[T]
-	nextID      int
-	closed      bool
+	mu             sync.RWMutex
+	subscribers    map[int]*subscriber[T]
+	nextID         int
+	closed         bool
+	maxSubscribers int
 }
 
 func New[T any](maxSubscribers int) *Broadcaster[T] {
+	if maxSubscribers <= 0 {
+		maxSubscribers = defaultMaxSubscribers
+	}
 	return &Broadcaster[T]{
-		subscribers: make(map[int]*subscriber[T], maxSubscribers),
+		subscribers:    make(map[int]*subscriber[T], maxSubscribers),
+		maxSubscribers: maxSubscribers,
 	}
 }
 
@@ -32,14 +39,14 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.closed {
+	if b.closed || len(b.subscribers) >= b.maxSubscribers {
 		ch := make(chan T)
 		close(ch)
 		return ch
 	}
 
 	// Using a larger buffer size to reduce the chance of dropped messages under heavy UI interaction
-	ch := make(chan T, 10000)
+	ch := make(chan T, 256)
 	b.subscribers[b.nextID] = &subscriber[T]{ch: ch, id: b.nextID}
 	b.nextID++
 	return ch
@@ -88,4 +95,11 @@ func (b *Broadcaster[T]) Close() {
 		close(sub.ch)
 		delete(b.subscribers, id)
 	}
+}
+
+// Len returns the number of active subscribers (tests/metrics).
+func (b *Broadcaster[T]) Len() int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.subscribers)
 }

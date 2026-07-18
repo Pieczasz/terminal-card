@@ -1,3 +1,5 @@
+//go:build integration
+
 package repository
 
 import (
@@ -5,8 +7,8 @@ import (
 	"fmt"
 	"testing"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/testutil"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 )
