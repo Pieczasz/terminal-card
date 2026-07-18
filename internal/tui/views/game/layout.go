@@ -3,6 +3,7 @@ package game
 import (
 	"fmt"
 	"strings"
+
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"

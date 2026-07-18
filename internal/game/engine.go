@@ -54,16 +54,11 @@ func (e *Engine) StandingsIDs() []string {
 	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
-	standings := e.state.Rules.GetStandings(e.state)
-	ids := make([]string, 0, len(standings)+len(e.state.LeftPlayers))
+	standings := e.standingsLocked()
+	ids := make([]string, 0, len(standings))
 	for _, p := range standings {
 		if p != nil {
 			ids = append(ids, p.ID)
-		}
-	}
-	for i := len(e.state.LeftPlayers) - 1; i >= 0; i-- {
-		if e.state.LeftPlayers[i] != nil {
-			ids = append(ids, e.state.LeftPlayers[i].ID)
 		}
 	}
 	return ids
@@ -77,7 +72,12 @@ func (e *Engine) Standings() []*player.Player {
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
+	return e.standingsLocked()
+}
 
+// standingsLocked returns rules standings followed by LeftPlayers (most recent leave last place).
+// Caller must hold e.mu and e.state.mu.
+func (e *Engine) standingsLocked() []*player.Player {
 	standings := e.state.Rules.GetStandings(e.state)
 	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
@@ -181,7 +181,7 @@ func cryptoIntN(n int) (int, error) {
 	}
 	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("crypto/rand: %w", err)
 	}
 	return int(v.Int64()), nil
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"time"
+
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"

@@ -182,29 +182,41 @@ func TestPokerRules_GetStandings(t *testing.T) {
 		assert.Equal(t, state.Players[1].ID, standings[0].ID)
 	})
 
-	t.Run("showdown evaluates best hand", func(t *testing.T) {
+	t.Run("showdown ranks by EvaluateHand", func(t *testing.T) {
 		state := createTestState()
 		extra := state.Extra.(*State)
 
-		// Set table cards
+		// Board: shared five cards
 		extra.Table = []*deck.Card{
-			{Rank: deck.Ace, Suit: deck.Spades},
-			{Rank: deck.Two, Suit: deck.Hearts},
-			{Rank: deck.Five, Suit: deck.Clubs},
-			{Rank: deck.Ten, Suit: deck.Diamonds},
+			{Rank: deck.Ten, Suit: deck.Spades},
 			{Rank: deck.Jack, Suit: deck.Hearts},
+			{Rank: deck.Queen, Suit: deck.Diamonds},
+			{Rank: deck.Two, Suit: deck.Clubs},
+			{Rank: deck.Three, Suit: deck.Spades},
 		}
 
-		// P1 has a King High
-		// P2 has a Pair of Twos (from table and Two in hand) - Wait, P2 has Three and Queen. They have Queen High.
-		// P3 has a Pair of Jacks (from table and Jack in hand) - P3 should win!
+		// p1: Ace-high (no pair)
+		state.Players[0].Cards = []deck.Card{
+			{Rank: deck.Ace, Suit: deck.Clubs},
+			{Rank: deck.Four, Suit: deck.Hearts},
+		}
+		// p2: pair of Kings
+		state.Players[1].Cards = []deck.Card{
+			{Rank: deck.King, Suit: deck.Clubs},
+			{Rank: deck.King, Suit: deck.Hearts},
+		}
+		// p3: broadway straight T-J-Q-K-A
+		state.Players[2].Cards = []deck.Card{
+			{Rank: deck.Ace, Suit: deck.Spades},
+			{Rank: deck.King, Suit: deck.Diamonds},
+		}
 
 		rules := &PokerRules{}
 		standings := rules.GetStandings(state)
 
 		assert.Len(t, standings, 3)
-		assert.Equal(t, "p3", standings[0].ID) // Pair of Jacks
-		assert.Equal(t, "p1", standings[1].ID) // King High
-		assert.Equal(t, "p2", standings[2].ID) // Queen High
+		assert.Equal(t, "p3", standings[0].ID) // straight
+		assert.Equal(t, "p2", standings[1].ID) // pair
+		assert.Equal(t, "p1", standings[2].ID) // high card
 	})
 }

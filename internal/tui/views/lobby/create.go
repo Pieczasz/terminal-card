@@ -2,6 +2,7 @@ package lobby
 
 import (
 	"fmt"
+
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/player"

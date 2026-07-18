@@ -168,7 +168,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				s.Context().SetValue("owns_connection", true)
 				s.Context().SetValue("user", user)
 
-				return tui.Model(*user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry, s.Context()), []tea.ProgramOption{}
+				return tui.Model(s.Context(), *user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
 			}),
 			logging.StructuredMiddleware(),
 			activeterm.Middleware(),

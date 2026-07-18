@@ -2,10 +2,17 @@ package poker
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/player"
+)
+
+const (
+	DefaultStack      uint = 1000
+	DefaultSmallBlind uint = 25
+	DefaultBigBlind   uint = 50
 )
 
 type PokerRules struct{}
@@ -31,24 +38,24 @@ func (r *PokerRules) OnGameStart(state *game.State) error {
 
 	playerChips := make(map[string]uint, len(state.Players))
 	for _, p := range state.Players {
-		playerChips[p.ID] = 1000
+		playerChips[p.ID] = DefaultStack
 	}
 
 	playerBets := make(map[string]uint, len(state.Players))
 
-	smallBlindAmount := uint(25)
-	bigBlindAmount := uint(50)
+	smallBlindAmount := DefaultSmallBlind
+	bigBlindAmount := DefaultBigBlind
 
-	N := len(state.Players)
+	nPlayers := len(state.Players)
 	var sbIndex, bbIndex, dealerIndex int
-	if N == 2 {
+	if nPlayers == 2 {
 		dealerIndex = state.CurrentTurn
 		sbIndex = state.CurrentTurn
-		bbIndex = (state.CurrentTurn + 1) % N
+		bbIndex = (state.CurrentTurn + 1) % nPlayers
 	} else {
-		dealerIndex = (state.CurrentTurn - 3 + N) % N
-		bbIndex = (state.CurrentTurn - 1 + N) % N
-		sbIndex = (state.CurrentTurn - 2 + N) % N
+		dealerIndex = (state.CurrentTurn - 3 + nPlayers) % nPlayers
+		bbIndex = (state.CurrentTurn - 1 + nPlayers) % nPlayers
+		sbIndex = (state.CurrentTurn - 2 + nPlayers) % nPlayers
 	}
 
 	sbPlayer := state.Players[sbIndex]
@@ -153,7 +160,6 @@ func (r *PokerRules) ApplyAction(state *game.State, action game.Action) {
 }
 
 func (r *PokerRules) PostActionCondition(_ *game.State, _ game.Action) error {
-	// Not needed for poker currently, but we could check if round ends
 	return nil
 }
 
@@ -165,75 +171,60 @@ func (r *PokerRules) CheckWinCondition(state *game.State) bool {
 	return len(extra.PlayersFold) >= len(state.Players)-1
 }
 
+func isFolded(extra *State, p *player.Player) bool {
+	for _, f := range extra.PlayersFold {
+		if f.ID == p.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func activePlayers(state *game.State, extra *State) []*player.Player {
+	out := make([]*player.Player, 0, len(state.Players))
+	for _, p := range state.Players {
+		if !isFolded(extra, p) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func (r *PokerRules) GetStandings(state *game.State) []*player.Player {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return nil
 	}
 
+	active := activePlayers(state, extra)
 	if len(extra.PlayersFold) >= len(state.Players)-1 {
-		// everyone folded except 1
-		for _, p := range state.Players {
-			folded := false
-			for _, f := range extra.PlayersFold {
-				if f.ID == p.ID {
-					folded = true
-					break
-				}
-			}
-			if !folded {
-				return []*player.Player{p}
-			}
+		if len(active) == 1 {
+			return active
 		}
-	}
-
-	// Showdown evaluation
-	var activePlayers []*player.Player
-	for _, p := range state.Players {
-		folded := false
-		for _, f := range extra.PlayersFold {
-			if f.ID == p.ID {
-				folded = true
-				break
-			}
-		}
-		if !folded {
-			activePlayers = append(activePlayers, p)
-		}
+		return nil
 	}
 
 	type playerHand struct {
 		p     *player.Player
 		score int
 	}
-	var hands []playerHand
-	for _, p := range activePlayers {
-		// we need player hole cards + table cards.
-		// For now we assume players have 2 cards in their hand, and table has 5.
-		var allCards []deck.Card
-		allCards = append(allCards, p.Cards...)
+	hands := make([]playerHand, 0, len(active))
+	for _, p := range active {
+		allCards := slices.Clone(p.Cards)
 		for _, c := range extra.Table {
 			allCards = append(allCards, *c)
 		}
 		hands = append(hands, playerHand{p: p, score: EvaluateHand(allCards)})
 	}
 
-	// Sort by score descending
-	for i := 0; i < len(hands); i++ {
-		for j := i + 1; j < len(hands); j++ {
-			if hands[j].score > hands[i].score {
-				hands[i], hands[j] = hands[j], hands[i]
-			}
-		}
-	}
+	slices.SortFunc(hands, func(a, b playerHand) int {
+		return b.score - a.score
+	})
 
-	var standings []*player.Player
+	standings := make([]*player.Player, 0, len(hands)+len(extra.PlayersFold))
 	for _, h := range hands {
 		standings = append(standings, h.p)
 	}
-
-	// Append folded players at the bottom
 	standings = append(standings, extra.PlayersFold...)
-
 	return standings
 }

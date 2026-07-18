@@ -14,6 +14,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 )
@@ -149,11 +150,11 @@ func (m *Manager) PublicLobbies(p *player.Player) []*Lobby {
 		slices.SortFunc(lobbies, func(a, b *Lobby) int {
 			eloA := playerElos[a.GameName()]
 			if eloA == 0 {
-				eloA = 1500
+				eloA = elo.ToUint32(elo.DefaultRating)
 			}
 			eloB := playerElos[b.GameName()]
 			if eloB == 0 {
-				eloB = 1500
+				eloB = elo.ToUint32(elo.DefaultRating)
 			}
 			distA := abs(int(a.averageElo()) - int(eloA))
 			distB := abs(int(b.averageElo()) - int(eloB))
@@ -285,20 +286,13 @@ func (m *Manager) Kick(host, target *player.Player) error {
 	}
 
 	engine := l.activeEngine
-	l.unsubscribePlayerLocked(target.ID)
-	l.guests = slices.Delete(l.guests, idx, idx+1)
-	delete(l.ready, target.ID)
 	bc := l.broadcaster
+	l.removeGuestAtLocked(idx)
 	delete(m.playerLobby, target.ID)
 	l.mu.Unlock()
 	m.mu.Unlock()
 
-	if engine != nil {
-		engine.RemovePlayer(target.ID)
-	}
-	if bc != nil {
-		bc.Broadcast(Event{Type: "PLAYERS_UPDATED"})
-	}
+	notifyEngineAndBroadcast(engine, bc, target.ID, EventPlayersUpdated)
 	return nil
 }
 

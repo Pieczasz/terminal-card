@@ -2,6 +2,7 @@ package home
 
 import (
 	"fmt"
+
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"

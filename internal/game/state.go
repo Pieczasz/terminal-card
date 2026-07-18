@@ -2,6 +2,7 @@ package game
 
 import (
 	"sync"
+
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/player"
 )
