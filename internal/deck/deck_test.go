@@ -11,7 +11,7 @@ func TestPile_Shuffle(t *testing.T) {
 	p := New(cards)
 
 	// Shuffle might not change the order every time, but it should contain the same cards
-	p.Shuffle()
+	assert.NoError(t, p.Shuffle())
 
 	got := p.Size()
 	want := 3
@@ -22,11 +22,11 @@ func TestPile_Shuffle(t *testing.T) {
 	assert.True(t, p.Contains(Card{Rank: Queen, Suit: Diamonds}))
 }
 
-func TestPile_Peak(t *testing.T) {
+func TestPile_Peek(t *testing.T) {
 	cards := []Card{{Rank: Ace, Suit: Spades}}
 	p := &Pile{cards: cards}
 
-	gotCard, gotOk := p.Peak()
+	gotCard, gotOk := p.Peek()
 	assert.True(t, gotOk)
 	assert.Equal(t, Card{Rank: Ace, Suit: Spades}, gotCard)
 
@@ -34,8 +34,24 @@ func TestPile_Peak(t *testing.T) {
 	assert.Equal(t, 1, gotSize)
 
 	pEmpty := &Pile{}
-	_, gotEmptyOk := pEmpty.Peak()
+	_, gotEmptyOk := pEmpty.Peek()
 	assert.False(t, gotEmptyOk)
+}
+
+func TestBuilder_MultipleStandardDecks(t *testing.T) {
+	cards := MultipleStandardDecks(2)
+	assert.Len(t, cards, 104)
+
+	suitCounts := make(map[Suit]int)
+	for _, card := range cards {
+		assert.NotEqual(t, Joker, card.Rank)
+		assert.NotEqual(t, NoSuit, card.Suit)
+		suitCounts[card.Suit]++
+	}
+	assert.Equal(t, 26, suitCounts[Spades])
+	assert.Equal(t, 26, suitCounts[Hearts])
+	assert.Equal(t, 26, suitCounts[Diamonds])
+	assert.Equal(t, 26, suitCounts[Clubs])
 }
 
 func TestPile_Draw(t *testing.T) {

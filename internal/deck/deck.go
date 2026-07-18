@@ -1,9 +1,9 @@
-// Package deck contains implementation for card (suit and rank) as well as deck builder functionality
-// shuffling and deck manipulation methods.
 package deck
 
 import (
-	"math/rand/v2"
+	"crypto/rand"
+	"fmt"
+	"math/big"
 	"slices"
 )
 
@@ -13,19 +13,37 @@ type Pile struct {
 
 func New(cards []Card) *Pile {
 	pile := &Pile{
-		cards: cards,
+		cards: slices.Clone(cards),
 	}
-	pile.Shuffle()
+	_ = pile.Shuffle()
 	return pile
 }
 
-func (p *Pile) Shuffle() {
-	rand.Shuffle(len(p.cards), func(i, j int) {
-		p.cards[i], p.cards[j] = p.cards[j], p.cards[i]
-	})
+// TODO: wtf is this shit
+// MustNew is like New but panics if crypto/rand fails during shuffle.
+func MustNew(cards []Card) *Pile {
+	pile := &Pile{cards: slices.Clone(cards)}
+	if err := pile.Shuffle(); err != nil {
+		panic(err)
+	}
+	return pile
 }
 
-func (p *Pile) Peak() (Card, bool) {
+// Shuffle uses crypto/rand for unpredictable deal order in ranked play.
+func (p *Pile) Shuffle() error {
+	n := len(p.cards)
+	for i := n - 1; i > 0; i-- {
+		jBig, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
+		if err != nil {
+			return fmt.Errorf("crypto/rand shuffle: %w", err)
+		}
+		j := int(jBig.Int64())
+		p.cards[i], p.cards[j] = p.cards[j], p.cards[i]
+	}
+	return nil
+}
+
+func (p *Pile) Peek() (Card, bool) {
 	if len(p.cards) < 1 {
 		return Card{}, false
 	}
@@ -72,8 +90,9 @@ func (p *Pile) IsEmpty() bool {
 	return len(p.cards) < 1
 }
 
+// Cards returns a defensive copy of the pile contents.
 func (p *Pile) Cards() []Card {
-	return p.cards
+	return slices.Clone(p.cards)
 }
 
 func (p *Pile) Contains(card Card) bool {
