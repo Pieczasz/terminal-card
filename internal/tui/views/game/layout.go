@@ -3,11 +3,11 @@ package game
 import (
 	"fmt"
 	"strings"
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	"terminalcard/internal/tui/components"
-	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	"math"
 

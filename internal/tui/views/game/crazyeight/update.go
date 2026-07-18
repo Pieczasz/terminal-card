@@ -2,13 +2,13 @@ package crazyeight
 
 import (
 	"fmt"
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	logic "terminalcard/internal/game/crazyeight"
-	"terminalcard/internal/player"
-	"terminalcard/internal/tui/animation"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/views"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/tui/animation"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -54,8 +54,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) unsubscribe() Model {
-	if m.engine != nil && m.events != nil {
-		m.engine.Broadcaster().Unsubscribe(m.events)
+	if m.bound != nil && m.events != nil {
+		if b := m.bound.Broadcaster(); b != nil {
+			b.Unsubscribe(m.events)
+		}
 		m.events = nil
 	}
 	return m
@@ -164,7 +166,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
+	if err := m.bound.Submit(logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 	}); err != nil {
 		m.lastActionErr = err
@@ -176,7 +178,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 
 func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 	chosenSuit := deck.Suit(m.suitCursor)
-	if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionPlayCard{
+	if err := m.bound.Submit(logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 		Suit:  chosenSuit,
 	}); err != nil {
@@ -190,7 +192,7 @@ func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 
 func (m Model) handleDraw() (tea.Model, tea.Cmd) {
 	if m.baseState.MyTurn && !m.pickingSuit {
-		if err := m.engine.SubmitAction(fmt.Sprint(m.global.User.ID), logic.ActionDrawCard{}); err != nil {
+		if err := m.bound.Submit(logic.ActionDrawCard{}); err != nil {
 			m.lastActionErr = err
 		} else {
 			m.lastActionErr = nil

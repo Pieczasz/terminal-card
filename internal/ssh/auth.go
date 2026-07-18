@@ -4,10 +4,9 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"strings"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/repository"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/repository"
 
 	"github.com/charmbracelet/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
@@ -58,8 +57,6 @@ func mapRegisterError(err error) error {
 		return ErrInvalidUsername
 	case errors.Is(err, repository.ErrKeyAlreadyRegistered):
 		return ErrKeyAlreadyUsed
-	case strings.Contains(err.Error(), "invalid username"):
-		return ErrInvalidUsername
 	default:
 		return ErrRegistrationFail
 	}

@@ -1,10 +1,10 @@
 package crazyeight
 
 import (
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	"terminalcard/internal/tui/components"
-	gameview "terminalcard/internal/tui/views/game"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"

@@ -2,11 +2,10 @@ package game
 
 import (
 	"fmt"
-	"slices"
 
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	"terminalcard/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
 )
 
 // BaseState contains a standard engine state applicable to most games.
@@ -20,55 +19,35 @@ type BaseState struct {
 	Winner        string
 }
 
-func SyncBaseState(global router.GlobalContext, engine *game.Engine) BaseState {
+// SyncBaseState builds a redacted view via BoundEngine (own hand only).
+func SyncBaseState(global router.GlobalContext, bound *game.BoundEngine) BaseState {
 	var base BaseState
-	if engine == nil {
+	if bound == nil {
 		return base
 	}
 
-	engine.WithState(func(state *game.State) {
-		base.Phase = state.Phase
-		if base.Phase == game.Finished {
-			if state.Winner != nil {
-				base.Winner = state.Winner.Username()
-			}
-			return
-		}
+	snap := bound.Snapshot()
+	base.Phase = snap.Phase
+	base.TopDiscard = snap.TopDiscard
+	base.CurrentPlayer = snap.CurrentPlayer
+	base.Winner = snap.Winner
+	base.Hand = bound.Hand()
 
-		if base.Phase == game.Waiting {
-			return
-		}
+	if global.User != nil && base.Phase == game.Playing {
+		base.MyTurn = bound.Engine() != nil &&
+			bound.Engine().CurrentPlayerID() == fmt.Sprint(global.User.ID)
+	}
 
-		if state.CurrentTurn < 0 || state.CurrentTurn >= len(state.Players) {
-			return
+	viewerName := ""
+	if global.User != nil {
+		viewerName = global.User.Username
+	}
+	for _, opp := range snap.Players {
+		if opp.ID == viewerName {
+			continue
 		}
-
-		current := state.Players[state.CurrentTurn]
-		base.CurrentPlayer = current.Username()
-		if global.User != nil {
-			base.MyTurn = current.ID == fmt.Sprint(global.User.ID)
-		}
-
-		for _, p := range state.Players {
-			if p == nil {
-				continue
-			}
-			if global.User != nil && p.ID == fmt.Sprint(global.User.ID) {
-				base.Hand = slices.Clone(p.Cards)
-			} else {
-				base.Opponents = append(base.Opponents, game.PlayerSnapshot{
-					ID:       p.Username(),
-					HandSize: len(p.Cards),
-				})
-			}
-		}
-
-		if state.Discard != nil {
-			if top, ok := state.Discard.Peek(); ok {
-				base.TopDiscard = top
-			}
-		}
-	})
+		base.Opponents = append(base.Opponents, opp)
+	}
 
 	return base
 }

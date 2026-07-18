@@ -1,12 +1,14 @@
 package crazyeight
 
 import (
-	"terminalcard/internal/deck"
-	"terminalcard/internal/game"
-	logic "terminalcard/internal/game/crazyeight"
-	"terminalcard/internal/tui/animation"
-	"terminalcard/internal/tui/router"
-	gameview "terminalcard/internal/tui/views/game"
+	"fmt"
+
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/tui/animation"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/harmonica"
@@ -16,7 +18,7 @@ type gameMsg game.Event
 
 type Model struct {
 	global router.GlobalContext
-	engine *game.Engine
+	bound  *game.BoundEngine
 	events <-chan game.Event
 
 	baseState       gameview.BaseState
@@ -45,15 +47,23 @@ func listenForEvents(ch <-chan game.Event) tea.Cmd {
 	}
 }
 
-// New creates a new Crazy Eights TUI view.
+// New creates a new Crazy Eights TUI view bound to the session player.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
+	playerID := ""
+	if global.User != nil {
+		playerID = fmt.Sprint(global.User.ID)
+	}
+	bound := game.Bind(engine, playerID)
+
 	var ch <-chan game.Event
-	if engine != nil {
-		ch = engine.Broadcaster().Subscribe()
+	if bound != nil {
+		if b := bound.Broadcaster(); b != nil {
+			ch = b.Subscribe()
+		}
 	}
 	m := Model{
 		global:          global,
-		engine:          engine,
+		bound:           bound,
 		events:          ch,
 		selectionSpring: animation.DefaultSpring(),
 		selectionLift:   2.0,
@@ -64,13 +74,12 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m Model) syncState() Model {
-	m.baseState = gameview.SyncBaseState(m.global, m.engine)
+	m.baseState = gameview.SyncBaseState(m.global, m.bound)
 
-	if m.engine != nil {
-		m.engine.WithState(func(state *game.State) {
-			// Extract Crazy Eights specific state
-			if extra, ok := state.Extra.(*logic.State); ok {
-				m.currentSuit = extra.CurrentSuit
+	if m.bound != nil {
+		m.bound.WithExtra(func(extra any) {
+			if s, ok := extra.(*logic.State); ok {
+				m.currentSuit = s.CurrentSuit
 			}
 		})
 	}

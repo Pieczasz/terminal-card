@@ -5,8 +5,9 @@ import (
 	"errors"
 	"testing"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/ssh"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/repository"
+	"github.com/Pieczasz/terminal-card/internal/ssh"
 
 	charmssh "github.com/charmbracelet/ssh"
 	"github.com/stretchr/testify/assert"
@@ -90,4 +91,30 @@ func TestLoadOrRegisterUser_RegisterError(t *testing.T) {
 
 	_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "user", "fp")
 	assert.ErrorIs(t, err, ssh.ErrRegistrationFail)
+}
+
+func TestLoadOrRegisterUser_MapsSentinels(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name string
+		err  error
+		want error
+	}{
+		{name: "username taken", err: repository.ErrUsernameTaken, want: ssh.ErrUsernameTaken},
+		{name: "invalid username", err: repository.ErrInvalidUsername, want: ssh.ErrInvalidUsername},
+		{name: "key used", err: repository.ErrKeyAlreadyRegistered, want: ssh.ErrKeyAlreadyUsed},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			repo := new(MockUserRepository)
+			repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(nil, nil, nil)
+			repo.On("RegisterUserWithKey", mock.Anything, "user", "fp").Return(nil, nil, tc.err)
+
+			_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "user", "fp")
+			assert.ErrorIs(t, err, tc.want)
+		})
+	}
 }

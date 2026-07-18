@@ -4,14 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"terminalcard/internal/tui/views"
+	"time"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 
-	"terminalcard/internal/db"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 )
 
 type model struct {
@@ -31,18 +32,20 @@ type profileLoadedMsg struct {
 	err     error
 }
 
-func loadProfile(userRepo db.UserRepository, userID uint) tea.Cmd {
+func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uint) tea.Cmd {
 	return func() tea.Msg {
-		user, err := userRepo.GetUserProfile(context.Background(), userID)
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		user, err := userRepo.GetUserProfile(reqCtx, userID)
 		if err != nil {
 			return profileLoadedMsg{err: err}
 		}
-		history, err := userRepo.GetUserMatchHistory(context.Background(), userID, 10)
+		history, err := userRepo.GetUserMatchHistory(reqCtx, userID, 10)
 		return profileLoadedMsg{user: user, history: history, err: err}
 	}
 }
 func (m model) Init() tea.Cmd {
-	return loadProfile(m.global.UserRepository, m.global.User.ID)
+	return loadProfile(m.global.RequestContext(), m.global.UserRepository, m.global.User.ID)
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
@@ -80,7 +83,7 @@ func (m model) View() tea.View {
 
 	var content string
 	if m.err != nil {
-		content = fmt.Sprintf("Error loading profile: %v", m.err)
+		content = "Unable to load profile. Please try again."
 	} else if m.userProfile == nil {
 		content = "Loading profile..."
 	} else {

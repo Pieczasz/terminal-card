@@ -1,18 +1,19 @@
 package tui
 
 import (
+	"context"
 	"fmt"
-	"terminalcard/internal/db"
-	"terminalcard/internal/game"
-	"terminalcard/internal/player"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/views/game/crazyeight"
-	"terminalcard/internal/tui/views/home"
-	"terminalcard/internal/tui/views/leaderboard"
-	"terminalcard/internal/tui/views/lobby"
-	"terminalcard/internal/tui/views/profile"
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/home"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/leaderboard"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/lobby"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/profile"
 
-	internallobby "terminalcard/internal/lobby"
+	internallobby "github.com/Pieczasz/terminal-card/internal/lobby"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -25,13 +26,14 @@ var gameViews = map[string]ViewFactory{
 	"crazy_eights": crazyeight.New,
 }
 
-func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
+func Model(user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry, sessionCtx context.Context) tea.Model {
 	global := router.GlobalContext{
 		User:            &user,
 		UserRepository:  userRepo,
 		MatchRepository: matchRepo,
 		LobbyManager:    lobbyManager,
 		GameRegistry:    gameRegistry,
+		SessionCtx:      sessionCtx,
 	}
 
 	r := router.New(global)

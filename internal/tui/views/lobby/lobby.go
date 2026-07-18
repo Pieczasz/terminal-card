@@ -3,13 +3,13 @@ package lobby
 import (
 	"fmt"
 	"log/slog"
-	"terminalcard/internal/elo"
-	"terminalcard/internal/game"
-	"terminalcard/internal/lobby"
-	"terminalcard/internal/player"
-	"terminalcard/internal/tui/router"
-	"terminalcard/internal/tui/styles"
-	"terminalcard/internal/tui/views"
+	"github.com/Pieczasz/terminal-card/internal/elo"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
@@ -28,6 +28,7 @@ type model struct {
 	isPrivate        bool
 	maxPlayers       int
 	showLeaveConfirm bool
+	actionErr        error
 }
 
 func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
@@ -45,11 +46,13 @@ func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
 
 // New returns a new lobby model. We pass the current active lobby through Context.
 func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
+	playerID := ""
+	if global.User != nil {
+		playerID = fmt.Sprint(global.User.ID)
+	}
 	var ch <-chan lobby.Event
 	if activeLobby != nil {
-		if b := activeLobby.Broadcaster(); b != nil {
-			ch = b.Subscribe()
-		}
+		ch = activeLobby.Subscribe(playerID)
 	}
 	gameName := ""
 	isPrivate := true
@@ -91,9 +94,11 @@ func (m model) getElo(p *player.Player) uint32 {
 
 func (m model) unsubscribe() model {
 	if m.currentLobby != nil && m.lobbyChan != nil {
-		if b := m.currentLobby.Broadcaster(); b != nil {
-			b.Unsubscribe(m.lobbyChan)
+		playerID := ""
+		if m.global.User != nil {
+			playerID = fmt.Sprint(m.global.User.ID)
 		}
+		m.currentLobby.Unsubscribe(playerID, m.lobbyChan)
 		m.lobbyChan = nil
 	}
 	return m
@@ -116,6 +121,9 @@ func (m model) selfPlayer() *player.Player {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.currentLobby == nil {
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+	}
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
@@ -156,7 +164,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 		case "r":
 			if err := m.currentLobby.ToggleReady(self, m.global.GameRegistry); err != nil {
+				m.actionErr = err
 				slog.Error("failed to toggle ready or start game engine", "error", err)
+			} else {
+				m.actionErr = nil
 			}
 			return m, nil
 		case "up", "k":
@@ -372,6 +383,11 @@ func (m model) View() tea.View {
 		settingsCol := lg.NewStyle().Align(lg.Left).MarginRight(6).Render(settingsStack)
 		playersCol := lg.NewStyle().Align(lg.Left).Render(playersStack)
 		form = lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
+	}
+
+	if m.actionErr != nil {
+		errLine := lg.NewStyle().Foreground(lg.Color("9")).Render(m.actionErr.Error())
+		form = lg.JoinVertical(lg.Center, form, "", errLine)
 	}
 
 	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer))
