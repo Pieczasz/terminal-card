@@ -25,7 +25,7 @@ func StandardDeckWithNJokers(numberOfJokers int) []Card {
 }
 
 func MultipleStandardDecks(numberOfDecks int) []Card {
-	cards := make([]Card, 52*numberOfDecks)
+	cards := make([]Card, 0, 52*numberOfDecks)
 	for range numberOfDecks {
 		cards = append(cards, StandardDeck()...)
 	}

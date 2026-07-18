@@ -6,12 +6,29 @@ import (
 
 const (
 	DefaultRating float64 = 1500.0
+	MinRating     float64 = 100.0
 	MaxRating     float64 = 4000.0
 
 	// KFactor determines how much ratings can change in a single match.
 	// TODO: check if we can improve this.
 	KFactor float64 = 32.0
 )
+
+// ClampRating bounds a rating to [MinRating, MaxRating].
+func ClampRating(rating float64) float64 {
+	if rating < MinRating {
+		return MinRating
+	}
+	if rating > MaxRating {
+		return MaxRating
+	}
+	return rating
+}
+
+// ToUint32 converts a rating to a stored Elo value after clamping and rounding.
+func ToUint32(rating float64) uint32 {
+	return uint32(math.Round(ClampRating(rating)))
+}
 
 type Player struct {
 	ID     string
@@ -26,11 +43,7 @@ func ExpectedScore(ratingA, ratingB float64) float64 {
 
 // UpdateRating calculates the new rating for a player given their actual score and expected score.
 func UpdateRating(rating, expectedScore, actualScore float64) float64 {
-	newRating := rating + KFactor*(actualScore-expectedScore)
-	if newRating > MaxRating {
-		return MaxRating
-	}
-	return newRating
+	return ClampRating(rating + KFactor*(actualScore-expectedScore))
 }
 
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
@@ -68,13 +81,7 @@ func Calculate(players []Player) map[string]float64 {
 			totalDelta += deltaLoss
 		}
 
-		newRating := player.Rating + totalDelta
-
-		if newRating > MaxRating {
-			newRating = MaxRating
-		}
-
-		newRatings[player.ID] = newRating
+		newRatings[player.ID] = ClampRating(player.Rating + totalDelta)
 	}
 
 	return newRatings

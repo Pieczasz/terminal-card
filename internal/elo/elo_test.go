@@ -6,6 +6,26 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
+func TestClampRating(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, MinRating, ClampRating(-50))
+	assert.Equal(t, MinRating, ClampRating(0))
+	assert.Equal(t, MaxRating, ClampRating(9000))
+	assert.Equal(t, 1500.0, ClampRating(1500))
+	assert.Equal(t, uint32(100), ToUint32(-1))
+	assert.Equal(t, uint32(4000), ToUint32(99999))
+}
+
+func TestCalculate_MinFloor(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "winner", Rating: 1500},
+		{ID: "loser", Rating: MinRating},
+	})
+	assert.GreaterOrEqual(t, got["loser"], MinRating)
+	assert.LessOrEqual(t, got["winner"], MaxRating)
+}
+
 func TestExpectedScore(t *testing.T) {
 	tests := []struct {
 		name     string

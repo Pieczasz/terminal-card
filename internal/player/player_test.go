@@ -30,8 +30,11 @@ func TestPlayer_Compare(t *testing.T) {
 		assert.False(t, got)
 	})
 
-	t.Run("nil other", func(t *testing.T) {
-		got := p1.Compare(nil)
-		assert.False(t, got)
+	t.Run("nil database user falls back to ID", func(t *testing.T) {
+		a := &Player{ID: "x"}
+		b := &Player{ID: "x"}
+		c := &Player{ID: "y"}
+		assert.True(t, a.Compare(b))
+		assert.False(t, a.Compare(c))
 	})
 }
