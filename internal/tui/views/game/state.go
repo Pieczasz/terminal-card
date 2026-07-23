@@ -5,8 +5,17 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 )
+
+// SessionPlayer builds the player for the authenticated user, or nil when unauthenticated.
+func SessionPlayer(g router.GlobalContext) *player.Player {
+	if g.User == nil {
+		return nil
+	}
+	return &player.Player{ID: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
+}
 
 // BaseState contains a standard engine state applicable to most games.
 type BaseState struct {

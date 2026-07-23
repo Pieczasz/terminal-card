@@ -154,7 +154,7 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	isLeader := m.currentLobby.IsLeader(self)
 
 	switch msg.String() {
-	case "esc", "x":
+	case "esc", "x", "q":
 		m.showLeaveConfirm = true
 		return m, nil
 	case "n":
