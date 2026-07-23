@@ -21,3 +21,11 @@ type Rules interface {
 	CheckWinCondition(state *State) bool
 	GetStandings(state *State) []*player.Player
 }
+
+// PlayerLeaveHandler is an optional Rules extension for mid-hand disconnects.
+// OnPlayerLeave runs before the player is removed from state.Players.
+// AfterPlayerRemoved runs after removal (seat indices already shifted).
+type PlayerLeaveHandler interface {
+	OnPlayerLeave(state *State, playerID string)
+	AfterPlayerRemoved(state *State, removedIndex int)
+}
