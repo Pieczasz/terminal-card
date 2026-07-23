@@ -402,7 +402,7 @@ func TestEvaluateHand_OrderingMonotonicByCategory(t *testing.T) {
 	prev := -1
 	for i, cards := range samples {
 		score := EvaluateHand(cards)
-		require.Equal(t, HandRank(i), handRank(score), "sample %d category mismatch", i)
+		require.Equal(t, HighCard+HandRank(i), handRank(score), "sample %d category mismatch", i)
 		assert.Greater(t, score, prev, "category %d should outrank previous", i)
 		prev = score
 	}

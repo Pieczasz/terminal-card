@@ -8,10 +8,11 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func createTestState() *game.State {
-	rules := &PokerRules{}
+	rules := &Rules{}
 	players := []*player.Player{
 		{ID: "p1", Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}, {Rank: deck.King, Suit: deck.Hearts}}},
 		{ID: "p2", Cards: []deck.Card{{Rank: deck.Three, Suit: deck.Diamonds}, {Rank: deck.Queen, Suit: deck.Clubs}}},
@@ -19,13 +20,17 @@ func createTestState() *game.State {
 	}
 	state := game.NewState(rules, players, deck.StandardDeck())
 	state.Extra = &State{
-		MainPool:    0,
-		CurrentBet:  0,
-		SmallBlind:  5,
-		BigBlind:    10,
-		Phase:       PreFlop,
-		PlayersFold: make([]*player.Player, 0),
-		Table:       make([]*deck.Card, 0),
+		MainPool:   0,
+		CurrentBet: 0,
+		MinRaise:   10,
+		SmallBlind: 5,
+		BigBlind:   10,
+		Phase:      PreFlop,
+		Folded:     map[string]bool{"p1": false, "p2": false, "p3": false},
+		PlayersAllIn: map[string]bool{
+			"p1": false, "p2": false, "p3": false,
+		},
+		Table: make([]deck.Card, 0),
 		PlayerChips: map[string]uint{
 			"p1": 1000,
 			"p2": 1000,
@@ -36,187 +41,230 @@ func createTestState() *game.State {
 			"p2": 0,
 			"p3": 0,
 		},
+		TotalContributed: map[string]uint{
+			"p1": 0, "p2": 0, "p3": 0,
+		},
+		ActedThisRound: map[string]bool{
+			"p1": false, "p2": false, "p3": false,
+		},
 	}
 	state.CurrentTurn = 0
 	state.Phase = game.Playing
 	return state
 }
 
-func TestPokerRules_Metadata(t *testing.T) {
-	rules := &PokerRules{}
+func TestRules_Metadata(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
 	assert.Equal(t, "Poker", rules.Name())
 	assert.Equal(t, 2, rules.MinPlayers())
 	assert.Equal(t, 9, rules.MaxPlayers())
 	assert.Equal(t, 2, rules.InitialDealCount())
 }
 
-func TestPokerRules_PreActionCondition(t *testing.T) {
+func TestRules_PreActionCondition(t *testing.T) {
 	t.Parallel()
 
 	t.Run("fold is always valid", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
-		rules := &PokerRules{}
-		action := ActionFold{}
-		err := rules.PreActionCondition(state, action)
-		assert.NoError(t, err)
+		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionFold{}))
 	})
 
-	t.Run("pass (check) is valid when no one has bet in current round", func(t *testing.T) {
+	t.Run("check valid when nothing owed", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 0
-		rules := &PokerRules{}
-		action := ActionPass{}
-		err := rules.PreActionCondition(state, action)
-		assert.NoError(t, err)
+		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionCheck{}))
 	})
 
-	t.Run("pass (check) is invalid when there is a pending bet to call", func(t *testing.T) {
+	t.Run("check invalid when facing a bet", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		rules := &PokerRules{}
-		action := ActionPass{}
-		err := rules.PreActionCondition(state, action)
-		assert.ErrorContains(t, err, "cannot check, must call or raise")
+		err := (&Rules{}).PreActionCondition(state, ActionCheck{})
+		assert.ErrorContains(t, err, "cannot check")
 	})
 
-	t.Run("bet is invalid if amount is less than current bet", func(t *testing.T) {
+	t.Run("raise below current bet rejected", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		rules := &PokerRules{}
-		action := ActionBet{Amount: 50}
-		err := rules.PreActionCondition(state, action)
-		assert.ErrorContains(t, err, "bet amount must be at least the current bet to call")
+		err := (&Rules{}).PreActionCondition(state, ActionRaiseTo{Amount: 50})
+		assert.ErrorContains(t, err, "above current bet")
 	})
 
-	t.Run("bet is invalid if not enough chips", func(t *testing.T) {
+	t.Run("call valid when facing a bet", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		state.Extra.(*State).PlayerChips["p1"] = 10
-		rules := &PokerRules{}
-		action := ActionBet{Amount: 100}
-		err := rules.PreActionCondition(state, action)
+		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionCall{}))
+	})
+
+	t.Run("raise invalid if not enough chips", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.CurrentBet = 100
+		extra.PlayerChips["p1"] = 10
+		err := (&Rules{}).PreActionCondition(state, ActionRaiseTo{Amount: 200})
 		assert.ErrorContains(t, err, "not enough chips")
-	})
-
-	t.Run("bet is valid if enough chips", func(t *testing.T) {
-		state := createTestState()
-		state.Extra.(*State).CurrentBet = 100
-		rules := &PokerRules{}
-		action := ActionBet{Amount: 100}
-		err := rules.PreActionCondition(state, action)
-		assert.NoError(t, err)
 	})
 }
 
-func TestPokerRules_ApplyAction(t *testing.T) {
+func TestRules_ApplyAction(t *testing.T) {
 	t.Parallel()
 
-	t.Run("folding adds player to folded list", func(t *testing.T) {
+	t.Run("folding marks folded", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
-		rules := &PokerRules{}
-		action := ActionFold{}
-
-		playerFolded := state.Players[state.CurrentTurn]
-		rules.ApplyAction(state, action)
-
+		(&Rules{}).ApplyAction(state, ActionFold{})
 		extra := state.Extra.(*State)
-		assert.Contains(t, extra.PlayersFold, playerFolded)
-		assert.Equal(t, action, extra.LastAction)
+		assert.True(t, extra.Folded["p1"])
 	})
 
-	t.Run("passing does nothing but updates last action", func(t *testing.T) {
+	t.Run("check updates acted flag", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
-		rules := &PokerRules{}
-		action := ActionPass{}
-		rules.ApplyAction(state, action)
+		(&Rules{}).ApplyAction(state, ActionCheck{})
 		extra := state.Extra.(*State)
-		assert.Equal(t, action, extra.LastAction)
+		assert.True(t, extra.ActedThisRound["p1"])
 	})
 
-	t.Run("betting updates current bet and pool", func(t *testing.T) {
+	t.Run("raise updates current bet and pool", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
-		rules := &PokerRules{}
-
-		action := ActionBet{Amount: 50}
-		rules.ApplyAction(state, action)
-
+		(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 50})
 		extra := state.Extra.(*State)
 		assert.Equal(t, uint(50), extra.CurrentBet)
 		assert.Equal(t, uint(50), extra.MainPool)
 		assert.Equal(t, uint(950), extra.PlayerChips["p1"])
 		assert.Equal(t, uint(50), extra.PlayerBets["p1"])
-		assert.Equal(t, state.Players[0], extra.PlayerRaised)
 	})
 }
 
-func TestPokerRules_CheckWinCondition(t *testing.T) {
+func TestApplyBetIncrease_IncompleteRaiseRule(t *testing.T) {
 	t.Parallel()
 
-	t.Run("game continues if multiple players active", func(t *testing.T) {
-		state := createTestState()
-		rules := &PokerRules{}
-		assert.False(t, rules.CheckWinCondition(state))
-	})
-
-	t.Run("player wins immediately if everyone else folded", func(t *testing.T) {
+	// Regression: a sub-minimum all-in raise must advance the amount owed but must
+	// NOT reopen the round for players who already acted (their ActedThisRound must
+	// survive and MinRaise must not grow).
+	t.Run("sub-minimum all-in does not reopen the round", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		extra := state.Extra.(*State)
-		extra.PlayersFold = append(extra.PlayersFold, state.Players[1], state.Players[2])
+		extra.CurrentBet = 100
+		extra.MinRaise = 100
+		// p2 and p3 have already acted and matched the current bet.
+		for _, id := range []string{"p2", "p3"} {
+			extra.ActedThisRound[id] = true
+			extra.PlayerBets[id] = 100
+		}
+		// p1 shoves for a total of 150 → raiseSize 50 < MinRaise 100.
+		extra.PlayerBets["p1"] = 0
+		extra.PlayerChips["p1"] = 150
+		state.CurrentTurn = 0
 
-		rules := &PokerRules{}
-		assert.True(t, rules.CheckWinCondition(state))
+		(&Rules{}).ApplyAction(state, ActionAllIn{})
+
+		assert.Equal(t, uint(150), extra.CurrentBet, "bet owed advances to the shove total")
+		assert.Equal(t, uint(100), extra.MinRaise, "sub-min all-in must not grow MinRaise")
+		// resetActedExcept must NOT have run: already-acted opponents stay acted.
+		assert.True(t, extra.ActedThisRound["p2"], "p2 must stay acted (round not reopened)")
+		assert.True(t, extra.ActedThisRound["p3"], "p3 must stay acted (round not reopened)")
+		// They still owe the extra chips because their street bet trails CurrentBet.
+		assert.Equal(t, uint(50), ToCall(extra, "p2"), "p2 still owes the uncalled extra")
+		assert.Equal(t, uint(50), ToCall(extra, "p3"), "p3 still owes the uncalled extra")
+		assert.True(t, extra.PlayersAllIn["p1"], "shover is all-in")
+	})
+
+	t.Run("full raise reopens the round and grows MinRaise", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.CurrentBet = 100
+		extra.MinRaise = 100
+		for _, id := range []string{"p2", "p3"} {
+			extra.ActedThisRound[id] = true
+			extra.PlayerBets[id] = 100
+		}
+		extra.PlayerBets["p1"] = 0
+		extra.PlayerChips["p1"] = 1000
+		state.CurrentTurn = 0
+
+		// Raise to 250 → raiseSize 150 >= MinRaise 100, a full raise.
+		(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 250})
+
+		assert.Equal(t, uint(250), extra.CurrentBet)
+		assert.Equal(t, uint(150), extra.MinRaise, "full raise grows MinRaise to the raise size")
+		assert.False(t, extra.ActedThisRound["p2"], "full raise reopens p2")
+		assert.False(t, extra.ActedThisRound["p3"], "full raise reopens p3")
+		assert.True(t, extra.ActedThisRound["p1"], "raiser is marked acted")
 	})
 }
 
-func TestPokerRules_GetStandings(t *testing.T) {
+func TestRules_CheckWinCondition(t *testing.T) {
+	t.Parallel()
+
+	t.Run("continues until hand complete", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		assert.False(t, (&Rules{}).CheckWinCondition(state))
+	})
+
+	t.Run("complete after uncontested award", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.MainPool = 150
+		extra.Folded["p2"] = true
+		extra.Folded["p3"] = true
+		require.NoError(t, (&Rules{}).PostActionCondition(state, ActionFold{}))
+		assert.True(t, extra.HandComplete)
+		assert.True(t, (&Rules{}).CheckWinCondition(state))
+		assert.Equal(t, uint(1150), extra.PlayerChips["p1"])
+	})
+}
+
+func TestRules_GetStandings(t *testing.T) {
 	t.Parallel()
 
 	t.Run("all folded except one", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		extra := state.Extra.(*State)
-		extra.PlayersFold = append(extra.PlayersFold, state.Players[0], state.Players[2])
-
-		rules := &PokerRules{}
-		standings := rules.GetStandings(state)
-		assert.Len(t, standings, 1)
-		assert.Equal(t, state.Players[1].ID, standings[0].ID)
+		extra.Folded["p1"] = true
+		extra.Folded["p3"] = true
+		standings := (&Rules{}).GetStandings(state)
+		assert.Equal(t, "p2", standings[0].ID)
 	})
 
-	t.Run("showdown ranks by EvaluateHand", func(t *testing.T) {
+	t.Run("showdown ranks by EvaluateHand then stable id", func(t *testing.T) {
+		t.Parallel()
 		state := createTestState()
 		extra := state.Extra.(*State)
-
-		// Board: shared five cards
-		extra.Table = []*deck.Card{
+		extra.Table = []deck.Card{
 			{Rank: deck.Ten, Suit: deck.Spades},
 			{Rank: deck.Jack, Suit: deck.Hearts},
 			{Rank: deck.Queen, Suit: deck.Diamonds},
 			{Rank: deck.Two, Suit: deck.Clubs},
 			{Rank: deck.Three, Suit: deck.Spades},
 		}
-
-		// p1: Ace-high (no pair)
 		state.Players[0].Cards = []deck.Card{
 			{Rank: deck.Ace, Suit: deck.Clubs},
 			{Rank: deck.Four, Suit: deck.Hearts},
 		}
-		// p2: pair of Kings
 		state.Players[1].Cards = []deck.Card{
 			{Rank: deck.King, Suit: deck.Clubs},
 			{Rank: deck.King, Suit: deck.Hearts},
 		}
-		// p3: broadway straight T-J-Q-K-A
 		state.Players[2].Cards = []deck.Card{
 			{Rank: deck.Ace, Suit: deck.Spades},
 			{Rank: deck.King, Suit: deck.Diamonds},
 		}
-
-		rules := &PokerRules{}
-		standings := rules.GetStandings(state)
-
-		assert.Len(t, standings, 3)
-		assert.Equal(t, "p3", standings[0].ID) // straight
-		assert.Equal(t, "p2", standings[1].ID) // pair
-		assert.Equal(t, "p1", standings[2].ID) // high card
+		standings := (&Rules{}).GetStandings(state)
+		assert.Equal(t, "p3", standings[0].ID)
+		assert.Equal(t, "p2", standings[1].ID)
+		assert.Equal(t, "p1", standings[2].ID)
 	})
 }
