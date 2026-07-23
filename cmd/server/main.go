@@ -14,6 +14,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/repository"
@@ -49,6 +50,11 @@ func main() {
 	otelLogger := otelslog.NewLogger("terminal-card")
 	slog.SetDefault(otelLogger)
 
+	if err := db.Migrate(cfg); err != nil {
+		slog.Error("failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
+
 	database, err := db.Connect(cfg)
 	if err != nil {
 		slog.Error("failed to setup database", "error", err)
@@ -72,9 +78,13 @@ func main() {
 	gameRegistry.RegisterModule(game.Module{
 		Name:    "Crazy Eights",
 		Slug:    "crazy_eights",
-		Factory: func() game.Rules { return &crazyeight.CrazyEightsRules{} },
+		Factory: func() game.Rules { return &crazyeight.Rules{} },
 	})
-	// Poker is WIP and intentionally not registered for v0.1.
+	gameRegistry.RegisterModule(game.Module{
+		Name:    "Poker",
+		Slug:    "poker",
+		Factory: func() game.Rules { return &poker.Rules{} },
+	})
 
 	deps := ssh.ServerDependencies{
 		Config:          cfg,
