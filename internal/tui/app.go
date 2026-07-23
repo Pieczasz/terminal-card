@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/tui/views/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/home"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/leaderboard"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/lobby"
@@ -25,6 +26,7 @@ type ViewFactory func(g router.GlobalContext, e *game.Engine) tea.Model
 // gameViews maps module slug → TUI factory. Add an entry when registering a new Module.
 var gameViews = map[string]ViewFactory{
 	"crazy_eights": crazyeight.New,
+	"poker":        poker.New,
 }
 
 func Model(sessionCtx context.Context, user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
