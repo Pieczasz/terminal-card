@@ -77,7 +77,17 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 		select {
 		case sub.ch <- msg:
 		default:
-			slog.Warn("broadcaster channel is full, dropping message", "subscriberID", sub.id)
+			// Buffer full: drop the oldest and enqueue the newest (latest-wins)
+			// so slow subscribers don't get stuck on stale state.
+			slog.Warn("broadcaster channel is full, dropping oldest message", "subscriberID", sub.id)
+			select {
+			case <-sub.ch:
+			default:
+			}
+			select {
+			case sub.ch <- msg:
+			default:
+			}
 		}
 	}
 }
