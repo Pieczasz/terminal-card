@@ -27,20 +27,28 @@ import (
 	"github.com/charmbracelet/ssh"
 )
 
-func RateLimitMiddleware(limiter *ratelimit.SlidingWindowLimiter) wish.Middleware {
-	return func(sh ssh.Handler) ssh.Handler {
-		return func(s ssh.Session) {
-			host, _, err := net.SplitHostPort(s.RemoteAddr().String())
-			if err != nil {
-				host = s.RemoteAddr().String()
-			}
-			if !limiter.Allow(host) {
-				observability.RateLimitRejectsTotal.Add(1)
-				wish.Fatalf(s, "Too many connections. Please try again later.\n")
-				return
-			}
-			sh(s)
+// ctxKey namespaces ssh.Context values to avoid collision with other middleware.
+type ctxKey int
+
+const (
+	ctxKeyOwnsConnection ctxKey = iota
+	ctxKeyUser
+)
+
+// rateLimitAuth enforces per-host rate limiting during auth. It must run here,
+// not in a session middleware, which only runs after auth already succeeded.
+func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHandler) ssh.PublicKeyHandler {
+	return func(ctx ssh.Context, key ssh.PublicKey) bool {
+		host, _, err := net.SplitHostPort(ctx.RemoteAddr().String())
+		if err != nil {
+			host = ctx.RemoteAddr().String()
 		}
+		if !limiter.Allow(host) {
+			observability.RateLimitRejectsTotal.Add(1)
+			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String())
+			return false
+		}
+		return next(ctx, key)
 	}
 }
 
@@ -118,35 +126,15 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	server, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
-		wish.WithPublicKeyAuth(func(_ ssh.Context, _ ssh.PublicKey) bool {
+		// Any key is accepted; identity is bound to its fingerprint in LoadOrRegisterUser.
+		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
-		}),
+		})),
+		// wish runs the LAST middleware first, so this slice is reverse execution
+		// order. Recovery is outermost to wrap the bubbletea program: charmbracelet/ssh
+		// runs the handler in a goroutine with no recover, so an escaped panic would
+		// crash the whole process, and cleanup must run on every disconnect.
 		wish.WithMiddleware(
-			RateLimitMiddleware(rateLimiter),
-			func(sh ssh.Handler) ssh.Handler {
-				return func(s ssh.Session) {
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("critical panic recovered during ssh session",
-								"panic", r,
-								"remote_addr", s.RemoteAddr().String(),
-							)
-							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
-						}
-
-						if s.Context().Value("owns_connection") == true {
-							if u, ok := s.Context().Value("user").(*db.User); ok {
-								tracker.Disconnect(u.ID)
-								p := &player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u}
-								deps.LobbyManager.LeaveLobby(p)
-							}
-						}
-					}()
-
-					sh(s)
-				}
-			},
-
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 				fingerprint, err := AuthenticateSession(s)
 				if err != nil {
@@ -165,13 +153,36 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				}
 
 				// Mark ownership immediately after Connect so panic recovery always disconnects.
-				s.Context().SetValue("owns_connection", true)
-				s.Context().SetValue("user", user)
+				s.Context().SetValue(ctxKeyOwnsConnection, true)
+				s.Context().SetValue(ctxKeyUser, user)
 
 				return tui.Model(s.Context(), *user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
 			}),
-			logging.StructuredMiddleware(),
 			activeterm.Middleware(),
+			logging.StructuredMiddleware(),
+			func(sh ssh.Handler) ssh.Handler {
+				return func(s ssh.Session) {
+					defer func() {
+						if r := recover(); r != nil {
+							slog.Error("critical panic recovered during ssh session",
+								"panic", r,
+								"remote_addr", s.RemoteAddr().String(),
+							)
+							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+						}
+
+						if s.Context().Value(ctxKeyOwnsConnection) == true {
+							if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
+								tracker.Disconnect(u.ID)
+								p := &player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u}
+								deps.LobbyManager.LeaveLobby(p)
+							}
+						}
+					}()
+
+					sh(s)
+				}
+			},
 		),
 	)
 	if err != nil {
