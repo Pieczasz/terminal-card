@@ -65,7 +65,7 @@ Schema changes live in `internal/db/migrations/` and are applied with [golang-mi
 
 ## Adding a new card game
 
-Crazy Eights is the reference implementation. Poker under `internal/game/poker` is **WIP** and intentionally unregistered.
+Crazy Eights and Poker (NLHE) are registered reference implementations under `internal/game/crazyeight` and `internal/game/poker`, with matching TUI packages.
 
 ### Steps
 
@@ -85,6 +85,7 @@ Crazy Eights is the reference implementation. Poker under `internal/game/poker` 
    ```go
    var gameViews = map[string]ViewFactory{
        "crazy_eights": crazyeight.New,
+       "poker":        poker.New,
        "my_game":      mygame.New,
    }
    ```
