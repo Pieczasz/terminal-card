@@ -9,9 +9,14 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+var tracer = otel.Tracer("terminal-card/repository")
 
 type GormMatchRepository struct {
 	db *gorm.DB
@@ -80,6 +85,10 @@ func (q *GormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 		return nil
 	}
 
+	ctx, span := tracer.Start(ctx, "db.FinalizeRankedMatch",
+		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
+	defer span.End()
+
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		game, err := getOrCreateGame(tx, gameName)
 		if err != nil {
@@ -92,6 +101,7 @@ func (q *GormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 		}
 		return q.recordMatchTx(tx, game.ID, orderedUserIDs, deltas)
 	}); err != nil {
+		span.RecordError(err)
 		return fmt.Errorf("finalize ranked match: %w", err)
 	}
 	return nil

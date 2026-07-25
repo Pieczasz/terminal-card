@@ -1,0 +1,34 @@
+{
+  "annotations": {"list": []},
+  "description": "Distributed traces from Tempo for production-terminal-card-server.",
+  "editable": true,
+  "graphTooltip": 0,
+  "schemaVersion": 39,
+  "tags": ["terminal-card", "traces"],
+  "time": {"from": "now-1h", "to": "now"},
+  "timezone": "browser",
+  "title": "Terminal Card — Traces",
+  "uid": "tc-traces",
+  "version": 1,
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Trace search",
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "gridPos": {"h": 20, "w": 24, "x": 0, "y": 0},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "options": {},
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {"type": "tempo", "uid": "tempo"},
+          "queryType": "traceql",
+          "query": "{ resource.service.name = \"production-terminal-card-server\" }",
+          "tableType": "traces",
+          "limit": 20
+        }
+      ]
+    }
+  ]
+}
