@@ -22,11 +22,14 @@ type Engine struct {
 	broadcaster *broadcaster.Broadcaster[Event]
 }
 
-func NewGameEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine {
+func NewEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine {
 	return &Engine{
 		state:       NewState(rules, players, cards),
 		turnManager: NewTurnManager(len(players)),
-		broadcaster: broadcaster.New[Event](len(players)),
+		// Headroom above the player count for non-player subscribers (the lobby's
+		// ranked-finalize watcher) and brief reconnect overlap; too small a cap
+		// hands a closed channel to a real player, freezing their view.
+		broadcaster: broadcaster.New[Event](len(players) + 8),
 	}
 }
 
@@ -41,6 +44,24 @@ func (e *Engine) CurrentPlayerID() string {
 
 func (e *Engine) currentPlayerLocked() *player.Player {
 	return e.state.Players[e.turnManager.Current()]
+}
+
+// applyNextTurnLocked settles the turn cursor, keeping turnManager and
+// state.CurrentTurn in agreement: a rules OverrideNextTurn wins, else advance
+// steps forward, else a rules-set CurrentTurn is honored. The result is always
+// clamped so a stale override cannot index out of range. Holds both locks.
+func (e *Engine) applyNextTurnLocked(advance bool) {
+	switch {
+	case e.state.OverrideNextTurn != nil:
+		e.turnManager.SetCurrent(*e.state.OverrideNextTurn)
+		e.state.OverrideNextTurn = nil
+	case advance:
+		e.turnManager.Next()
+	default:
+		e.turnManager.SetCurrent(e.state.CurrentTurn)
+	}
+	e.turnManager.clampCurrent()
+	e.state.CurrentTurn = e.turnManager.Current()
 }
 
 func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
@@ -81,8 +102,8 @@ func (e *Engine) standingsLocked() []*player.Player {
 	standings := e.state.Rules.GetStandings(e.state)
 	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
-	for i := len(e.state.LeftPlayers) - 1; i >= 0; i-- {
-		out = append(out, e.state.LeftPlayers[i])
+	for _, p := range slices.Backward(e.state.LeftPlayers) {
+		out = append(out, p)
 	}
 	return out
 }
@@ -96,8 +117,10 @@ func (e *Engine) WithState(fn func(state *State)) {
 	fn(e.state)
 }
 
-// SnapshotFor returns a redacted snapshot for viewerID (own hand size only for others).
-func (e *Engine) SnapshotFor(viewerID string) StateSnapshot {
+// SnapshotFor returns public table state and hand sizes but no hand contents;
+// a player reads their own cards via BoundEngine.Hand. The viewer parameter is
+// reserved for future per-viewer redaction.
+func (e *Engine) SnapshotFor(_ string) StateSnapshot {
 	var snap StateSnapshot
 	e.WithState(func(state *State) {
 		snap.Phase = state.Phase
@@ -112,7 +135,6 @@ func (e *Engine) SnapshotFor(viewerID string) StateSnapshot {
 		if state.Winner != nil {
 			snap.Winner = state.Winner.Username()
 		}
-		snap.HandSize = make(map[string]int, len(state.Players))
 		snap.Players = make([]PlayerSnapshot, 0, len(state.Players))
 		if state.CurrentTurn >= 0 && state.CurrentTurn < len(state.Players) {
 			snap.CurrentPlayer = state.Players[state.CurrentTurn].Username()
@@ -121,13 +143,11 @@ func (e *Engine) SnapshotFor(viewerID string) StateSnapshot {
 			if p == nil {
 				continue
 			}
-			snap.HandSize[p.ID] = len(p.Cards)
 			snap.Players = append(snap.Players, PlayerSnapshot{
 				ID:       p.Username(),
 				HandSize: len(p.Cards),
 			})
 		}
-		_ = viewerID // hand contents intentionally omitted; use BoundEngine.Hand()
 	})
 	return snap
 }
@@ -166,10 +186,10 @@ func (e *Engine) Start() error {
 	if err := e.state.Rules.OnGameStart(e.state); err != nil {
 		return fmt.Errorf("failed to setup game: %w", err)
 	}
+	e.applyNextTurnLocked(false)
 
 	e.broadcaster.Broadcast(Event{
-		Sequence: 0,
-		Type:     EventGameStarted,
+		Type: EventGameStarted,
 	})
 
 	return nil
@@ -217,7 +237,6 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	}
 
 	e.broadcaster.Broadcast(Event{
-		Sequence: int64(e.turnManager.Current()),
 		Type:     EventActionApplied,
 		PlayerID: playerID,
 		Action:   action,
@@ -238,17 +257,10 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 		return nil
 	}
 
-	if e.state.OverrideNextTurn != nil {
-		e.turnManager.SetCurrent(*e.state.OverrideNextTurn)
-		e.state.OverrideNextTurn = nil
-	} else {
-		e.turnManager.Next()
-	}
-	e.state.CurrentTurn = e.turnManager.Current()
+	e.applyNextTurnLocked(true)
 
 	e.broadcaster.Broadcast(Event{
-		Sequence: int64(e.turnManager.Current()),
-		Type:     EventTurnAdvanced,
+		Type: EventTurnAdvanced,
 	})
 
 	return nil
@@ -284,6 +296,10 @@ func (e *Engine) RemovePlayer(playerID string) {
 		return
 	}
 
+	if h, ok := e.state.Rules.(PlayerLeaveHandler); ok {
+		h.OnPlayerLeave(e.state, playerID)
+	}
+
 	removedPlayer := e.state.Players[playerIndex]
 	e.state.LeftPlayers = append(e.state.LeftPlayers, removedPlayer)
 
@@ -292,6 +308,29 @@ func (e *Engine) RemovePlayer(playerID string) {
 	e.turnManager.RemovePlayer(playerIndex)
 	e.state.CurrentTurn = e.turnManager.Current()
 
+	if h, ok := e.state.Rules.(PlayerLeaveHandler); ok {
+		h.AfterPlayerRemoved(e.state, playerIndex)
+	}
+
+	if e.state.Rules.CheckWinCondition(e.state) {
+		e.state.Phase = Finished
+		standings := e.state.Rules.GetStandings(e.state)
+		if len(standings) > 0 {
+			e.state.Winner = standings[0]
+		} else if len(e.state.Players) > 0 {
+			e.state.Winner = e.state.Players[0]
+		}
+		winnerID := ""
+		if e.state.Winner != nil {
+			winnerID = e.state.Winner.ID
+		}
+		e.broadcaster.Broadcast(Event{
+			Type:     EventGameEnded,
+			PlayerID: winnerID,
+		})
+		return
+	}
+
 	if len(e.state.Players) == 1 {
 		e.state.Phase = Finished
 		e.state.Winner = e.state.Players[0]
@@ -299,12 +338,14 @@ func (e *Engine) RemovePlayer(playerID string) {
 			Type:     EventGameEnded,
 			PlayerID: e.state.Winner.ID,
 		})
-	} else {
-		e.broadcaster.Broadcast(Event{
-			Sequence: int64(e.turnManager.Current()),
-			Type:     EventTurnAdvanced,
-		})
+		return
 	}
+
+	e.applyNextTurnLocked(false)
+
+	e.broadcaster.Broadcast(Event{
+		Type: EventTurnAdvanced,
+	})
 }
 
 // Close releases engine broadcaster resources. Safe to call multiple times.

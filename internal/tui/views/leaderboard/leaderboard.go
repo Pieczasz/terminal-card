@@ -63,7 +63,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc":
+		case "esc", "q":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
@@ -158,13 +158,14 @@ func (m model) renderHeaderRow(playerWidth int) string {
 
 func (m model) renderPlayerRow(index int, r db.Ranking, playerWidth int) string {
 	userStr := r.User.Username
-	if len(userStr) > playerWidth {
-		userStr = userStr[:playerWidth-3] + "..."
+	// Truncate by runes, not bytes, to avoid splitting multi-byte UTF-8 usernames.
+	if runes := []rune(userStr); len(runes) > playerWidth {
+		userStr = string(runes[:playerWidth-3]) + "..."
 	} else {
 		userStr = fmt.Sprintf("%-*s", playerWidth, userStr)
 	}
 
-	if r.User.ID == m.global.User.ID {
+	if m.global.User != nil && r.User.ID == m.global.User.ID {
 		userStr = lg.NewStyle().Foreground(lg.Color("205")).Bold(true).Render(userStr)
 	}
 	return fmt.Sprintf("%-5d | %s | %-15s | %d", index+1, userStr, r.Game.Name, r.Elo)

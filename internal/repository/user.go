@@ -10,6 +10,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"gorm.io/gorm"
 )
 
@@ -17,7 +18,17 @@ var (
 	ErrUsernameTaken        = errors.New("username already taken, please choose another via ssh config")
 	ErrKeyAlreadyRegistered = errors.New("public key already registered")
 	ErrInvalidUsername      = errors.New("invalid username")
+	// ErrUserNotFound lets callers distinguish a missing record from a DB failure.
+	ErrUserNotFound = errors.New("user not found")
 )
+
+// pgUniqueViolationCode is the Postgres SQLSTATE for a unique constraint violation.
+const pgUniqueViolationCode = "23505"
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolationCode
+}
 
 type GormUserRepository struct {
 	db                    *gorm.DB
@@ -74,6 +85,9 @@ func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 			LastSeenAt: time.Now(),
 		}
 		if err := tx.Create(&currentUser).Error; err != nil {
+			if isUniqueViolation(err) { // lost a concurrent registration race
+				return ErrUsernameTaken
+			}
 			return fmt.Errorf("create user: %w", err)
 		}
 
@@ -84,6 +98,9 @@ func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 			LastUsedAt:  time.Now(),
 		}
 		if err := tx.Create(&dbKey).Error; err != nil {
+			if isUniqueViolation(err) {
+				return ErrKeyAlreadyRegistered
+			}
 			return fmt.Errorf("create public key: %w", err)
 		}
 		return nil
@@ -143,6 +160,9 @@ func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*
 		Preload("Rankings.Game").
 		First(&user, userID).Error
 	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, ErrUserNotFound
+		}
 		return nil, fmt.Errorf("get user profile: %w", err)
 	}
 	return &user, nil

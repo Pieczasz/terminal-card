@@ -7,17 +7,16 @@ type Action interface {
 }
 
 type Event struct {
-	Sequence int64
 	Type     EventType
 	PlayerID string
 	Action   Action
-	State    StateSnapshot
 }
 
 type EventType uint8
 
 const (
-	EventTurnAdvanced EventType = iota
+	EventUnknown EventType = iota
+	EventTurnAdvanced
 	EventActionApplied
 	EventGameEnded
 	EventGameStarted
@@ -33,8 +32,6 @@ type StateSnapshot struct {
 	CurrentPlayer string
 	TopDiscard    deck.Card
 	DeckSize      int
-	HandSize      map[string]int
 	Players       []PlayerSnapshot
 	Winner        string
-	Sequence      int64
 }

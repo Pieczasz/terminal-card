@@ -39,7 +39,15 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.closed || len(b.subscribers) >= b.maxSubscribers {
+	if b.closed {
+		ch := make(chan T)
+		close(ch)
+		return ch
+	}
+	if len(b.subscribers) >= b.maxSubscribers {
+		// A real subscriber getting a dead channel silently freezes its view, so
+		// make capacity exhaustion visible rather than swallowing it.
+		slog.Warn("broadcaster at capacity, rejecting subscriber", "max", b.maxSubscribers)
 		ch := make(chan T)
 		close(ch)
 		return ch
@@ -77,7 +85,17 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 		select {
 		case sub.ch <- msg:
 		default:
-			slog.Warn("broadcaster channel is full, dropping message", "subscriberID", sub.id)
+			// Buffer full: drop the oldest and enqueue the newest (latest-wins)
+			// so slow subscribers don't get stuck on stale state.
+			slog.Warn("broadcaster channel is full, dropping oldest message", "subscriberID", sub.id)
+			select {
+			case <-sub.ch:
+			default:
+			}
+			select {
+			case sub.ch <- msg:
+			default:
+			}
 		}
 	}
 }

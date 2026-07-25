@@ -6,12 +6,13 @@
 
 Terminal Card is an SSH server for multiplayer card games. Built with Go and the [Charm](https://charm.sh/) ecosystem (Bubble Tea, Wish), it gives players a rich TUI over plain SSH — no custom client install.
 
-**v0.1** ships **Crazy Eights**. Poker rules exist as a work-in-progress package and are not registered or playable yet.
+**v0.1** ships **Crazy Eights** and **No-Limit Texas Hold'em** (one ranked hand per match; rematch via lobby Ready). Chips are numeric stacks.
 
 ## Features
 
 - **SSH multiplayer** — connect with any SSH client
 - **Rich TUI** — Bubble Tea + Lip Gloss
+- **Crazy Eights & Poker (NLHE)** — up to 9 seats at Hold'em
 - **Persistent stats** — PostgreSQL users, matches, and ELO
 - **Observability** — OpenTelemetry logs (optional Grafana/Loki/Alloy stack)
 - **Pluggable games** — register a `game.Module` + TUI view factory

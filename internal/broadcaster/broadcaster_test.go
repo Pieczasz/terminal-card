@@ -1,6 +1,7 @@
 package broadcaster
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -132,8 +133,107 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 		t.Fatal("Broadcast blocked on a full channel")
 	}
 
-	got := <-ch
-	assert.Equal(t, 0, got)
+	// Latest-wins: the newest message must still be observable even though the
+	// buffer was full, so the oldest value (0) has been evicted instead.
+	var last int
+	for {
+		select {
+		case v := <-ch:
+			last = v
+			continue
+		default:
+		}
+		break
+	}
+	assert.Equal(t, 1001, last, "most recent broadcast should survive a full buffer")
+}
+
+func TestBroadcaster_LatestWins(t *testing.T) {
+	t.Parallel()
+	b := New[int](10)
+
+	ch := b.Subscribe()
+
+	// Overfill the subscriber buffer (256) without ever draining it. Under
+	// latest-wins the oldest messages get evicted, but the final value must
+	// remain enqueued.
+	const total = 512
+	for i := range total {
+		b.Broadcast(i)
+	}
+
+	var values []int
+	for {
+		select {
+		case v := <-ch:
+			values = append(values, v)
+			continue
+		default:
+		}
+		break
+	}
+
+	if assert.NotEmpty(t, values) {
+		assert.Equal(t, total-1, values[len(values)-1], "latest message must survive")
+		assert.NotContains(t, values, 0, "oldest message should have been dropped")
+	}
+}
+
+func TestBroadcaster_ConcurrentStress(t *testing.T) {
+	t.Parallel()
+	b := New[int](32)
+
+	const (
+		broadcasters = 8
+		subscribers  = 8
+		iterations   = 500
+	)
+
+	var wg sync.WaitGroup
+
+	// Broadcasters hammer the broadcaster concurrently.
+	for range broadcasters {
+		wg.Go(func() {
+			for i := range iterations {
+				b.Broadcast(i)
+			}
+		})
+	}
+
+	// Subscribers repeatedly subscribe, drain, and unsubscribe.
+	for range subscribers {
+		wg.Go(func() {
+			for range iterations {
+				ch := b.Subscribe()
+				select {
+				case <-ch:
+				default:
+				}
+				b.Unsubscribe(ch)
+			}
+		})
+	}
+
+	// Close concurrently once broadcasts are in flight; the broadcaster must
+	// stay panic- and deadlock-free.
+	go func() {
+		time.Sleep(time.Millisecond)
+		b.Close()
+	}()
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("concurrent stress test deadlocked")
+	}
+
+	assert.Equal(t, 0, b.Len(), "all subscribers should be gone after Close")
 }
 
 func TestBroadcaster_MaxSubscribers(t *testing.T) {

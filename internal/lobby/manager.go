@@ -140,26 +140,34 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 
 func (m *Manager) PublicLobbies(p *player.Player) []*Lobby {
 	lobbies := m.getCachedPublicLobbies()
-	if p != nil && p.DatabaseUser != nil {
-		playerElos := make(map[string]uint32)
-		for _, r := range p.DatabaseUser.Rankings {
-			if r.Game.Name != "" {
-				playerElos[r.Game.Name] = r.Elo
-			}
+	if p == nil || p.DatabaseUser == nil {
+		return lobbies
+	}
+
+	playerElos := make(map[string]uint32)
+	for _, r := range p.DatabaseUser.Rankings {
+		if r.Game.Name != "" {
+			playerElos[r.Game.Name] = r.Elo
 		}
-		slices.SortFunc(lobbies, func(a, b *Lobby) int {
-			eloA := playerElos[a.GameName()]
-			if eloA == 0 {
-				eloA = elo.ToUint32(elo.DefaultRating)
-			}
-			eloB := playerElos[b.GameName()]
-			if eloB == 0 {
-				eloB = elo.ToUint32(elo.DefaultRating)
-			}
-			distA := abs(int(a.averageElo()) - int(eloA))
-			distB := abs(int(b.averageElo()) - int(eloB))
-			return distA - distB
-		})
+	}
+
+	// Snapshot each sort key once (GameName/averageElo lock the lobby) so the
+	// comparator can't re-lock or see values shift mid-sort.
+	type ranked struct {
+		lobby *Lobby
+		dist  int
+	}
+	items := make([]ranked, len(lobbies))
+	for i, l := range lobbies {
+		target := playerElos[l.GameName()]
+		if target == 0 {
+			target = elo.ToUint32(elo.DefaultRating)
+		}
+		items[i] = ranked{lobby: l, dist: abs(int(l.averageElo()) - int(target))}
+	}
+	slices.SortFunc(items, func(a, b ranked) int { return a.dist - b.dist })
+	for i, it := range items {
+		lobbies[i] = it.lobby
 	}
 	return lobbies
 }

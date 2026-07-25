@@ -6,5 +6,5 @@ import (
 
 type Game struct {
 	gorm.Model
-	Name string
+	Name string `gorm:"uniqueIndex"`
 }

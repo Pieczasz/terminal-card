@@ -1,15 +1,13 @@
 package crazyeight
 
 import (
-	"fmt"
-
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/animation"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -70,15 +68,20 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
+	p := gameview.SessionPlayer(m.global)
 
 	if m.baseState.Phase == game.Finished {
-		l := m.global.LobbyManager.FindLobbyByPlayer(p)
 		m = m.unsubscribe()
+		if p == nil {
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		}
+		l := m.global.LobbyManager.FindLobbyByPlayer(p)
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 	}
 
-	m.global.LobbyManager.LeaveLobby(p)
+	if p != nil {
+		m.global.LobbyManager.LeaveLobby(p)
+	}
 	m = m.unsubscribe()
 	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 }
@@ -145,9 +148,12 @@ func (m Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 
 func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
-		p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-		l := m.global.LobbyManager.FindLobbyByPlayer(p)
+		p := gameview.SessionPlayer(m.global)
 		m = m.unsubscribe()
+		if p == nil {
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		}
+		l := m.global.LobbyManager.FindLobbyByPlayer(p)
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 	}
 
@@ -177,8 +183,14 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// suitPickerOrder maps the picker grid position to a suit, matching view.go's order.
+var suitPickerOrder = []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs}
+
 func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
-	chosenSuit := deck.Suit(m.suitCursor)
+	if m.suitCursor < 0 || m.suitCursor >= len(suitPickerOrder) {
+		return m, nil
+	}
+	chosenSuit := suitPickerOrder[m.suitCursor]
 	if err := m.bound.Submit(logic.ActionPlayCard{
 		Cards: []deck.Card{card},
 		Suit:  chosenSuit,

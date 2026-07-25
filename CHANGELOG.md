@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- No-Limit Texas Hold'em: full street/betting rules, all-in and side pots, showdown via `EvaluateHand`
+- Poker Bubble Tea table UI (up to 9 seats) and registry wiring (`poker` module)
+- One ranked hand per match; rematch by Ready in lobby
+
 ### Security
 
 - Lobby join/create are atomic; mid-game joins rejected; host actions require leader actor

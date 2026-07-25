@@ -30,6 +30,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
+		case "q":
+			return m, tea.Quit
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
 		case "f":
@@ -49,7 +51,11 @@ func (m model) View() tea.View {
 	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 
-	welcomeUser := fmt.Sprintf("Welcome %s", m.global.User.Username)
+	welcomeName := "Player"
+	if m.global.User != nil {
+		welcomeName = m.global.User.Username
+	}
+	welcomeUser := fmt.Sprintf("Welcome %s", welcomeName)
 	welcomeFig := styles.RenderFigureASCII(welcomeUser, innerWidth)
 	welcomeText := styles.Welcome.Render(welcomeFig)
 
