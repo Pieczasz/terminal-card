@@ -12,6 +12,8 @@ import (
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	collogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
+	colmetricpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
+	coltracepb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -26,6 +28,24 @@ func (m *mockLogsService) Export(ctx context.Context, req *collogpb.ExportLogsSe
 	return &collogpb.ExportLogsServiceResponse{}, nil
 }
 
+// SetupOTel now also exports traces and metrics; the mock endpoint must accept
+// them so shutdown flushes cleanly.
+type mockTraceService struct {
+	coltracepb.UnimplementedTraceServiceServer
+}
+
+func (mockTraceService) Export(context.Context, *coltracepb.ExportTraceServiceRequest) (*coltracepb.ExportTraceServiceResponse, error) {
+	return &coltracepb.ExportTraceServiceResponse{}, nil
+}
+
+type mockMetricsService struct {
+	colmetricpb.UnimplementedMetricsServiceServer
+}
+
+func (mockMetricsService) Export(context.Context, *colmetricpb.ExportMetricsServiceRequest) (*colmetricpb.ExportMetricsServiceResponse, error) {
+	return &colmetricpb.ExportMetricsServiceResponse{}, nil
+}
+
 func TestOTel_Integration(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -33,6 +53,8 @@ func TestOTel_Integration(t *testing.T) {
 	grpcServer := grpc.NewServer(grpc.Creds(insecure.NewCredentials()))
 	mockSvc := &mockLogsService{}
 	collogpb.RegisterLogsServiceServer(grpcServer, mockSvc)
+	coltracepb.RegisterTraceServiceServer(grpcServer, mockTraceService{})
+	colmetricpb.RegisterMetricsServiceServer(grpcServer, mockMetricsService{})
 
 	go func() {
 		_ = grpcServer.Serve(lis)
