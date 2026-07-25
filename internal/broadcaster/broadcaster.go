@@ -39,7 +39,15 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	if b.closed || len(b.subscribers) >= b.maxSubscribers {
+	if b.closed {
+		ch := make(chan T)
+		close(ch)
+		return ch
+	}
+	if len(b.subscribers) >= b.maxSubscribers {
+		// A real subscriber getting a dead channel silently freezes its view, so
+		// make capacity exhaustion visible rather than swallowing it.
+		slog.Warn("broadcaster at capacity, rejecting subscriber", "max", b.maxSubscribers)
 		ch := make(chan T)
 		close(ch)
 		return ch
