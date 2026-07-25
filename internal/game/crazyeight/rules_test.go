@@ -169,16 +169,23 @@ func TestRules_DrawCard_Reshuffle(t *testing.T) {
 		assert.Equal(t, totalBefore, totalAfter)
 	})
 
-	t.Run("dead end when deck empty and discard has one card", func(t *testing.T) {
+	t.Run("exhausted board turns draw into a pass and ends the hand", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
+		extra := state.Extra.(*State)
 
 		state.Deck = deck.New([]deck.Card{})
 		state.Discard = deck.New([]deck.Card{{Rank: deck.Nine, Suit: deck.Spades}})
 
-		err := rules.PreActionCondition(state, ActionDrawCard{})
-		assert.ErrorContains(t, err, "no cards left to draw")
+		// Draw stays legal with nothing to draw; it becomes a forced pass.
+		assert.NoError(t, rules.PreActionCondition(state, ActionDrawCard{}))
+
+		for range state.Players {
+			rules.ApplyAction(state, ActionDrawCard{})
+		}
+		assert.GreaterOrEqual(t, extra.Passes, len(state.Players))
+		assert.True(t, rules.CheckWinCondition(state), "a deadlocked board must end the hand")
 	})
 }
 
