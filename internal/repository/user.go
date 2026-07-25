@@ -42,6 +42,9 @@ func NewUserRepository(db *gorm.DB) db.UserRepository {
 }
 
 func (q *GormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerprint string) (*db.User, *db.PublicKey, error) {
+	ctx, span := tracer.Start(ctx, "db.LoadUserByFingerprint")
+	defer span.End()
+
 	var dbKey db.PublicKey
 	err := q.db.WithContext(ctx).Where("fingerprint = ?", fingerprint).Preload("User").First(&dbKey).Error
 	if err != nil {
@@ -113,6 +116,9 @@ func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 }
 
 func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]db.Ranking, error) {
+	ctx, span := tracer.Start(ctx, "db.GetBestPlayers")
+	defer span.End()
+
 	q.bestPlayersCacheMutex.RLock()
 	if time.Since(q.bestPlayersCacheTime) < 5*time.Minute && len(q.bestPlayersCache) >= limit {
 		cacheCopy := make([]db.Ranking, limit)
@@ -154,6 +160,9 @@ func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]d
 }
 
 func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*db.User, error) {
+	ctx, span := tracer.Start(ctx, "db.GetUserProfile")
+	defer span.End()
+
 	var user db.User
 	err := q.db.WithContext(ctx).Preload("PublicKeys").
 		Preload("Rankings").
@@ -178,6 +187,9 @@ func (q *GormUserRepository) UpdateUserActivity(ctx context.Context, user *db.Us
 }
 
 func (q *GormUserRepository) GetUserMatchHistory(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error) {
+	ctx, span := tracer.Start(ctx, "db.GetUserMatchHistory")
+	defer span.End()
+
 	var history []db.MatchParticipant
 	err := q.db.WithContext(ctx).Where("user_id = ?", userID).
 		Preload("Match").

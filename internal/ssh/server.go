@@ -3,6 +3,7 @@
 package ssh
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net"
@@ -25,6 +26,9 @@ import (
 	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/keygen"
 	"github.com/charmbracelet/ssh"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ctxKey namespaces ssh.Context values to avoid collision with other middleware.
@@ -33,7 +37,17 @@ type ctxKey int
 const (
 	ctxKeyOwnsConnection ctxKey = iota
 	ctxKeyUser
+	ctxKeyTraceCtx
 )
+
+// sessionTraceContext returns the context carrying the session span (set by the
+// outer middleware) so downstream DB calls and logs join the session trace.
+func sessionTraceContext(s ssh.Session) context.Context {
+	if ctx, ok := s.Context().Value(ctxKeyTraceCtx).(context.Context); ok {
+		return ctx
+	}
+	return s.Context()
+}
 
 // rateLimitAuth enforces per-host rate limiting during auth. It must run here,
 // not in a session middleware, which only runs after auth already succeeded.
@@ -136,12 +150,13 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		// crash the whole process, and cleanup must run on every disconnect.
 		wish.WithMiddleware(
 			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+				traceCtx := sessionTraceContext(s)
 				fingerprint, err := AuthenticateSession(s)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
 				}
-				user, err := LoadOrRegisterUser(s.Context(), deps.UserRepository, s.User(), fingerprint)
+				user, err := LoadOrRegisterUser(traceCtx, deps.UserRepository, s.User(), fingerprint)
 				if err != nil {
 					wish.Fatalf(s, "%v\n", err)
 					return nil, nil
@@ -156,12 +171,22 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 				s.Context().SetValue(ctxKeyOwnsConnection, true)
 				s.Context().SetValue(ctxKeyUser, user)
 
-				return tui.Model(s.Context(), *user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
+				return tui.Model(traceCtx, *user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
 			}),
 			activeterm.Middleware(),
 			logging.StructuredMiddleware(),
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
+					ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
+						trace.WithAttributes(attribute.String("remote_addr", s.RemoteAddr().String())))
+					s.Context().SetValue(ctxKeyTraceCtx, ctx)
+					defer func() {
+						if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
+							span.SetAttributes(attribute.String("user", u.Username))
+						}
+						span.End()
+					}()
+
 					defer func() {
 						if r := recover(); r != nil {
 							slog.Error("critical panic recovered during ssh session",
