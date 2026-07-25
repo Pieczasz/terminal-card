@@ -59,11 +59,12 @@ func settleAndAdvance(state *game.State, extra *State) error {
 	extra.CurrentBet = 0
 	extra.MinRaise = extra.BigBlind
 
-	canStillBet := false
+	// Betting can only continue with at least two players who still have chips;
+	// a lone live player against all-ins just runs the board out.
+	canStillBet := 0
 	for _, p := range activePlayers(state, extra) {
 		if !extra.PlayersAllIn[p.ID] && extra.PlayerChips[p.ID] > 0 {
-			canStillBet = true
-			break
+			canStillBet++
 		}
 	}
 
@@ -89,7 +90,7 @@ func settleAndAdvance(state *game.State, extra *State) error {
 		return runShowdown(state, extra)
 	}
 
-	if !canStillBet {
+	if canStillBet < 2 {
 		return runOutBoard(state, extra)
 	}
 	return nil
