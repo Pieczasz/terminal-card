@@ -25,6 +25,9 @@ import (
 	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/keygen"
 	"github.com/charmbracelet/ssh"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // ctxKey namespaces ssh.Context values to avoid collision with other middleware.
@@ -162,6 +165,15 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 			logging.StructuredMiddleware(),
 			func(sh ssh.Handler) ssh.Handler {
 				return func(s ssh.Session) {
+					_, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
+						trace.WithAttributes(attribute.String("remote_addr", s.RemoteAddr().String())))
+					defer func() {
+						if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
+							span.SetAttributes(attribute.String("user", u.Username))
+						}
+						span.End()
+					}()
+
 					defer func() {
 						if r := recover(); r != nil {
 							slog.Error("critical panic recovered during ssh session",
