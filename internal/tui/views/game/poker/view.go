@@ -142,7 +142,7 @@ func (m Model) renderTopRow(seats []Seat, compact bool) string {
 	}
 	parts := make([]string, 0, len(seats))
 	for _, s := range seats {
-		parts = append(parts, m.renderSeat(s, compact))
+		parts = append(parts, m.renderSeat(s, compact, gameview.OrientationTop))
 	}
 	row := lg.JoinHorizontal(lg.Bottom, parts...)
 	if !compact {
@@ -156,8 +156,8 @@ func (m Model) renderMiddle(height int, left, right []Seat, compact bool) string
 	w3 := m.global.Width / 4
 	w2 := m.global.Width - w1 - w3
 
-	leftView := m.renderSideStack(left, compact)
-	rightView := m.renderSideStack(right, compact)
+	leftView := m.renderSideStack(left, compact, gameview.OrientationLeft)
+	rightView := m.renderSideStack(right, compact, gameview.OrientationRight)
 	center := m.renderCenter(compact)
 
 	return lg.JoinHorizontal(lg.Top,
@@ -167,13 +167,13 @@ func (m Model) renderMiddle(height int, left, right []Seat, compact bool) string
 	)
 }
 
-func (m Model) renderSideStack(seats []Seat, compact bool) string {
+func (m Model) renderSideStack(seats []Seat, compact bool, orientation gameview.Orientation) string {
 	if len(seats) == 0 {
 		return ""
 	}
 	parts := make([]string, 0, len(seats))
 	for _, s := range seats {
-		parts = append(parts, m.renderSeat(s, compact))
+		parts = append(parts, m.renderSeat(s, compact, orientation))
 	}
 	return lg.JoinVertical(lg.Center, parts...)
 }
@@ -232,7 +232,7 @@ func renderHoleBack() string {
 	return dimStyle.Render("[??]")
 }
 
-func (m Model) renderSeat(s Seat, compact bool) string {
+func (m Model) renderSeat(s Seat, compact bool, orientation gameview.Orientation) string {
 	ns := nameStyle
 	if s.IsTurn {
 		ns = turnNameStyle
@@ -257,7 +257,7 @@ func (m Model) renderSeat(s Seat, compact bool) string {
 		stack = dimStyle.Render("folded")
 	}
 
-	cards := m.renderSeatCards(s, compact)
+	cards := m.renderSeatCards(s, compact, orientation)
 	pad := lg.NewStyle().Padding(0, 1)
 	return pad.Render(lg.JoinVertical(lg.Center, cards, name, stack))
 }
@@ -276,7 +276,7 @@ func seatBadges(s Seat) string {
 	return strings.Join(b, "/")
 }
 
-func (m Model) renderSeatCards(s Seat, compact bool) string {
+func (m Model) renderSeatCards(s Seat, compact bool, orientation gameview.Orientation) string {
 	if len(s.Hole) == 2 {
 		if compact {
 			return lg.JoinHorizontal(lg.Center, renderMiniCard(s.Hole[0]), renderMiniCard(s.Hole[1]))
@@ -289,31 +289,20 @@ func (m Model) renderSeatCards(s Seat, compact bool) string {
 	if compact {
 		return lg.JoinHorizontal(lg.Center, renderHoleBack(), renderHoleBack())
 	}
-	return lg.JoinHorizontal(lg.Bottom, renderFacedown(), renderFacedown())
-}
-
-func renderFacedown() string {
-	body := dimStyle.Render(lg.Place(7, 5, lg.Center, lg.Center, "░░"))
-	return lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("#777777")).
-		Padding(0, 1).
-		MarginTop(1).
-		Render(body)
+	return gameview.RenderCardBacks(2, orientation)
 }
 
 func (m Model) renderHero(compact bool) string {
 	hero := m.heroSeat()
 	var seatBlock string
 	if hero != nil {
-		seatBlock = m.renderSeat(*hero, compact)
+		seatBlock = m.renderSeat(*hero, compact, gameview.OrientationTop)
 	}
 
 	status := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
 	actions := m.renderActionBar()
-	helper := m.renderHelper()
 
-	parts := []string{seatBlock, status, actions, helper}
+	parts := []string{seatBlock, status, actions}
 	if m.lastErr != nil {
 		parts = append(parts, errStyle.Render(m.lastErr.Error()))
 	}
@@ -351,10 +340,6 @@ func (m Model) renderActionBar() string {
 		return metaStyle.Render("waiting…")
 	}
 	return accentStyle.Render(strings.Join(opts, " · "))
-}
-
-func (m Model) renderHelper() string {
-	return dimStyle.Render("f fold · c check/call · r raise · a all-in · esc leave")
 }
 
 func rankShort(r deck.Rank) string {
