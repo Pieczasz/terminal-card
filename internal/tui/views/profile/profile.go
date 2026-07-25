@@ -46,6 +46,9 @@ func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uint) t
 	}
 }
 func (m model) Init() tea.Cmd {
+	if m.global.User == nil {
+		return nil
+	}
 	return loadProfile(m.global.RequestContext(), m.global.UserRepository, m.global.User.ID)
 }
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {

@@ -51,7 +51,7 @@ func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "esc":
+		case "esc", "q":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		case "n":
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }

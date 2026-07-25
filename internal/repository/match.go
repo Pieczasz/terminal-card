@@ -10,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/elo"
 
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type GormMatchRepository struct {
@@ -21,10 +22,23 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 }
 
 func (q *GormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
-	var game db.Game
-	err := q.db.WithContext(ctx).Where("name = ?", name).FirstOrCreate(&game, db.Game{Name: name}).Error
-	if err != nil {
-		return nil, fmt.Errorf("get or create game: %w", err)
+	return getOrCreateGame(q.db.WithContext(ctx), name)
+}
+
+// getOrCreateGame resolves a game by its unique name, race-safe via
+// ON CONFLICT DO NOTHING plus a read-back when another transaction won the insert.
+func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
+	game := db.Game{Name: name}
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "name"}},
+		DoNothing: true,
+	}).Create(&game).Error; err != nil {
+		return nil, fmt.Errorf("create game: %w", err)
+	}
+	if game.ID == 0 {
+		if err := tx.Where("name = ?", name).First(&game).Error; err != nil {
+			return nil, fmt.Errorf("load game: %w", err)
+		}
 	}
 	return &game, nil
 }
@@ -67,9 +81,9 @@ func (q *GormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 	}
 
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var game db.Game
-		if err := tx.Where("name = ?", gameName).FirstOrCreate(&game, db.Game{Name: gameName}).Error; err != nil {
-			return fmt.Errorf("get or create game: %w", err)
+		game, err := getOrCreateGame(tx, gameName)
+		if err != nil {
+			return err
 		}
 
 		deltas, err := q.updateRankingsTx(tx, game.ID, orderedUserIDs)
@@ -150,7 +164,9 @@ func (q *GormMatchRepository) recordMatchTx(tx *gorm.DB, gameID uint, orderedUse
 
 func (q *GormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uint) (map[uint]*db.Ranking, error) {
 	var rankings []db.Ranking
-	if err := tx.Where("user_id IN ? AND game_id = ?", userIDs, gameID).Find(&rankings).Error; err != nil {
+	// FOR UPDATE: serialize concurrent finalize transactions to avoid lost Elo updates.
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("user_id IN ? AND game_id = ?", userIDs, gameID).Find(&rankings).Error; err != nil {
 		return nil, fmt.Errorf("query rankings: %w", err)
 	}
 

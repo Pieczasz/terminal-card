@@ -42,8 +42,7 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 
 	loggerProvider, err := newLoggerProvider(ctx, cfg, res)
 	if err != nil {
-		err = errors.Join(err)
-		return
+		return nil, fmt.Errorf("create logger provider: %w", err)
 	}
 	shutdownFuncs = append(shutdownFuncs, loggerProvider.Shutdown)
 	global.SetLoggerProvider(loggerProvider)

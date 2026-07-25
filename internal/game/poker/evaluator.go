@@ -10,7 +10,8 @@ import (
 type HandRank int
 
 const (
-	HighCard HandRank = iota
+	RankUnknown HandRank = iota
+	HighCard
 	Pair
 	TwoPair
 	ThreeOfAKind

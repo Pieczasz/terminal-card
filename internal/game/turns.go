@@ -1,17 +1,13 @@
 package game
 
+// TurnManager tracks the current seat index. Play only proceeds forward.
 type TurnManager struct {
 	playerCount int
 	current     int
-	direction   int
 }
 
 func NewTurnManager(numberOfPlayers int) *TurnManager {
-	return &TurnManager{
-		playerCount: numberOfPlayers,
-		current:     0,
-		direction:   1,
-	}
+	return &TurnManager{playerCount: numberOfPlayers}
 }
 
 func (tm *TurnManager) Current() int {
@@ -19,35 +15,35 @@ func (tm *TurnManager) Current() int {
 }
 
 func (tm *TurnManager) Next() {
-	tm.current = (tm.current + tm.direction + tm.playerCount) % tm.playerCount
-}
-
-func (tm *TurnManager) Reverse() {
-	tm.direction = -tm.direction
+	if tm.playerCount <= 0 {
+		return
+	}
+	tm.current = (tm.current + 1) % tm.playerCount
 }
 
 func (tm *TurnManager) SetCurrent(current int) {
 	tm.current = current
 }
 
+// clampCurrent forces current into [0, playerCount) so a stale index cannot panic.
+func (tm *TurnManager) clampCurrent() {
+	if tm.playerCount <= 0 {
+		tm.current = 0
+		return
+	}
+	tm.current = ((tm.current % tm.playerCount) + tm.playerCount) % tm.playerCount
+}
+
+// RemovePlayer shifts the cursor after the player at index leaves.
 func (tm *TurnManager) RemovePlayer(index int) {
 	tm.playerCount--
 	if tm.playerCount <= 0 {
-		tm.playerCount = 1 // safety
+		tm.playerCount = 1
+		tm.current = 0
 		return
 	}
-
 	if tm.current > index {
 		tm.current--
-	} else if tm.current == index {
-		if tm.direction == 1 {
-			// Current player removed and going forward, the next player physically shifts into the same index.
-			// But wait, if index is the last element, it should wrap.
-			tm.current = tm.current % tm.playerCount
-		} else {
-			// Going backwards. The previous player shifts index down if they were after, but we handle that already.
-			// Actually, just step backwards from the current physical index.
-			tm.current = (tm.current - 1 + tm.playerCount) % tm.playerCount
-		}
 	}
+	tm.clampCurrent()
 }

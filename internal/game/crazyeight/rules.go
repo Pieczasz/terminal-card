@@ -10,23 +10,23 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
-type CrazyEightsRules struct{}
+type Rules struct{}
 
-var _ game.Rules = (*CrazyEightsRules)(nil)
+var _ game.Rules = (*Rules)(nil)
 
-func (r *CrazyEightsRules) Name() string    { return "Crazy Eights" }
-func (r *CrazyEightsRules) MinPlayers() int { return 2 }
-func (r *CrazyEightsRules) MaxPlayers() int { return 6 }
+func (r *Rules) Name() string    { return "Crazy Eights" }
+func (r *Rules) MinPlayers() int { return 2 }
+func (r *Rules) MaxPlayers() int { return 6 }
 
-func (r *CrazyEightsRules) InitialDeck() []deck.Card {
+func (r *Rules) InitialDeck() []deck.Card {
 	return deck.StandardDeck()
 }
 
-func (r *CrazyEightsRules) InitialDealCount() int {
+func (r *Rules) InitialDealCount() int {
 	return 7
 }
 
-func (r *CrazyEightsRules) OnGameStart(state *game.State) error {
+func (r *Rules) OnGameStart(state *game.State) error {
 	extra := &State{CurrentSuit: deck.NoSuit}
 	state.Extra = extra
 	state.Discard = deck.New([]deck.Card{})
@@ -67,7 +67,7 @@ func validSuit(s deck.Suit) bool {
 	}
 }
 
-func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Action) error {
+func (r *Rules) PreActionCondition(state *game.State, action game.Action) error {
 	topCard, ok := state.Discard.Peek()
 	if !ok {
 		return errors.New("no cards in discard pile")
@@ -91,8 +91,8 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		}
 
 		if card.Rank == deck.Eight {
-			if action.Suit != deck.NoSuit && !validSuit(action.Suit) {
-				return errors.New("invalid suit")
+			if !validSuit(action.Suit) {
+				return errors.New("must choose a suit when playing an eight")
 			}
 			return nil
 		}
@@ -105,9 +105,8 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 		return errors.New("card doesn't match top discard")
 
 	case ActionDrawCard:
-		if state.Deck.IsEmpty() {
-			return errors.New("deck is empty")
-		}
+		// Always legal: with cards available it draws, otherwise it is a forced
+		// pass so an exhausted board can never soft-lock the turn loop.
 		return nil
 
 	case ActionPickSuit:
@@ -118,7 +117,7 @@ func (r *CrazyEightsRules) PreActionCondition(state *game.State, action game.Act
 	return errors.New("unknown action")
 }
 
-func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return
@@ -147,30 +146,70 @@ func (r *CrazyEightsRules) ApplyAction(state *game.State, action game.Action) {
 		} else if action.Suit != deck.NoSuit {
 			extra.CurrentSuit = action.Suit
 		}
+		extra.Passes = 0
 
 	case ActionDrawCard:
+		if state.Deck.IsEmpty() {
+			reshuffleDiscardIntoDeck(state)
+		}
 		drawn, ok := state.Deck.Draw()
 		if !ok {
+			extra.Passes++ // stock and discard exhausted: this turn is a forced pass
 			return
 		}
 		p.Cards = append(p.Cards, drawn)
+		extra.Passes = 0
 	}
 }
 
-func (r *CrazyEightsRules) PostActionCondition(_ *game.State, _ game.Action) error {
+// reshuffleDiscardIntoDeck moves the discard pile (except its top card) back
+// into the stock and shuffles, conserving every card.
+func reshuffleDiscardIntoDeck(state *game.State) {
+	top, ok := state.Discard.Draw()
+	if !ok {
+		return
+	}
+	rest := state.Discard.Cards()
+	state.Discard = deck.New([]deck.Card{top})
+	state.Deck.AddCard(rest...)
+	_ = state.Deck.Shuffle()
+}
+
+func (r *Rules) PostActionCondition(_ *game.State, _ game.Action) error {
 	return nil
 }
 
-func (r *CrazyEightsRules) CheckWinCondition(state *game.State) bool {
+func (r *Rules) CheckWinCondition(state *game.State) bool {
 	for _, p := range state.Players {
 		if len(p.Cards) == 0 {
 			return true
 		}
 	}
+	// Every player passed in succession: the board is exhausted with no legal
+	// move, so the hand is deadlocked and ends (GetStandings ranks by fewest cards).
+	if extra, ok := state.Extra.(*State); ok && len(state.Players) > 0 && extra.Passes >= len(state.Players) {
+		return true
+	}
 	return false
 }
 
-func (r *CrazyEightsRules) GetStandings(state *game.State) []*player.Player {
+// OnPlayerLeave returns the departing player's cards to the stock so the deck
+// stays whole; the engine removes the player afterward.
+func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
+	for _, p := range state.Players {
+		if p.ID == playerID {
+			state.Deck.AddCard(p.Cards...)
+			p.Cards = nil
+			_ = state.Deck.Shuffle()
+			return
+		}
+	}
+}
+
+// AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
+func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
+
+func (r *Rules) GetStandings(state *game.State) []*player.Player {
 	standings := make([]*player.Player, len(state.Players))
 	copy(standings, state.Players)
 

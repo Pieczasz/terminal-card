@@ -187,6 +187,19 @@ func RenderOpponentMinimal(o game.PlayerSnapshot, isCurrentTurn bool) string {
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }
 
+// RenderCardBacks draws count face-down card backs oriented for a table edge,
+// so every game view shows opponents' hidden cards the same way.
+func RenderCardBacks(count int, orientation Orientation) string {
+	switch orientation {
+	case OrientationLeft:
+		return renderLeftCards(count)
+	case OrientationRight:
+		return renderRightCards(count)
+	default:
+		return renderTopCards(count)
+	}
+}
+
 func RenderStatus(currentPlayer string, isMyTurn bool) string {
 	statusStyle := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).MarginBottom(1)
 	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)

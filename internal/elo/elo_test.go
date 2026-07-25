@@ -36,6 +36,7 @@ func TestExpectedScore(t *testing.T) {
 		{"Equal ratings", 1500, 1500, 0.5},
 		{"A much higher", 1900, 1500, 0.9090909091},
 		{"B much higher", 1500, 1900, 0.0909090909},
+		{"Underdog by 200", 1400, 1600, 0.2402530734},
 	}
 
 	for _, tt := range tests {
@@ -65,6 +66,41 @@ func TestUpdateRating(t *testing.T) {
 			assert.InDelta(t, tt.expected, got, 1e-4, "UpdateRating() mismatch")
 		})
 	}
+}
+
+func TestCalculate_UnequalRatings(t *testing.T) {
+	t.Parallel()
+
+	// Lower-rated "winner" (1400) beats higher-rated "loser" (1600).
+	// Sorted best-to-worst: winner first, loser second.
+	got := Calculate([]Player{
+		{ID: "winner", Rating: 1400},
+		{ID: "loser", Rating: 1600},
+	})
+
+	const (
+		equalGain    = 16.0      // symmetric equal-rating win gains exactly 16.
+		expectedWin  = 1424.3119 // 1400 + 32*(1 - E), E = 0.24025.
+		expectedLoss = 1575.6881 // 1600 + 32*(0 - (1-E)).
+		tolerance    = 1e-3
+	)
+
+	winnerDelta := got["winner"] - 1400.0
+	loserDelta := got["loser"] - 1600.0
+
+	// The underdog gains more than in the symmetric equal-rating case.
+	assert.Greater(t, winnerDelta, equalGain, "underdog should gain more than the equal-rating baseline")
+
+	// Signs are correct: winner up, loser down.
+	assert.Positive(t, winnerDelta, "winner should gain rating")
+	assert.Negative(t, loserDelta, "loser should lose rating")
+
+	// Magnitudes match the hand-computed values.
+	assert.InDelta(t, expectedWin, got["winner"], tolerance, "winner rating mismatch")
+	assert.InDelta(t, expectedLoss, got["loser"], tolerance, "loser rating mismatch")
+
+	// Zero-sum: what the winner gains, the loser loses.
+	assert.InDelta(t, 0.0, winnerDelta+loserDelta, tolerance, "two-player match must be zero-sum")
 }
 
 func TestCalculate(t *testing.T) {

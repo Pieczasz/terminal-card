@@ -29,7 +29,7 @@ func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 
 	p1 := &player.Player{ID: "1"}
 	p2 := &player.Player{ID: "2"}
-	engine := NewGameEngine(bindRules{}, []*player.Player{p1, p2}, deck.StandardDeck())
+	engine := NewEngine(bindRules{}, []*player.Player{p1, p2}, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
 	bound := Bind(engine, "1")
@@ -54,7 +54,7 @@ func TestBoundEngine_SubmitRequiresBoundPlayer(t *testing.T) {
 
 	p1 := &player.Player{ID: "1"}
 	p2 := &player.Player{ID: "2"}
-	engine := NewGameEngine(bindRules{}, []*player.Player{p1, p2}, deck.StandardDeck())
+	engine := NewEngine(bindRules{}, []*player.Player{p1, p2}, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
 	current := engine.CurrentPlayerID()

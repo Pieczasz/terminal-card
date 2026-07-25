@@ -489,7 +489,7 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	}
 
 	players := append([]*player.Player{l.leader}, l.guests...)
-	engine := game.NewGameEngine(rules, players, rules.InitialDeck())
+	engine := game.NewEngine(rules, players, rules.InitialDeck())
 
 	if err := engine.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start game engine: %w", err)

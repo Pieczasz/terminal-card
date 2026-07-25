@@ -29,6 +29,7 @@ CREATE TABLE games (
     name TEXT
 );
 CREATE INDEX idx_games_deleted_at ON games(deleted_at);
+CREATE UNIQUE INDEX idx_games_name ON games(name);
 
 CREATE TABLE rankings (
     user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,

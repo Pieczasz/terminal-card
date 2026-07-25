@@ -14,11 +14,13 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
+	"github.com/pires/go-proxyproto"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"golang.org/x/net/netutil"
 )
@@ -46,8 +48,15 @@ func main() {
 		}
 	}()
 
-	otelLogger := otelslog.NewLogger("terminal-card")
-	slog.SetDefault(otelLogger)
+	slog.SetDefault(slog.New(observability.NewFanoutHandler(
+		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		otelslog.NewHandler("terminal-card"),
+	)))
+
+	if err := db.Migrate(cfg); err != nil {
+		slog.Error("failed to run database migrations", "error", err)
+		os.Exit(1)
+	}
 
 	database, err := db.Connect(cfg)
 	if err != nil {
@@ -72,9 +81,13 @@ func main() {
 	gameRegistry.RegisterModule(game.Module{
 		Name:    "Crazy Eights",
 		Slug:    "crazy_eights",
-		Factory: func() game.Rules { return &crazyeight.CrazyEightsRules{} },
+		Factory: func() game.Rules { return &crazyeight.Rules{} },
 	})
-	// Poker is WIP and intentionally not registered for v0.1.
+	gameRegistry.RegisterModule(game.Module{
+		Name:    "Poker",
+		Slug:    "poker",
+		Factory: func() game.Rules { return &poker.Rules{} },
+	})
 
 	deps := ssh.ServerDependencies{
 		Config:          cfg,
@@ -98,6 +111,13 @@ func main() {
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 
+	// nginx prepends a PROXY protocol header so RemoteAddr is the real client
+	// IP (per-IP rate limiting, logs, traces) instead of the proxy's.
+	// ponytail: default policy trusts the header on any connection, which is
+	// safe only because the backend port is reachable solely via the trusted
+	// proxy; add a Policy if the port is ever exposed directly.
+	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
@@ -107,7 +127,7 @@ func main() {
 		"version", cfg.ServiceVersion,
 	)
 	go func() {
-		if err := server.Serve(limitListener); err != nil {
+		if err := server.Serve(proxyListener); err != nil {
 			slog.Error("server: starting ssh server error", "error", err)
 		}
 	}()

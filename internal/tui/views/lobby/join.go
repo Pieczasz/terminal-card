@@ -88,7 +88,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		} else {
 			switch msg.String() {
-			case "esc":
+			case "esc", "q":
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			case "n":
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
@@ -140,10 +140,14 @@ func (m joinModel) View() tea.View {
 	if len(lobbies) == 0 {
 		publicLobbiesStr.WriteString("No public lobbies available right now.\n")
 	} else {
-		for i, l := range lobbies {
-			if i >= 10 {
-				break // TODO: primitive pagination / limit to 10 for now
-			}
+		const windowSize = 10
+		start := 0
+		if m.cursor >= windowSize {
+			start = m.cursor - windowSize + 1
+		}
+		end := min(start+windowSize, len(lobbies))
+		for i := start; i < end; i++ {
+			l := lobbies[i]
 			cursor := "  "
 			if !m.writingCode && m.cursor == i {
 				cursor = "> "
