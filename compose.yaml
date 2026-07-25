@@ -91,6 +91,8 @@ services:
       - "127.0.0.1:4318:4318"
     depends_on:
       - loki
+      - tempo
+      - prometheus
 
   loki:
     image: grafana/loki:3.4.2
@@ -99,11 +101,38 @@ services:
     ports:
       - "127.0.0.1:3100:3100"
 
+  tempo:
+    image: grafana/tempo:2.7.1
+    profiles: ["observability"]
+    command: -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ./internal/config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:3200:3200"
+    expose:
+      - 4317
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: ["observability"]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --web.enable-remote-write-receiver
+      - --storage.tsdb.retention.time=7d
+    volumes:
+      - ./internal/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+
   grafana:
     image: grafana/grafana:11.5.2
     profiles: ["observability"]
     volumes:
       - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./internal/config/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
@@ -112,7 +141,11 @@ services:
       - "127.0.0.1:3000:3000"
     depends_on:
       - loki
+      - tempo
+      - prometheus
 
 volumes:
   db-data:
   ssh-keys:
+  tempo-data:
+  prometheus-data:
