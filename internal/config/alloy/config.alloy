@@ -1,5 +1,5 @@
 logging {
-  level = "info"
+  level  = "info"
   format = "logfmt"
 }
 
@@ -13,6 +13,8 @@ otelcol.receiver.otlp "default" {
 
   output {
     logs    = [otelcol.exporter.loki.default.input]
+    traces  = [otelcol.exporter.otlp.tempo.input]
+    metrics = [otelcol.exporter.prometheus.default.input]
   }
 }
 
@@ -23,5 +25,36 @@ otelcol.exporter.loki "default" {
 loki.write "default" {
   endpoint {
     url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.default.receiver]
+}
+
+// Reads Alloy's own /proc and /sys. On a Linux server (shared kernel) this
+// reports real host CPU/memory/network/load; filesystem metrics are the
+// container's view. Bind-mount the host and set *fs_path for full host disk.
+prometheus.exporter.unix "host" {
+}
+
+prometheus.scrape "host" {
+  targets         = prometheus.exporter.unix.host.targets
+  forward_to      = [prometheus.remote_write.default.receiver]
+  scrape_interval = "15s"
+}
+
+prometheus.remote_write "default" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
   }
 }
