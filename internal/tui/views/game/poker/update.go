@@ -19,6 +19,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case gameMsg:
+		m.lastErr = nil
 		return m.syncState(), listenForEvents(m.events)
 	}
 	return m, nil
@@ -110,11 +111,13 @@ func (m Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	}
 	if err := m.bound.Submit(action); err != nil {
 		m.lastErr = err
-	} else {
-		m.lastErr = nil
-		m.raising = false
+		return m, nil
 	}
-	return m, nil
+	// Re-sync immediately so the turn indicator and actions reflect the applied
+	// move without waiting for the broadcast event to round-trip.
+	m.lastErr = nil
+	m.raising = false
+	return m.syncState(), nil
 }
 
 func (m Model) unsubscribe() Model {
