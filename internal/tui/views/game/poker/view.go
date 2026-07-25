@@ -213,10 +213,10 @@ func (m Model) renderBoard(compact bool) string {
 }
 
 func renderEmptySlot() string {
-	inner := dimStyle.Render(lg.Place(7, 5, lg.Center, lg.Center, "·"))
+	inner := lg.Place(7, 5, lg.Center, lg.Center, "")
 	return lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("#444444")).
+		BorderForeground(lg.Color("#8A8A8A")).
 		Padding(0, 1).
 		MarginTop(1).
 		Render(inner)
