@@ -20,6 +20,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
+	"github.com/pires/go-proxyproto"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"golang.org/x/net/netutil"
 )
@@ -110,6 +111,13 @@ func main() {
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 
+	// nginx prepends a PROXY protocol header so RemoteAddr is the real client
+	// IP (per-IP rate limiting, logs, traces) instead of the proxy's.
+	// ponytail: default policy trusts the header on any connection, which is
+	// safe only because the backend port is reachable solely via the trusted
+	// proxy; add a Policy if the port is ever exposed directly.
+	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
 
@@ -119,7 +127,7 @@ func main() {
 		"version", cfg.ServiceVersion,
 	)
 	go func() {
-		if err := server.Serve(limitListener); err != nil {
+		if err := server.Serve(proxyListener); err != nil {
 			slog.Error("server: starting ssh server error", "error", err)
 		}
 	}()
