@@ -26,7 +26,10 @@ func NewEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine
 	return &Engine{
 		state:       NewState(rules, players, cards),
 		turnManager: NewTurnManager(len(players)),
-		broadcaster: broadcaster.New[Event](len(players)),
+		// Headroom above the player count for non-player subscribers (the lobby's
+		// ranked-finalize watcher) and brief reconnect overlap; too small a cap
+		// hands a closed channel to a real player, freezing their view.
+		broadcaster: broadcaster.New[Event](len(players) + 8),
 	}
 }
 
