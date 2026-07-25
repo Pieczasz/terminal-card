@@ -47,8 +47,10 @@ func main() {
 		}
 	}()
 
-	otelLogger := otelslog.NewLogger("terminal-card")
-	slog.SetDefault(otelLogger)
+	slog.SetDefault(slog.New(observability.NewFanoutHandler(
+		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		otelslog.NewHandler("terminal-card"),
+	)))
 
 	if err := db.Migrate(cfg); err != nil {
 		slog.Error("failed to run database migrations", "error", err)
