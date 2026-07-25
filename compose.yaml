@@ -77,11 +77,12 @@ services:
     depends_on:
       - backend
 
-  # Observability stack is for local/dev monitoring only.
-  # Disable anonymous Grafana admin before exposing these ports publicly.
+  # Observability stack (Alloy → Loki/Tempo/Prometheus + Grafana), on by default.
+  # Grafana/Prometheus/Tempo bind to 127.0.0.1 only (reach them via SSH tunnel);
+  # Grafana uses anonymous admin — keep those ports off the public interface.
   alloy:
     image: grafana/alloy:v1.8.3
-    profiles: ["observability"]
+    restart: unless-stopped
     volumes:
       - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
     command:
@@ -98,14 +99,14 @@ services:
 
   loki:
     image: grafana/loki:3.4.2
-    profiles: ["observability"]
+    restart: unless-stopped
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "127.0.0.1:3100:3100"
 
   tempo:
     image: grafana/tempo:2.7.1
-    profiles: ["observability"]
+    restart: unless-stopped
     command: -config.file=/etc/tempo/tempo.yaml
     volumes:
       - ./internal/config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
@@ -117,7 +118,7 @@ services:
 
   prometheus:
     image: prom/prometheus:v3.1.0
-    profiles: ["observability"]
+    restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver
@@ -130,7 +131,7 @@ services:
 
   grafana:
     image: grafana/grafana:11.5.2
-    profiles: ["observability"]
+    restart: unless-stopped
     volumes:
       - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
