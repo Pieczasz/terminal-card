@@ -19,12 +19,17 @@ RUN --mount=type=cache,target=/go/pkg/mod/cache \
 
 FROM alpine:3.22 AS certs
 RUN apk add --no-cache ca-certificates tzdata \
-    && adduser -D -u 65532 -H -s /sbin/nologin nonroot
+    && adduser -D -u 65532 -H -s /sbin/nologin nonroot \
+    && mkdir -p /data/ssh \
+    && chown -R 65532:65532 /data
 
 FROM scratch
 COPY --from=certs /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=certs /usr/share/zoneinfo /usr/share/zoneinfo
 COPY --from=certs /etc/passwd /etc/passwd
+# Ship /data/ssh owned by the non-root user so a fresh named volume inherits
+# that ownership; otherwise the mount is root-owned and keygen cannot write it.
+COPY --from=certs --chown=65532:65532 /data /data
 COPY --from=builder /code/bin/backend /usr/local/bin/backend
 USER nonroot
 CMD ["/usr/local/bin/backend"]
