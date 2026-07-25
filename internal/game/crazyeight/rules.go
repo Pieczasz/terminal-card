@@ -105,9 +105,8 @@ func (r *Rules) PreActionCondition(state *game.State, action game.Action) error 
 		return errors.New("card doesn't match top discard")
 
 	case ActionDrawCard:
-		if state.Deck.IsEmpty() && state.Discard.Size() <= 1 {
-			return errors.New("no cards left to draw")
-		}
+		// Always legal: with cards available it draws, otherwise it is a forced
+		// pass so an exhausted board can never soft-lock the turn loop.
 		return nil
 
 	case ActionPickSuit:
@@ -147,6 +146,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 		} else if action.Suit != deck.NoSuit {
 			extra.CurrentSuit = action.Suit
 		}
+		extra.Passes = 0
 
 	case ActionDrawCard:
 		if state.Deck.IsEmpty() {
@@ -154,9 +154,11 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 		}
 		drawn, ok := state.Deck.Draw()
 		if !ok {
+			extra.Passes++ // stock and discard exhausted: this turn is a forced pass
 			return
 		}
 		p.Cards = append(p.Cards, drawn)
+		extra.Passes = 0
 	}
 }
 
@@ -183,8 +185,29 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 			return true
 		}
 	}
+	// Every player passed in succession: the board is exhausted with no legal
+	// move, so the hand is deadlocked and ends (GetStandings ranks by fewest cards).
+	if extra, ok := state.Extra.(*State); ok && len(state.Players) > 0 && extra.Passes >= len(state.Players) {
+		return true
+	}
 	return false
 }
+
+// OnPlayerLeave returns the departing player's cards to the stock so the deck
+// stays whole; the engine removes the player afterward.
+func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
+	for _, p := range state.Players {
+		if p.ID == playerID {
+			state.Deck.AddCard(p.Cards...)
+			p.Cards = nil
+			_ = state.Deck.Shuffle()
+			return
+		}
+	}
+}
+
+// AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
+func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
 func (r *Rules) GetStandings(state *game.State) []*player.Player {
 	standings := make([]*player.Player, len(state.Players))
