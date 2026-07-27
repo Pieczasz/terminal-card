@@ -38,13 +38,9 @@ ssh -p 22 yourname@localhost
 
 The first connection with a given public key registers that username. Later connections authenticate by key fingerprint.
 
-### Optional observability
+### Observability
 
-```bash
-docker compose --profile observability up -d
-```
-
-Grafana is bound to `127.0.0.1:3000` with anonymous admin enabled — **dev only**. Do not expose it on a public host without locking auth down.
+The LGTM stack (Alloy → Loki/Tempo/Prometheus + Grafana) starts by default with `docker compose up`. Grafana is bound to `127.0.0.1:3000` with anonymous admin — reach it via an SSH tunnel (`ssh -L 3000:localhost:3000 your-host`) and keep ports 3000/9090/3200/3100 off the public interface. The monitoring services carry `mem_limit`s so they can't OOM the host.
 
 ## Self-hosting (Hetzner / AWS VM)
 
@@ -55,7 +51,10 @@ Grafana is bound to `127.0.0.1:3000` with anonymous admin enabled — **dev only
 
 Notes:
 
+- **Port 22 collides with the host's own `sshd`.** Move the admin daemon to another port (e.g. `Port 2222` in `/etc/ssh/sshd_config`, then reconnect there) *before* `docker compose up`, or map a different host port to the proxy. The game owns 22.
 - Host keys live in the `ssh-keys` volume — keep that volume across redeploys so clients do not see host-key changes.
+- **Back up Postgres.** `db-data` holds all ELO/match history. Run `./scripts/backup.sh` on a cron (see the script header for the line and restore command).
+- The full stack (game + DB + LGTM) wants **>=4 GB RAM**.
 - Compose sets `DB_SSLMODE=disable` for the internal Postgres network. For an external managed DB, set `DB_SSLMODE=require` and supply CA-trusted TLS.
 - See [SECURITY.md](SECURITY.md) for the auth model and hardening tips.
 
