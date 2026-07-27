@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
@@ -20,12 +20,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case gameMsg:
 		m.lastErr = nil
-		return m.syncState(), listenForEvents(m.events)
+		m.syncState()
+		return m, listenForEvents(m.events)
 	}
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m.handleEscape()
@@ -92,7 +93,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) beginRaise() (tea.Model, tea.Cmd) {
+func (m *Model) beginRaise() (tea.Model, tea.Cmd) {
 	if !m.canRaise() {
 		return m, nil
 	}
@@ -105,7 +106,7 @@ func (m Model) beginRaise() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) submit(action game.Action) (tea.Model, tea.Cmd) {
+func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	if m.bound == nil || !m.baseState.MyTurn {
 		return m, nil
 	}
@@ -117,20 +118,20 @@ func (m Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	// move without waiting for the broadcast event to round-trip.
 	m.lastErr = nil
 	m.raising = false
-	return m.syncState(), nil
+	m.syncState()
+	return m, nil
 }
 
-func (m Model) unsubscribe() Model {
+func (m *Model) unsubscribe() {
 	if m.bound != nil && m.events != nil {
 		if b := m.bound.Broadcaster(); b != nil {
 			b.Unsubscribe(m.events)
 		}
 		m.events = nil
 	}
-	return m
 }
 
-func (m Model) handleEscape() (tea.Model, tea.Cmd) {
+func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.raising {
 		m.raising = false
 		return m, nil
@@ -140,20 +141,20 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	}
 	p := gameview.SessionPlayer(m.global)
 	if p == nil {
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 	}
 	m.global.LobbyManager.LeaveLobby(p)
-	m = m.unsubscribe()
+	m.unsubscribe()
 	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 }
 
-func (m Model) returnToLobby() (tea.Model, tea.Cmd) {
+func (m *Model) returnToLobby() (tea.Model, tea.Cmd) {
 	p := gameview.SessionPlayer(m.global)
 	var l any
 	if p != nil {
 		l = m.global.LobbyManager.FindLobbyByPlayer(p)
 	}
-	m = m.unsubscribe()
+	m.unsubscribe()
 	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
 }

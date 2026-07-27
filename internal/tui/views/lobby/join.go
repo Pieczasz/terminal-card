@@ -29,7 +29,7 @@ func NewJoin(global router.GlobalContext) tea.Model {
 	ti.CharLimit = 8
 	ti.SetWidth(20)
 
-	return joinModel{
+	return &joinModel{
 		global:      global,
 		textInput:   ti,
 		cursor:      0,
@@ -37,11 +37,11 @@ func NewJoin(global router.GlobalContext) tea.Model {
 	}
 }
 
-func (m joinModel) Init() tea.Cmd {
+func (m *joinModel) Init() tea.Cmd {
 	return textinput.Blink
 }
 
-func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
@@ -131,7 +131,7 @@ func (m joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m joinModel) View() tea.View {
+func (m *joinModel) View() tea.View {
 	p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 	lobbies := m.global.LobbyManager.PublicLobbies(p)
 
