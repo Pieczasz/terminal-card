@@ -30,7 +30,7 @@ docker compose up -d --build
 
 Migrations run automatically via the `migrate` service before the backend starts. SSH host keys persist in the `ssh-keys` volume.
 
-Connect (nginx proxies port 22 → the backend):
+Connect (nginx proxies port 22 -> the backend):
 
 ```bash
 ssh -p 22 yourname@localhost
@@ -40,12 +40,12 @@ The first connection with a given public key registers that username. Later conn
 
 ### Observability
 
-The LGTM stack (Alloy → Loki/Tempo/Prometheus + Grafana) starts by default with `docker compose up`. Grafana is bound to `127.0.0.1:3000` with anonymous admin — reach it via an SSH tunnel (`ssh -L 3000:localhost:3000 your-host`) and keep ports 3000/9090/3200/3100 off the public interface. The monitoring services carry `mem_limit`s so they can't OOM the host.
+The LGTM stack (Alloy -> Loki/Tempo/Prometheus + Grafana) starts by default with `docker compose up`. Grafana is bound to `127.0.0.1:3000` with anonymous admin — reach it via an SSH tunnel (`ssh -L 3000:localhost:3000 your-host`) and keep ports 3000/9090/3200/3100 off the public interface. The monitoring services carry `mem_limit`s so they can't OOM the host.
 
 ## Self-hosting (Hetzner / AWS VM)
 
 1. Provision a VM with Docker and open TCP **22** (or map another host port to the proxy).
-2. Clone the repo, copy `.env.example` → `.env`, set `DB_PASSWORD`, and set `ENV=production`.
+2. Clone the repo, copy `.env.example` -> `.env`, set `DB_PASSWORD`, and set `ENV=production`.
 3. Run `docker compose up -d --build`.
 4. Point DNS (optional) and connect: `ssh yourname@your-host`.
 
@@ -53,7 +53,7 @@ Notes:
 
 - **Port 22 collides with the host's own `sshd`.** Move the admin daemon to another port (e.g. `Port 2222` in `/etc/ssh/sshd_config`, then reconnect there) *before* `docker compose up`, or map a different host port to the proxy. The game owns 22.
 - Host keys live in the `ssh-keys` volume — keep that volume across redeploys so clients do not see host-key changes.
-- **Back up Postgres.** `db-data` holds all ELO/match history. Run `./scripts/backup.sh` on a cron (see the script header for the line and restore command).
+- **Back up Postgres.** `db-data` holds all ELO/match history. Install `zstd` (`apt-get install -y zstd`), then run `./scripts/backup.sh` on a cron (see the script header for the cron line and restore command).
 - The full stack (game + DB + LGTM) wants **>=4 GB RAM**.
 - Compose sets `DB_SSLMODE=disable` for the internal Postgres network. For an external managed DB, set `DB_SSLMODE=require` and supply CA-trusted TLS.
 - See [SECURITY.md](SECURITY.md) for the auth model and hardening tips.
@@ -84,7 +84,7 @@ Useful Make targets:
 ## Architecture
 
 ```text
-SSH client → nginx (optional) → Wish SSH server → Bubble Tea TUI
+SSH client -> nginx (optional) -> Wish SSH server -> Bubble Tea TUI
                                       ↓
                               game.Registry / Engine
                                       ↓
