@@ -13,17 +13,6 @@ func StandardDeck() []Card {
 	return cards
 }
 
-func StandardDeckWithNJokers(numberOfJokers int) []Card {
-	cards := StandardDeck()
-	for range numberOfJokers {
-		cards = append(cards, Card{
-			Suit: NoSuit,
-			Rank: Joker,
-		})
-	}
-	return cards
-}
-
 func MultipleStandardDecks(numberOfDecks int) []Card {
 	cards := make([]Card, 0, 52*numberOfDecks)
 	for range numberOfDecks {
