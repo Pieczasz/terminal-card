@@ -111,7 +111,7 @@ func TestEngine_SubmitAction(t *testing.T) {
 	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
 	m := setupMockRules()
 	engine := NewEngine(m, players, deck.StandardDeck())
-	engine.Start()
+	require.NoError(t, engine.Start())
 
 	currentPlayerID := engine.CurrentPlayerID()
 	otherPlayerID := "p2"
@@ -208,7 +208,7 @@ func TestEngine_RemovePlayer(t *testing.T) {
 	m := setupMockRules()
 	m.On("CheckWinCondition", mock.Anything).Return(false)
 	engine := NewEngine(m, players, deck.StandardDeck())
-	engine.Start()
+	require.NoError(t, engine.Start())
 
 	engine.RemovePlayer("p2")
 
