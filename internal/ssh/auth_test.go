@@ -53,15 +53,15 @@ func (m *MockUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 	return args.Get(0).(*db.User), args.Get(1).(*db.PublicKey), args.Error(2)
 }
 
-func (m *MockUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]db.Ranking, error) {
+func (m *MockUserRepository) GetBestPlayers(_ context.Context, _ int) ([]db.Ranking, error) {
 	return nil, nil
 }
-func (m *MockUserRepository) GetUserProfile(ctx context.Context, userID uint) (*db.User, error) {
+func (m *MockUserRepository) GetUserProfile(_ context.Context, _ uint) (*db.User, error) {
 	return nil, nil
 }
-func (m *MockUserRepository) UpdateUserActivity(ctx context.Context, user *db.User, key *db.PublicKey) {
+func (m *MockUserRepository) UpdateUserActivity(_ context.Context, _ *db.User, _ *db.PublicKey) {
 }
-func (m *MockUserRepository) GetUserMatchHistory(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error) {
+func (m *MockUserRepository) GetUserMatchHistory(_ context.Context, _ uint, _ int) ([]db.MatchParticipant, error) {
 	return nil, nil
 }
 

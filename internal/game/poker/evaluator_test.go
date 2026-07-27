@@ -346,7 +346,7 @@ func TestEvaluateHand_EdgeCases(t *testing.T) {
 
 	t.Run("trips plus trips becomes full house", func(t *testing.T) {
 		t.Parallel()
-		// 7 cards: AAA KKK 2 → full house Aces full of Kings
+		// 7 cards: AAA KKK 2 -> full house Aces full of Kings
 		cards := []deck.Card{
 			card(deck.Ace, deck.Spades), card(deck.Ace, deck.Hearts), card(deck.Ace, deck.Diamonds),
 			card(deck.King, deck.Clubs), card(deck.King, deck.Spades), card(deck.King, deck.Hearts),
@@ -359,7 +359,7 @@ func TestEvaluateHand_EdgeCases(t *testing.T) {
 func TestEvaluateHand_OrderingMonotonicByCategory(t *testing.T) {
 	t.Parallel()
 
-	// One representative hand per category, weakest → strongest category order.
+	// One representative hand per category, weakest -> strongest category order.
 	samples := [][]deck.Card{
 		{ // HighCard
 			card(deck.King, deck.Spades), card(deck.Queen, deck.Hearts),

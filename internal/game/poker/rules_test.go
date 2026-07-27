@@ -160,7 +160,7 @@ func TestApplyBetIncrease_IncompleteRaiseRule(t *testing.T) {
 			extra.ActedThisRound[id] = true
 			extra.PlayerBets[id] = 100
 		}
-		// p1 shoves for a total of 150 → raiseSize 50 < MinRaise 100.
+		// p1 shoves for a total of 150 -> raiseSize 50 < MinRaise 100.
 		extra.PlayerBets["p1"] = 0
 		extra.PlayerChips["p1"] = 150
 		state.CurrentTurn = 0
@@ -192,7 +192,7 @@ func TestApplyBetIncrease_IncompleteRaiseRule(t *testing.T) {
 		extra.PlayerChips["p1"] = 1000
 		state.CurrentTurn = 0
 
-		// Raise to 250 → raiseSize 150 >= MinRaise 100, a full raise.
+		// Raise to 250 -> raiseSize 150 >= MinRaise 100, a full raise.
 		(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 250})
 
 		assert.Equal(t, uint(250), extra.CurrentBet)
