@@ -23,7 +23,7 @@ import (
 // ViewFactory builds a TUI model for a started game engine.
 type ViewFactory func(g router.GlobalContext, e *game.Engine) tea.Model
 
-// gameViews maps module slug → TUI factory. Add an entry when registering a new Module.
+// gameViews maps module slug -> TUI factory. Add an entry when registering a new Module.
 var gameViews = map[string]ViewFactory{
 	"crazy_eights": crazyeight.New,
 	"poker":        poker.New,

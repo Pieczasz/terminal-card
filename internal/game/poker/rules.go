@@ -18,9 +18,6 @@ const (
 // Rules implements No-Limit Texas Hold'em (one hand per match).
 type Rules struct{}
 
-// PokerRules is a compatibility alias for Rules.
-type PokerRules = Rules
-
 var (
 	_ game.Rules              = (*Rules)(nil)
 	_ game.PlayerLeaveHandler = (*Rules)(nil)
@@ -435,8 +432,7 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 	if extra.HandComplete {
 		return nil
 	}
-	first := firstToActPostflop(state, extra)
-	state.OverrideNextTurn = &first
+	state.OverrideNextTurn = new(firstToActPostflop(state, extra))
 	return nil
 }
 

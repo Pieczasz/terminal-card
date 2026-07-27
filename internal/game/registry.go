@@ -10,7 +10,7 @@ import (
 // Module describes a playable card game plugin: display name, route slug, and rules factory.
 type Module struct {
 	Name    string
-	Slug    string // e.g. "crazy_eights" → route "game_crazy_eights"
+	Slug    string // e.g. "crazy_eights" -> route "game_crazy_eights"
 	Factory func() Rules
 }
 

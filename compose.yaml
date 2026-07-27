@@ -89,11 +89,7 @@ services:
     depends_on:
       - backend
 
-  # Observability stack (Alloy → Loki/Tempo/Prometheus + Grafana), on by default.
-  # Grafana/Prometheus/Tempo bind to 127.0.0.1 only (reach them via SSH tunnel);
-  # Grafana uses anonymous admin — keep those ports off the public interface.
-  # mem_limit caps the memory-hungry monitoring stack so it can't OOM the host
-  # (the game and DB are intentionally unlimited); raise if a service is killed.
+  # Observability stack (Alloy -> Loki/Tempo/Prometheus + Grafana).
   alloy:
     image: grafana/alloy:v1.8.3
     restart: unless-stopped
