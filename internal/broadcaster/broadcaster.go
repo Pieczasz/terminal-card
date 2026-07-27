@@ -14,8 +14,8 @@ type subscriber[T any] struct {
 	ch chan T
 }
 
-// This in-process broadcaster is intentional for the single-node deployment.
-// Horizontal scaling across servers would need a shared pub/sub (e.g. Watermill
+// Broadcaster is built for the single-node deployment.
+// Horizontal scaling across servers would need a shared pub/sub (e.g., Watermill
 // over Redis); revisit only if the app runs multi-node.
 type Broadcaster[T any] struct {
 	mu             sync.RWMutex

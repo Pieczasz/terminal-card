@@ -10,7 +10,7 @@ Terminal Card identifies players by **SSH public key fingerprint**:
 
 - `wish.WithPublicKeyAuth` accepts any public key (no allowlist by default).
 - The first successful connection with a new fingerprint registers the SSH username (subject to username validation).
-- Later connections reuse the same fingerprint → same account.
+- Later connections reuse the same fingerprint -> same account.
 - Fingerprints are stored with a **UNIQUE** constraint.
 
 Implications:
