@@ -1,6 +1,15 @@
+# Cap every container's json log so stdout can't fill the host disk.
+x-logging: &default-logging
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
 services:
   migrate:
     image: migrate/migrate:v4.18.3
+    <<: *default-logging
     volumes:
       - ./internal/db/migrations:/migrations:ro
     # migrate's scratch image has no shell, so the DSN must be passed as an arg.
@@ -18,6 +27,7 @@ services:
 
   backend:
     restart: unless-stopped
+    <<: *default-logging
     build:
       context: .
       dockerfile: cmd/server/Dockerfile
@@ -50,6 +60,7 @@ services:
   db:
     image: postgres:16-alpine
     restart: always
+    <<: *default-logging
     volumes:
       - db-data:/var/lib/postgresql/data
     environment:
@@ -67,6 +78,7 @@ services:
   proxy:
     image: nginx:1.27-alpine
     restart: unless-stopped
+    <<: *default-logging
     volumes:
       - type: bind
         source: ./internal/config/nginx.conf
@@ -80,9 +92,13 @@ services:
   # Observability stack (Alloy → Loki/Tempo/Prometheus + Grafana), on by default.
   # Grafana/Prometheus/Tempo bind to 127.0.0.1 only (reach them via SSH tunnel);
   # Grafana uses anonymous admin — keep those ports off the public interface.
+  # mem_limit caps the memory-hungry monitoring stack so it can't OOM the host
+  # (the game and DB are intentionally unlimited); raise if a service is killed.
   alloy:
     image: grafana/alloy:v1.8.3
     restart: unless-stopped
+    mem_limit: 256m
+    <<: *default-logging
     volumes:
       - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
     command:
@@ -100,6 +116,8 @@ services:
   loki:
     image: grafana/loki:3.4.2
     restart: unless-stopped
+    mem_limit: 512m
+    <<: *default-logging
     command: -config.file=/etc/loki/local-config.yaml
     ports:
       - "127.0.0.1:3100:3100"
@@ -107,6 +125,8 @@ services:
   tempo:
     image: grafana/tempo:2.7.1
     restart: unless-stopped
+    mem_limit: 512m
+    <<: *default-logging
     command: -config.file=/etc/tempo/tempo.yaml
     volumes:
       - ./internal/config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
@@ -119,6 +139,8 @@ services:
   prometheus:
     image: prom/prometheus:v3.1.0
     restart: unless-stopped
+    mem_limit: 512m
+    <<: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver
@@ -132,6 +154,8 @@ services:
   grafana:
     image: grafana/grafana:11.5.2
     restart: unless-stopped
+    mem_limit: 256m
+    <<: *default-logging
     volumes:
       - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
       - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
