@@ -14,7 +14,7 @@ Terminal Card is an SSH server for multiplayer card games. Built with Go and the
 - **Rich TUI** — Bubble Tea + Lip Gloss
 - **Crazy Eights & Poker (NLHE)** — up to 9 seats at Hold'em
 - **Persistent stats** — PostgreSQL users, matches, and ELO
-- **Observability** — OpenTelemetry logs (optional Grafana/Loki/Alloy stack)
+- **Observability** — OpenTelemetry logs, metrics & traces into a built-in Grafana + Loki/Tempo/Prometheus stack
 - **Pluggable games** — register a `game.Module` + TUI view factory
 
 ## Quick start (Docker Compose)
@@ -109,7 +109,7 @@ SSH client → nginx (optional) → Wish SSH server → Bubble Tea TUI
 | `DB_MAX_OPEN_CONNS` | `25` | Postgres pool size (independent of SSH max) |
 | `RATE_LIMIT_CONNECTIONS` | `5` | Per-IP SSH connection budget |
 | `RATE_LIMIT_WINDOW_MS` | `1000` | Sliding window |
-| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP logs |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | OTLP logs, metrics, traces |
 | `OTEL_EXPORTER_OTLP_INSECURE` | `true` in dev | Set `false` for TLS |
 | `SERVICE_VERSION` | `0.1.0` | Reported in OTel resource |
 
