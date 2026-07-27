@@ -63,7 +63,7 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 		isPrivate = activeLobby.IsPrivate()
 		maxPlayers = activeLobby.MaxPlayers()
 	}
-	return model{
+	return &model{
 		global:       global,
 		currentLobby: activeLobby,
 		lobbyChan:    ch,
@@ -75,12 +75,12 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 	}
 }
 
-func (m model) Init() tea.Cmd {
+func (m *model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
 // Elo is retrieved from preloaded Rankings, which is updated whenever a game ends.
-func (m model) getElo(p *player.Player) uint32 {
+func (m *model) getElo(p *player.Player) uint32 {
 	if p == nil || p.DatabaseUser == nil {
 		return elo.ToUint32(elo.DefaultRating)
 	}
@@ -93,7 +93,7 @@ func (m model) getElo(p *player.Player) uint32 {
 	return elo.ToUint32(elo.DefaultRating)
 }
 
-func (m model) unsubscribe() model {
+func (m *model) unsubscribe() {
 	if m.currentLobby != nil && m.lobbyChan != nil {
 		playerID := ""
 		if m.global.User != nil {
@@ -102,10 +102,9 @@ func (m model) unsubscribe() model {
 		m.currentLobby.Unsubscribe(playerID, m.lobbyChan)
 		m.lobbyChan = nil
 	}
-	return m
 }
 
-func (m model) gamePlayerBounds() (minPlayers, maxPlayers int) {
+func (m *model) gamePlayerBounds() (minPlayers, maxPlayers int) {
 	minPlayers, maxPlayers = 2, 6
 	if m.global.GameRegistry == nil || m.currentLobby == nil {
 		return minPlayers, maxPlayers
@@ -117,7 +116,7 @@ func (m model) gamePlayerBounds() (minPlayers, maxPlayers int) {
 	return rules.MinPlayers(), rules.MaxPlayers()
 }
 
-func (m model) selfPlayer() *player.Player {
+func (m *model) selfPlayer() *player.Player {
 	return &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
 }
 
@@ -128,7 +127,7 @@ const (
 	cursorFirstGuest
 )
 
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.currentLobby == nil {
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 	}
@@ -145,7 +144,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.showLeaveConfirm {
 		return m.handleLeaveConfirm(msg.String())
 	}
@@ -158,16 +157,16 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.showLeaveConfirm = true
 		return m, nil
 	case "n":
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
 	case "f":
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
 	case "p":
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
 	case "t":
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
 	case "r":
 		if err := m.currentLobby.ToggleReady(self, m.global.GameRegistry); err != nil {
@@ -188,11 +187,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case "left", "h":
 		if isLeader {
-			m = m.adjustSetting(self, -1)
+			m.adjustSetting(self, -1)
 		}
 	case "right", "l":
 		if isLeader {
-			m = m.adjustSetting(self, +1)
+			m.adjustSetting(self, +1)
 		}
 	case "enter":
 		if isLeader && m.cursor >= cursorFirstGuest {
@@ -208,11 +207,11 @@ func (m model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
+func (m *model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y", "Y":
 		m.global.LobbyManager.LeaveLobby(m.selfPlayer())
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 	case "n", "N", "esc":
 		m.showLeaveConfirm = false
@@ -220,16 +219,16 @@ func (m model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m model) adjustSetting(self *player.Player, delta int) model {
+func (m *model) adjustSetting(self *player.Player, delta int) {
 	switch m.cursor {
 	case cursorMaxPlayers:
 		rulesMin, rulesMax := m.gamePlayerBounds()
 		next := m.maxPlayers + delta
 		if delta < 0 && (next < rulesMin || next < m.currentLobby.CurrentPlayers()) {
-			return m
+			return
 		}
 		if delta > 0 && next > rulesMax {
-			return m
+			return
 		}
 		m.maxPlayers = next
 		if err := m.currentLobby.SetMaxPlayers(self, m.maxPlayers, rulesMin, rulesMax); err != nil {
@@ -242,14 +241,17 @@ func (m model) adjustSetting(self *player.Player, delta int) model {
 			m.isPrivate = !m.isPrivate
 			slog.Error("failed to set privacy", "error", err)
 		}
+	case cursorGame, cursorFirstGuest:
+		// Game selection is fixed once a lobby exists; guest rows have no
+		// left/right adjustment. Both are intentional no-ops.
+	default:
 	}
-	return m
 }
 
-func (m model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
+func (m *model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case lobby.EventLobbyClosed:
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 	case lobby.EventGameStarted:
 		engine, ok := msg.Payload.(*game.Engine)
@@ -262,7 +264,7 @@ func (m model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 			slog.Error("no TUI route for game", "game", m.currentLobby.GameName(), "error", err)
 			return m, nil
 		}
-		m = m.unsubscribe()
+		m.unsubscribe()
 		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: routeName, Context: engine} }
 	case lobby.EventSettingsUpdated, lobby.EventPlayersUpdated:
 		self := m.selfPlayer()
@@ -275,7 +277,7 @@ func (m model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 				}
 			}
 			if !found {
-				m = m.unsubscribe()
+				m.unsubscribe()
 				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 			}
 		}
@@ -289,7 +291,7 @@ func (m model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 	return m, listenToLobbyBroadcaster(m.lobbyChan)
 }
 
-func (m model) View() tea.View {
+func (m *model) View() tea.View {
 	if m.currentLobby == nil {
 		return tea.NewView("No active lobby.")
 	}

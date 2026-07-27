@@ -26,12 +26,12 @@ func TestUpdate_Navigation(t *testing.T) {
 	// Right
 	msg := tea.KeyPressMsg{Code: rune("l"[0]), Text: "l"}
 	newM, _ := m.Update(msg)
-	assert.Equal(t, 1, newM.(Model).selectedCardIdx)
+	assert.Equal(t, 1, newM.(*Model).selectedCardIdx)
 
 	// Left
 	msg = tea.KeyPressMsg{Code: rune("h"[0]), Text: "h"}
 	newM, _ = newM.Update(msg)
-	assert.Equal(t, 0, newM.(Model).selectedCardIdx)
+	assert.Equal(t, 0, newM.(*Model).selectedCardIdx)
 }
 
 func TestUpdate_SuitPicking(t *testing.T) {
@@ -44,10 +44,10 @@ func TestUpdate_SuitPicking(t *testing.T) {
 	// Right (adds 1 to cursor)
 	msg := tea.KeyPressMsg{Code: rune("l"[0]), Text: "l"}
 	newM, _ := m.Update(msg)
-	assert.Equal(t, 1, newM.(Model).suitCursor)
+	assert.Equal(t, 1, newM.(*Model).suitCursor)
 
 	// Down (adds 2 to cursor)
 	msg = tea.KeyPressMsg{Code: rune("j"[0]), Text: "j"}
 	newM, _ = newM.Update(msg)
-	assert.Equal(t, 3, newM.(Model).suitCursor)
+	assert.Equal(t, 3, newM.(*Model).suitCursor)
 }

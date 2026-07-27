@@ -23,7 +23,7 @@ var (
 	badgeStyle    = lg.NewStyle().Foreground(lg.Color("#8FBC8F")).Bold(true)
 )
 
-func (m Model) View() tea.View {
+func (m *Model) View() tea.View {
 	if m.baseState.Phase == game.Finished || (m.handDone && len(m.board) > 0) {
 		return tea.NewView(m.renderHandOver())
 	}
@@ -46,12 +46,12 @@ func (m Model) View() tea.View {
 	))
 }
 
-func (m Model) renderHandOver() string {
+func (m *Model) renderHandOver() string {
 	compact := m.global.Height < 30
 	board := m.renderBoard(compact)
 	title := accentStyle.Render("HAND COMPLETE")
 	winner := accentStyle.Render(m.winnerName + " wins")
-	hint := dimStyle.Render("esc / enter → lobby")
+	hint := dimStyle.Render("esc / enter -> lobby")
 
 	var seatLines []string
 	for _, s := range m.seats {
@@ -80,7 +80,7 @@ type seatZones struct {
 }
 
 // seatZones places opponents clockwise from hero's left: top ≤4, left ≤2, right ≤2.
-func (m Model) seatZones() seatZones {
+func (m *Model) seatZones() seatZones {
 	heroIdx := -1
 	for i, s := range m.seats {
 		if s.IsHero {
@@ -136,7 +136,7 @@ func (m Model) seatZones() seatZones {
 	return z
 }
 
-func (m Model) renderTopRow(seats []Seat, compact bool) string {
+func (m *Model) renderTopRow(seats []Seat, compact bool) string {
 	if len(seats) == 0 {
 		return ""
 	}
@@ -151,7 +151,7 @@ func (m Model) renderTopRow(seats []Seat, compact bool) string {
 	return row
 }
 
-func (m Model) renderMiddle(height int, left, right []Seat, compact bool) string {
+func (m *Model) renderMiddle(height int, left, right []Seat, compact bool) string {
 	w1 := m.global.Width / 4
 	w3 := m.global.Width / 4
 	w2 := m.global.Width - w1 - w3
@@ -167,7 +167,7 @@ func (m Model) renderMiddle(height int, left, right []Seat, compact bool) string
 	)
 }
 
-func (m Model) renderSideStack(seats []Seat, compact bool, orientation gameview.Orientation) string {
+func (m *Model) renderSideStack(seats []Seat, compact bool, orientation gameview.Orientation) string {
 	if len(seats) == 0 {
 		return ""
 	}
@@ -178,7 +178,7 @@ func (m Model) renderSideStack(seats []Seat, compact bool, orientation gameview.
 	return lg.JoinVertical(lg.Center, parts...)
 }
 
-func (m Model) renderCenter(compact bool) string {
+func (m *Model) renderCenter(compact bool) string {
 	board := m.renderBoard(compact)
 	potLine := accentStyle.Render(fmt.Sprintf("POT %d", m.pot))
 	if m.sidePots > 1 {
@@ -194,7 +194,7 @@ func (m Model) renderCenter(compact bool) string {
 	return lg.JoinVertical(lg.Center, lines...)
 }
 
-func (m Model) renderBoard(compact bool) string {
+func (m *Model) renderBoard(compact bool) string {
 	slots := make([]string, 5)
 	for i := range 5 {
 		if i < len(m.board) {
@@ -232,7 +232,7 @@ func renderHoleBack() string {
 	return dimStyle.Render("[??]")
 }
 
-func (m Model) renderSeat(s Seat, compact bool, orientation gameview.Orientation) string {
+func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientation) string {
 	ns := nameStyle
 	if s.IsTurn {
 		ns = turnNameStyle
@@ -276,7 +276,7 @@ func seatBadges(s Seat) string {
 	return strings.Join(b, "/")
 }
 
-func (m Model) renderSeatCards(s Seat, compact bool, orientation gameview.Orientation) string {
+func (m *Model) renderSeatCards(s Seat, compact bool, orientation gameview.Orientation) string {
 	if len(s.Hole) == 2 {
 		if compact {
 			return lg.JoinHorizontal(lg.Center, renderMiniCard(s.Hole[0]), renderMiniCard(s.Hole[1]))
@@ -292,7 +292,7 @@ func (m Model) renderSeatCards(s Seat, compact bool, orientation gameview.Orient
 	return gameview.RenderCardBacks(2, orientation)
 }
 
-func (m Model) renderHero(compact bool) string {
+func (m *Model) renderHero(compact bool) string {
 	hero := m.heroSeat()
 	var seatBlock string
 	if hero != nil {
@@ -313,7 +313,7 @@ func (m Model) renderHero(compact bool) string {
 	return block
 }
 
-func (m Model) renderActionBar() string {
+func (m *Model) renderActionBar() string {
 	if m.raising {
 		return accentStyle.Render(fmt.Sprintf("RAISE TO %d  [[/h] down  []/l] up  enter confirm  esc cancel]", m.raiseAmount))
 	}
@@ -335,7 +335,7 @@ func (m Model) renderActionBar() string {
 	}
 	if len(opts) == 0 {
 		if m.handDone || m.baseState.Phase == game.Finished {
-			return metaStyle.Render("esc → lobby")
+			return metaStyle.Render("esc -> lobby")
 		}
 		return metaStyle.Render("waiting…")
 	}
@@ -355,7 +355,7 @@ func rankShort(r deck.Rank) string {
 	case deck.Ten:
 		return "T"
 	default:
-		return fmt.Sprintf("%d", int(r)+1) // Two=1 → "2"
+		return fmt.Sprintf("%d", int(r)+1) // Two=1 -> "2"
 	}
 }
 

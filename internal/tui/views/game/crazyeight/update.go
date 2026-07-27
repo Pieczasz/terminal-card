@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
@@ -21,7 +21,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case gameMsg:
-		return m.syncState(), listenForEvents(m.events)
+		m.syncState()
+		return m, listenForEvents(m.events)
 	case animation.FrameMsg:
 		m.selectionLift, m.selectionVel = m.selectionSpring.Update(m.selectionLift, m.selectionVel, 2.0)
 		return m, animation.Tick()
@@ -30,7 +31,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m.handleEscape()
@@ -52,17 +53,16 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) unsubscribe() Model {
+func (m *Model) unsubscribe() {
 	if m.bound != nil && m.events != nil {
 		if b := m.bound.Broadcaster(); b != nil {
 			b.Unsubscribe(m.events)
 		}
 		m.events = nil
 	}
-	return m
 }
 
-func (m Model) handleEscape() (tea.Model, tea.Cmd) {
+func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		m.pickingSuit = false
 		return m, nil
@@ -71,7 +71,7 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	p := gameview.SessionPlayer(m.global)
 
 	if m.baseState.Phase == game.Finished {
-		m = m.unsubscribe()
+		m.unsubscribe()
 		if p == nil {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		}
@@ -82,11 +82,11 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	if p != nil {
 		m.global.LobbyManager.LeaveLobby(p)
 	}
-	m = m.unsubscribe()
+	m.unsubscribe()
 	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 }
 
-func (m Model) handleLeft() (tea.Model, tea.Cmd) {
+func (m *Model) handleLeft() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		if m.suitCursor%2 != 0 {
 			m.suitCursor--
@@ -101,7 +101,7 @@ func (m Model) handleLeft() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleRight() (tea.Model, tea.Cmd) {
+func (m *Model) handleRight() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		if m.suitCursor%2 == 0 {
 			m.suitCursor++
@@ -116,7 +116,7 @@ func (m Model) handleRight() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleUp() (tea.Model, tea.Cmd) {
+func (m *Model) handleUp() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		if m.suitCursor >= 2 {
 			m.suitCursor -= 2
@@ -126,7 +126,7 @@ func (m Model) handleUp() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleDown() (tea.Model, tea.Cmd) {
+func (m *Model) handleDown() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		if m.suitCursor < 2 {
 			m.suitCursor += 2
@@ -136,7 +136,7 @@ func (m Model) handleDown() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
+func (m *Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 	if len(m.baseState.Hand) > 0 && !m.pickingSuit {
 		idx := int(key[0] - '0')
 		if idx < len(m.baseState.Hand) {
@@ -146,10 +146,10 @@ func (m Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleEnter() (tea.Model, tea.Cmd) {
+func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
 		p := gameview.SessionPlayer(m.global)
-		m = m.unsubscribe()
+		m.unsubscribe()
 		if p == nil {
 			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
 		}
@@ -186,7 +186,7 @@ func (m Model) handleEnter() (tea.Model, tea.Cmd) {
 // suitPickerOrder maps the picker grid position to a suit, matching view.go's order.
 var suitPickerOrder = []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs}
 
-func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
+func (m *Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 	if m.suitCursor < 0 || m.suitCursor >= len(suitPickerOrder) {
 		return m, nil
 	}
@@ -203,7 +203,7 @@ func (m Model) submitSuitPick(card deck.Card) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m Model) handleDraw() (tea.Model, tea.Cmd) {
+func (m *Model) handleDraw() (tea.Model, tea.Cmd) {
 	if m.baseState.MyTurn && !m.pickingSuit {
 		if err := m.bound.Submit(logic.ActionDrawCard{}); err != nil {
 			m.lastActionErr = err

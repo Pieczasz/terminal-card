@@ -29,7 +29,7 @@ func NewCreate(global router.GlobalContext) tea.Model {
 	if len(gameOptions) == 0 {
 		gameOptions = []string{"Crazy Eights"}
 	}
-	return createModel{
+	return &createModel{
 		global:      global,
 		cursor:      0, // 0: Game, 1: Players, 2: Visibility, 3: Create Button
 		isPrivate:   true,
@@ -39,11 +39,11 @@ func NewCreate(global router.GlobalContext) tea.Model {
 	}
 }
 
-func (m createModel) Init() tea.Cmd {
+func (m *createModel) Init() tea.Cmd {
 	return nil
 }
 
-func (m createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
@@ -139,7 +139,7 @@ func (m *createModel) clampMaxPlayers() {
 	}
 }
 
-func (m createModel) View() tea.View {
+func (m *createModel) View() tea.View {
 	renderOption := func(idx int, label, value string) string {
 		cursor := "  "
 		if m.cursor == idx {
