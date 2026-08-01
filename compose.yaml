@@ -1,4 +1,4 @@
-# Cap every container's json log so stdout can't fill the host disk.
+# Cap every container's JSON log so stdout can't fill the host disk.
 x-logging: &default-logging
   logging:
     driver: json-file
@@ -12,7 +12,7 @@ services:
     <<: *default-logging
     volumes:
       - ./internal/db/migrations:/migrations:ro
-    # migrate's scratch image has no shell, so the DSN must be passed as an arg.
+    # migrates scratch image has no shell, so the DSN must be passed as an arg.
     # Prefer an external migrate job / Docker secret in hardened deployments.
     command:
       [
@@ -25,6 +25,8 @@ services:
         condition: service_healthy
     restart: "on-failure"
 
+  # Wish SSH backend. Do NOT add a host port: mapping for 6969 - PROXY protocol
+  # trusts client headers from any peer; only the nginx proxy service may reach it.
   backend:
     restart: unless-stopped
     <<: *default-logging
@@ -40,7 +42,6 @@ services:
       - DB_USER=${DB_USER:-postgres}
       - DB_NAME=${DB_NAME:-terminal_card}
       - DB_PASSWORD=${DB_PASSWORD}
-      # Internal compose Postgres has no TLS. Do not copy this for external DBs.
       - DB_SSLMODE=disable
       - ALLOW_INSECURE_DB=true
       - SSH_KEY_PATH=/data/ssh/server
