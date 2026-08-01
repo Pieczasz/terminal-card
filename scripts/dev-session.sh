@@ -17,9 +17,9 @@ SESSION="${TC_SESSION:-terminal-card}"
 LAYOUT="${TC_LAYOUT:-windows}"
 
 PLAYERS=(
-	"pieczasz:$HOME/.ssh/id_localhost_1"
-	"secouser:$HOME/.ssh/id_ed25519"
-	"asdf:$HOME/.ssh/id_ed25519_second_user"
+	"one:$HOME/.ssh/id_localhost_1"
+	"two:$HOME/.ssh/id_ed25519"
+	"three:$HOME/.ssh/id_ed25519_second_user"
 )
 
 command -v tmux >/dev/null || {
