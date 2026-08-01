@@ -36,11 +36,6 @@ func ExpectedScore(ratingA, ratingB float64) float64 {
 	return 1.0 / (1.0 + math.Pow(10.0, (ratingB-ratingA)/400.0))
 }
 
-// UpdateRating calculates the new rating for a player given their actual score and expected score.
-func UpdateRating(rating, expectedScore, actualScore float64) float64 {
-	return ClampRating(rating + KFactor*(actualScore-expectedScore))
-}
-
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
 // https://www.tckerrigan.com/Misc/Multiplayer_Elo/
 // The player slice MUST be sorted by performance, from 1st place (index 0) to last place (index n-1).

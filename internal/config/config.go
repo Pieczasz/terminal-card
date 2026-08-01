@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -151,20 +150,6 @@ func (c *Config) Validate() error {
 func (c *Config) DSN() string {
 	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=UTC",
 		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort, c.DBSSLMode)
-}
-
-// MigrateDSN returns a postgres URL suitable for golang-migrate.
-func (c *Config) MigrateDSN() string {
-	u := &url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword(c.DBUser, c.DBPassword),
-		Host:   fmt.Sprintf("%s:%d", c.DBHost, c.DBPort),
-		Path:   "/" + c.DBName,
-	}
-	q := u.Query()
-	q.Set("sslmode", c.DBSSLMode)
-	u.RawQuery = q.Encode()
-	return u.String()
 }
 
 func detectVersion() string {

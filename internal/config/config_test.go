@@ -91,23 +91,8 @@ func TestDSN(t *testing.T) {
 		DBSSLMode:  "disable",
 	}
 	assert.Contains(t, cfg.DSN(), "host=localhost")
-	migrate := cfg.MigrateDSN()
-	assert.Contains(t, migrate, "postgres://postgres:secret@localhost:5432/terminal_card")
-	assert.Contains(t, migrate, "sslmode=disable")
-}
-
-func TestMigrateDSN_EncodesPassword(t *testing.T) {
-	cfg := &config.Config{
-		DBHost:     "db.example",
-		DBUser:     "user",
-		DBPassword: "p@ss:word/x",
-		DBName:     "terminal_card",
-		DBPort:     5432,
-		DBSSLMode:  "require",
-	}
-	migrate := cfg.MigrateDSN()
-	assert.Contains(t, migrate, "p%40ss%3Aword%2Fx")
-	assert.NotContains(t, migrate, "p@ss:word/x@")
+	assert.Contains(t, cfg.DSN(), "dbname=terminal_card")
+	assert.Contains(t, cfg.DSN(), "sslmode=disable")
 }
 
 func TestValidate_InsecureDBRemoteHost(t *testing.T) {

@@ -47,27 +47,6 @@ func TestExpectedScore(t *testing.T) {
 	}
 }
 
-func TestUpdateRating(t *testing.T) {
-	tests := []struct {
-		name          string
-		rating        float64
-		expectedScore float64
-		actualScore   float64
-		expected      float64
-	}{
-		{"Win against equal", 1500, 0.5, 1.0, 1516},
-		{"Loss against equal", 1500, 0.5, 0.0, 1484},
-		{"Max cap enforced", 3990, 0.1, 1.0, 4000},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := UpdateRating(tt.rating, tt.expectedScore, tt.actualScore)
-			assert.InDelta(t, tt.expected, got, 1e-4, "UpdateRating() mismatch")
-		})
-	}
-}
-
 func TestCalculate_UnequalRatings(t *testing.T) {
 	t.Parallel()
 

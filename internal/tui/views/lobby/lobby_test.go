@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -35,7 +36,7 @@ func testRegistry() *game.Registry {
 // leaderView returns the lobby view as seen by the lobby's leader.
 func leaderView(t *testing.T) (*model, *lobby.Lobby, *lobby.Manager) {
 	t.Helper()
-	manager := lobby.NewManager(nil)
+	manager := lobby.NewManagerWithContext(context.Background(), nil)
 	leaderUser := testUser(1, "alice")
 	leader := &player.Player{ID: "1", DatabaseUser: leaderUser}
 

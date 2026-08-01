@@ -82,7 +82,7 @@ func mockPlayer(id string, dbID uint) *player.Player {
 
 func TestManager_New(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 
 	l, err := m.New(leader, WithMaxPlayers(3), WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
@@ -105,7 +105,7 @@ func TestManager_New(t *testing.T) {
 
 func TestManager_JoinLobbyByCode(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest1 := mockPlayer("g1", 2)
 	guest2 := mockPlayer("g2", 3)
@@ -130,7 +130,7 @@ func TestManager_JoinLobbyByCode(t *testing.T) {
 
 func TestManager_LeaveLobby(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest1 := mockPlayer("g1", 2)
 	guest2 := mockPlayer("g2", 3)
@@ -156,7 +156,7 @@ func TestManager_LeaveLobby(t *testing.T) {
 
 func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 
@@ -191,7 +191,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 func TestLobby_SettersAndGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 
 	cardGame := &db.Game{Name: "CrazyEights"}
@@ -218,7 +218,7 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 func TestLobby_DefaultCasual(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
 	assert.NoError(t, err)
@@ -227,7 +227,7 @@ func TestLobby_DefaultCasual(t *testing.T) {
 
 func TestManager_PublicLobbies(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 
 	p1 := mockPlayer("p1", 1)
 	p2 := mockPlayer("p2", 2)
@@ -248,7 +248,7 @@ func TestManager_PublicLobbies(t *testing.T) {
 
 func TestLobby_BasicGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
 
 	cardGame := &db.Game{Name: "CrazyEights"}
@@ -277,7 +277,7 @@ func TestLobby_BasicGetters(t *testing.T) {
 func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
-	m := NewManager(mockRepo)
+	m := NewManagerWithContext(context.Background(), mockRepo)
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
@@ -333,7 +333,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 func TestManager_CodeCollisions(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 
 	// Pre-fill the manager with all possible codes if it were a smaller charset?
 	// The function retries 10 times. Let's just mock a collision by forcing lobbies map to contain a generated code.
@@ -345,7 +345,7 @@ func TestManager_CodeCollisions(t *testing.T) {
 
 func TestManager_PublicLobbiesCacheAndSorting(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 
 	p1 := mockPlayer("p1", 1)
 	p2 := mockPlayer("p2", 2)
@@ -369,7 +369,7 @@ func TestManager_PublicLobbiesCacheAndSorting(t *testing.T) {
 
 func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 
 	l, _ := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
@@ -389,7 +389,7 @@ func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
 
 func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 	guest3 := mockPlayer("p3", 3)
@@ -448,7 +448,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 
 func TestManager_RejectMidGameJoin(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 	late := mockPlayer("p3", 3)
@@ -477,7 +477,7 @@ func TestManager_RejectMidGameJoin(t *testing.T) {
 
 func TestManager_Kick(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 	guest2 := mockPlayer("p4", 4)
@@ -501,7 +501,7 @@ func TestManager_Kick(t *testing.T) {
 
 func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 	m.joinLimiter = ratelimit.NewSlidingWindowLimiter(2, time.Minute)
 
 	leader := mockPlayer("leader", 1)
@@ -533,7 +533,7 @@ func TestValidLobbyCode(t *testing.T) {
 
 func TestManager_PublicLobbies_Sorting(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 
 	p1 := mockPlayer("p1", 1) // average Elo = 1000
 	p1.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 1000}}

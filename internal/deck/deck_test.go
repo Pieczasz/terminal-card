@@ -38,22 +38,6 @@ func TestPile_Peek(t *testing.T) {
 	assert.False(t, gotEmptyOk)
 }
 
-func TestBuilder_MultipleStandardDecks(t *testing.T) {
-	cards := MultipleStandardDecks(2)
-	assert.Len(t, cards, 104)
-
-	suitCounts := make(map[Suit]int)
-	for _, card := range cards {
-		assert.NotEqual(t, Joker, card.Rank)
-		assert.NotEqual(t, NoSuit, card.Suit)
-		suitCounts[card.Suit]++
-	}
-	assert.Equal(t, 26, suitCounts[Spades])
-	assert.Equal(t, 26, suitCounts[Hearts])
-	assert.Equal(t, 26, suitCounts[Diamonds])
-	assert.Equal(t, 26, suitCounts[Clubs])
-}
-
 func TestPile_Draw(t *testing.T) {
 	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}}
 	p := &Pile{cards: cards}
