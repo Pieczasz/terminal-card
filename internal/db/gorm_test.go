@@ -52,7 +52,7 @@ func TestConnect_Success(t *testing.T) {
 		DBUser:         "testuser",
 		DBPassword:     "testpass",
 		DBName:         "testdb",
-		DBSslMode:      "disable",
+		DBSSLMode:      "disable",
 		MaxConnections: 5,
 		Env:            "production",
 	}
@@ -76,7 +76,7 @@ func TestConnect_Failure(t *testing.T) {
 		DBUser:         "user",
 		DBPassword:     "pass",
 		DBName:         "db",
-		DBSslMode:      "disable",
+		DBSSLMode:      "disable",
 		MaxConnections: 5,
 	}
 

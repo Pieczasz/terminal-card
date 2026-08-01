@@ -5,10 +5,10 @@ import "context"
 type UserRepository interface {
 	LoadUserByFingerprint(ctx context.Context, fingerprint string) (*User, *PublicKey, error)
 	RegisterUserWithKey(ctx context.Context, username, fingerprint string) (*User, *PublicKey, error)
-	GetBestPlayers(ctx context.Context, limit int) ([]Ranking, error)
-	GetUserProfile(ctx context.Context, userID uint) (*User, error)
+	BestPlayers(ctx context.Context, limit int) ([]Ranking, error)
+	UserProfile(ctx context.Context, userID uint) (*User, error)
 	UpdateUserActivity(ctx context.Context, user *User, key *PublicKey)
-	GetUserMatchHistory(ctx context.Context, userID uint, limit int) ([]MatchParticipant, error)
+	UserMatchHistory(ctx context.Context, userID uint, limit int) ([]MatchParticipant, error)
 }
 
 type MatchRepository interface {

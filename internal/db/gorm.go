@@ -13,7 +13,7 @@ import (
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {
 	logMode := logger.Info
-	if cfg.Env == "production" || cfg.Env == "prod" {
+	if cfg.Env == "production" {
 		logMode = logger.Warn
 	}
 
@@ -30,7 +30,7 @@ func Connect(cfg *config.Config) (*gorm.DB, error) {
 	}
 
 	sqlDB.SetMaxIdleConns(10)
-	sqlDB.SetMaxOpenConns(cfg.DBMaxOpenConns)
+	sqlDB.SetMaxOpenConns(cfg.DBMaxOpenConnections)
 	sqlDB.SetConnMaxLifetime(time.Hour)
 
 	return database, nil

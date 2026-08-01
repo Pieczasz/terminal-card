@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGormMatchRepository_RecordMatch(t *testing.T) {
+func TestMatchRepository_RecordMatch(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
 
 	// Seed data
@@ -61,7 +61,7 @@ func TestGormMatchRepository_RecordMatch(t *testing.T) {
 	assert.Less(t, updatedR2.Elo, uint32(elo.DefaultRating))
 }
 
-func TestGormMatchRepository_FinalizeRankedMatch(t *testing.T) {
+func TestMatchRepository_FinalizeRankedMatch(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
 
 	u1 := &db.User{Username: "final1"}
@@ -87,7 +87,7 @@ func TestGormMatchRepository_FinalizeRankedMatch(t *testing.T) {
 	assert.Greater(t, r1.Elo, uint32(elo.DefaultRating))
 }
 
-func TestGormMatchRepository_GetOrCreateGame(t *testing.T) {
+func TestMatchRepository_GetOrCreateGame(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t, &db.Game{})
 	repo := repository.NewMatchRepository(gormDB)
 
@@ -101,7 +101,7 @@ func TestGormMatchRepository_GetOrCreateGame(t *testing.T) {
 	assert.Equal(t, game1.ID, game2.ID)
 }
 
-func TestGormMatchRepository_RecordMatch_TransactionError(t *testing.T) {
+func TestMatchRepository_RecordMatch_TransactionError(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
 	repo := repository.NewMatchRepository(gormDB)
 

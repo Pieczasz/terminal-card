@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -30,7 +31,7 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolationCode
 }
 
-type GormUserRepository struct {
+type gormUserRepository struct {
 	db                    *gorm.DB
 	bestPlayersCache      []db.Ranking
 	bestPlayersCacheTime  time.Time
@@ -38,10 +39,10 @@ type GormUserRepository struct {
 }
 
 func NewUserRepository(db *gorm.DB) db.UserRepository {
-	return &GormUserRepository{db: db}
+	return &gormUserRepository{db: db}
 }
 
-func (q *GormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerprint string) (*db.User, *db.PublicKey, error) {
+func (q *gormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerprint string) (*db.User, *db.PublicKey, error) {
 	ctx, span := tracer.Start(ctx, "db.LoadUserByFingerprint")
 	defer span.End()
 
@@ -56,7 +57,7 @@ func (q *GormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerpr
 	return &dbKey.User, &dbKey, nil
 }
 
-func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, fingerprint string) (*db.User, *db.PublicKey, error) {
+func (q *gormUserRepository) RegisterUserWithKey(ctx context.Context, username, fingerprint string) (*db.User, *db.PublicKey, error) {
 	if err := db.ValidateUsername(username); err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidUsername, err)
 	}
@@ -115,14 +116,13 @@ func (q *GormUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 	return &currentUser, &dbKey, nil
 }
 
-func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]db.Ranking, error) {
-	ctx, span := tracer.Start(ctx, "db.GetBestPlayers")
+func (q *gormUserRepository) BestPlayers(ctx context.Context, limit int) ([]db.Ranking, error) {
+	ctx, span := tracer.Start(ctx, "db.BestPlayers")
 	defer span.End()
 
 	q.bestPlayersCacheMutex.RLock()
 	if time.Since(q.bestPlayersCacheTime) < 5*time.Minute && len(q.bestPlayersCache) >= limit {
-		cacheCopy := make([]db.Ranking, limit)
-		copy(cacheCopy, q.bestPlayersCache[:limit])
+		cacheCopy := slices.Clone(q.bestPlayersCache[:limit])
 		q.bestPlayersCacheMutex.RUnlock()
 		return cacheCopy, nil
 	}
@@ -131,8 +131,7 @@ func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]d
 	q.bestPlayersCacheMutex.Lock()
 	defer q.bestPlayersCacheMutex.Unlock()
 	if time.Since(q.bestPlayersCacheTime) < 5*time.Minute && len(q.bestPlayersCache) >= limit {
-		cacheCopy := make([]db.Ranking, limit)
-		copy(cacheCopy, q.bestPlayersCache[:limit])
+		cacheCopy := slices.Clone(q.bestPlayersCache[:limit])
 		return cacheCopy, nil
 	}
 
@@ -149,18 +148,16 @@ func (q *GormUserRepository) GetBestPlayers(ctx context.Context, limit int) ([]d
 	q.bestPlayersCacheTime = time.Now()
 
 	if len(rankings) > limit {
-		out := make([]db.Ranking, limit)
-		copy(out, rankings[:limit])
+		out := slices.Clone(rankings[:limit])
 		return out, nil
 	}
 
-	out := make([]db.Ranking, len(rankings))
-	copy(out, rankings)
+	out := slices.Clone(rankings)
 	return out, nil
 }
 
-func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*db.User, error) {
-	ctx, span := tracer.Start(ctx, "db.GetUserProfile")
+func (q *gormUserRepository) UserProfile(ctx context.Context, userID uint) (*db.User, error) {
+	ctx, span := tracer.Start(ctx, "db.UserProfile")
 	defer span.End()
 
 	var user db.User
@@ -177,7 +174,7 @@ func (q *GormUserRepository) GetUserProfile(ctx context.Context, userID uint) (*
 	return &user, nil
 }
 
-func (q *GormUserRepository) UpdateUserActivity(ctx context.Context, user *db.User, key *db.PublicKey) {
+func (q *gormUserRepository) UpdateUserActivity(ctx context.Context, user *db.User, key *db.PublicKey) {
 	if err := q.db.WithContext(ctx).Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
 		slog.Error("unexpected error while trying to update LastSeenAt field", "user_id", user.ID, "error", err)
 	}
@@ -186,8 +183,8 @@ func (q *GormUserRepository) UpdateUserActivity(ctx context.Context, user *db.Us
 	}
 }
 
-func (q *GormUserRepository) GetUserMatchHistory(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error) {
-	ctx, span := tracer.Start(ctx, "db.GetUserMatchHistory")
+func (q *gormUserRepository) UserMatchHistory(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error) {
+	ctx, span := tracer.Start(ctx, "db.UserMatchHistory")
 	defer span.End()
 
 	var history []db.MatchParticipant
