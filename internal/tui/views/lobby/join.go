@@ -94,13 +94,11 @@ func (m *joinModel) handleCodeEntry(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *joinModel) handleBrowsing(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if route, ok := views.GlobalRoute(key.String()); ok {
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }
+	if cmd, ok := views.NavigateOn(key.String()); ok {
+		return m, cmd
 	}
 
 	switch key.String() {
-	case "esc", "q":
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 	case "up", "k":
 		if m.cursor > 0 {
 			m.cursor--
