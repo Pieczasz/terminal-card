@@ -37,6 +37,9 @@ type Manager struct {
 	matchRepo           db.MatchRepository
 	appCtx              context.Context
 	joinLimiter         *ratelimit.SlidingWindowLimiter
+	// finalizing counts ranked match writes currently in flight, so shutdown can
+	// wait for them instead of closing the database underneath one.
+	finalizing sync.WaitGroup
 }
 
 func NewManager(matchRepo db.MatchRepository) *Manager {
@@ -254,12 +257,35 @@ func (m *Manager) shutdownCtx() context.Context {
 	return m.appCtx
 }
 
+// WaitForFinalizers blocks until every ranked match write in flight has finished,
+// or timeout elapses. Reports whether they all drained.
+//
+// This closes the window where shutdown could close the database while a finalize
+// was mid-write; it cannot close it entirely, since a game ending in the instant
+// between the wait starting and the write registering is still missed.
+func (m *Manager) WaitForFinalizers(timeout time.Duration) bool {
+	if m == nil {
+		return true
+	}
+	drained := make(chan struct{})
+	go func() {
+		m.finalizing.Wait()
+		close(drained)
+	}()
+	select {
+	case <-drained:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
+}
+
 // Kick removes a guest from the lobby. Only the current leader may kick guests.
 func (m *Manager) Kick(host, target *player.Player) error {
 	if host == nil || target == nil {
 		return errors.New("host and target are required")
 	}
-	if host.Compare(target) {
+	if host.Equal(target) {
 		return errors.New("cannot kick yourself")
 	}
 
@@ -276,17 +302,17 @@ func (m *Manager) Kick(host, target *player.Player) error {
 		m.mu.Unlock()
 		return errors.New("lobby is closed")
 	}
-	if !l.leader.Compare(host) {
+	if !l.leader.Equal(host) {
 		l.mu.Unlock()
 		m.mu.Unlock()
 		return errors.New("only the leader can kick players")
 	}
-	if l.leader.Compare(target) {
+	if l.leader.Equal(target) {
 		l.mu.Unlock()
 		m.mu.Unlock()
 		return errors.New("cannot kick the lobby leader")
 	}
-	idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(target) })
+	idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Equal(target) })
 	if idx == -1 {
 		l.mu.Unlock()
 		m.mu.Unlock()
@@ -347,8 +373,7 @@ func (m *Manager) RemoveLobby(code string) {
 func (m *Manager) getCachedPublicLobbies() []*Lobby {
 	m.mu.RLock()
 	if time.Since(m.cacheLastUpdated) < 2*time.Second {
-		lobbies := make([]*Lobby, len(m.cachedPublicLobbies))
-		copy(lobbies, m.cachedPublicLobbies)
+		lobbies := slices.Clone(m.cachedPublicLobbies)
 		m.mu.RUnlock()
 		return lobbies
 	}
@@ -357,12 +382,11 @@ func (m *Manager) getCachedPublicLobbies() []*Lobby {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if time.Since(m.cacheLastUpdated) < 2*time.Second {
-		lobbies := make([]*Lobby, len(m.cachedPublicLobbies))
-		copy(lobbies, m.cachedPublicLobbies)
+		lobbies := slices.Clone(m.cachedPublicLobbies)
 		return lobbies
 	}
 
-	var publicLobbies []*Lobby
+	publicLobbies := make([]*Lobby, 0, len(m.lobbies))
 	for _, l := range m.lobbies {
 		if !l.IsPrivate() && l.IsWaiting() {
 			publicLobbies = append(publicLobbies, l)
@@ -372,7 +396,6 @@ func (m *Manager) getCachedPublicLobbies() []*Lobby {
 	m.cachedPublicLobbies = publicLobbies
 	m.cacheLastUpdated = time.Now()
 
-	lobbies := make([]*Lobby, len(publicLobbies))
-	copy(lobbies, publicLobbies)
+	lobbies := slices.Clone(publicLobbies)
 	return lobbies
 }

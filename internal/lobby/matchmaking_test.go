@@ -2,6 +2,7 @@ package lobby
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,25 +18,34 @@ import (
 	"gorm.io/gorm"
 )
 
+// registerGame registers rules under a display name. These tests only ever look
+// games up by name, so the slug just has to be present and distinct.
+func registerGame(r *game.Registry, name string, rules game.Rules) {
+	r.RegisterModule(game.Module{
+		Name:    name,
+		Slug:    strings.ToLower(name),
+		Factory: func() game.Rules { return rules },
+	})
+}
+
 type MockRules struct {
 	mock.Mock
 }
 
-func (m *MockRules) Name() string                        { return m.Called().String(0) }
 func (m *MockRules) MinPlayers() int                     { return m.Called().Int(0) }
 func (m *MockRules) MaxPlayers() int                     { return m.Called().Int(0) }
 func (m *MockRules) InitialDeck() []deck.Card            { return m.Called().Get(0).([]deck.Card) }
 func (m *MockRules) InitialDealCount() int               { return m.Called().Int(0) }
 func (m *MockRules) OnGameStart(state *game.State) error { return m.Called(state).Error(0) }
-func (m *MockRules) PreActionCondition(state *game.State, action game.Action) error {
+func (m *MockRules) ValidateAction(state *game.State, action game.Action) error {
 	return m.Called(state, action).Error(0)
 }
 func (m *MockRules) ApplyAction(state *game.State, action game.Action) { m.Called(state, action) }
-func (m *MockRules) PostActionCondition(state *game.State, action game.Action) error {
+func (m *MockRules) AfterAction(state *game.State, action game.Action) error {
 	return m.Called(state, action).Error(0)
 }
 func (m *MockRules) CheckWinCondition(state *game.State) bool { return m.Called(state).Bool(0) }
-func (m *MockRules) GetStandings(state *game.State) []*player.Player {
+func (m *MockRules) Standings(state *game.State) []*player.Player {
 	return m.Called(state).Get(0).([]*player.Player)
 }
 
@@ -163,9 +173,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 	mockRules.On("InitialDealCount").Return(5)
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
 
-	registry.Register("MockGame", func() game.Rules {
-		return mockRules
-	})
+	registerGame(registry, "MockGame", mockRules)
 
 	err := l.ToggleReady(leader, registry)
 	assert.NoError(t, err)
@@ -192,10 +200,13 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 	assert.Equal(t, cardGame, l.options.cardGame)
 	assert.True(t, l.IsPrivate())
-	assert.True(t, l.options.isRanked)
+	assert.True(t, l.IsRanked())
 
 	assert.NoError(t, l.SetPrivate(leader, false))
 	assert.False(t, l.IsPrivate())
+
+	assert.NoError(t, l.SetRanked(leader, false))
+	assert.False(t, l.IsRanked())
 
 	assert.NoError(t, l.SetMaxPlayers(leader, 5, 2, 6))
 	assert.Equal(t, 5, l.MaxPlayers())
@@ -203,6 +214,15 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 	newGame := &db.Game{Name: "Poker"}
 	assert.NoError(t, l.SetCardGame(leader, newGame))
 	assert.Equal(t, newGame, l.options.cardGame)
+}
+
+func TestLobby_DefaultCasual(t *testing.T) {
+	t.Parallel()
+	m := NewManager(nil)
+	leader := mockPlayer("leader", 1)
+	l, err := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
+	assert.NoError(t, err)
+	assert.False(t, l.IsRanked(), "new lobbies default to casual to limit Elo farming under open registration")
 }
 
 func TestManager_PublicLobbies(t *testing.T) {
@@ -274,9 +294,9 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	mockRules.On("InitialDealCount").Return(5)
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
 	mockRules.On("CheckWinCondition", mock.Anything).Return(true) // Immediate win to end game
-	mockRules.On("GetStandings", mock.Anything).Return([]*player.Player{leader, guest})
+	mockRules.On("Standings", mock.Anything).Return([]*player.Player{leader, guest})
 
-	registry.Register("MockGame", func() game.Rules { return mockRules })
+	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
 	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}).
@@ -384,7 +404,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	// mockRules limits max players to 2, but lobby has 3!
 	mockRules.On("MinPlayers").Return(2)
 	mockRules.On("MaxPlayers").Return(2)
-	registry.Register("Mock", func() game.Rules { return mockRules })
+	registerGame(registry, "Mock", mockRules)
 
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -404,7 +424,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	mockRules2.On("InitialDeck").Return(deck.StandardDeck())
 	mockRules2.On("InitialDealCount").Return(5)
 	mockRules2.On("OnGameStart", mock.Anything).Return(nil)
-	registry.Register("Mock2", func() game.Rules { return mockRules2 })
+	registerGame(registry, "Mock2", mockRules2)
 
 	leader3 := mockPlayer("p5", 5)
 	l3, _ := m.New(leader3, WithCardGame(&db.Game{Name: "Mock2"}))
@@ -445,7 +465,7 @@ func TestManager_RejectMidGameJoin(t *testing.T) {
 	mockRules.On("InitialDeck").Return(deck.StandardDeck())
 	mockRules.On("InitialDealCount").Return(5)
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
-	registry.Register("MockGame", func() game.Rules { return mockRules })
+	registerGame(registry, "MockGame", mockRules)
 
 	assert.NoError(t, l.ToggleReady(leader, registry))
 	assert.NoError(t, l.ToggleReady(guest, registry))
