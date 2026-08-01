@@ -2,10 +2,11 @@ package lobby
 
 import (
 	"fmt"
+	"slices"
+	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
@@ -14,11 +15,20 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
+const (
+	createCursorGame = iota
+	createCursorPlayers
+	createCursorVisibility
+	createCursorMode
+	createCursorSubmit
+)
+
 type createModel struct {
 	global      router.GlobalContext
 	err         error
 	cursor      int
 	isPrivate   bool
+	isRanked    bool
 	maxPlayers  int
 	gameOptions []string
 	gameIndex   int
@@ -31,8 +41,9 @@ func NewCreate(global router.GlobalContext) tea.Model {
 	}
 	return &createModel{
 		global:      global,
-		cursor:      0, // 0: Game, 1: Players, 2: Visibility, 3: Create Button
+		cursor:      0,
 		isPrivate:   true,
+		isRanked:    false, // casual default - matches lobby.setupDefaultOptions
 		maxPlayers:  4,
 		gameOptions: gameOptions,
 		gameIndex:   0,
@@ -48,73 +59,75 @@ func (m *createModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "esc", "q":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
-		case "n":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
-		case "f":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
-		case "p":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
-		case "t":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
-		case "up", "k":
-			if m.cursor > 0 {
-				m.cursor--
-			}
-		case "down", "j":
-			if m.cursor < 3 {
-				m.cursor++
-			}
-		case "left", "h":
-			switch m.cursor {
-			case 0:
-				if m.gameIndex > 0 {
-					m.gameIndex--
-					m.clampMaxPlayers()
-				}
-			case 1:
-				if m.maxPlayers > 2 {
-					m.maxPlayers--
-				}
-			case 2:
-				m.isPrivate = !m.isPrivate
-			}
-		case "right", "l":
-			switch m.cursor {
-			case 0:
-				if m.gameIndex < len(m.gameOptions)-1 {
-					m.gameIndex++
-					m.clampMaxPlayers()
-				}
-			case 1:
-				if m.maxPlayers < m.gameMaxPlayers() {
-					m.maxPlayers++
-				}
-			case 2:
-				m.isPrivate = !m.isPrivate
-			}
-		case "enter":
-			if m.cursor == 3 {
-				// Submit Create
-				p := &player.Player{ID: fmt.Sprint(m.global.User.ID), DatabaseUser: m.global.User}
-				gameOpt := lobby.WithCardGame(&db.Game{Name: m.gameOptions[m.gameIndex]})
-				maxOpt := lobby.WithMaxPlayers(m.maxPlayers)
-				privOpt := lobby.WithPrivate(m.isPrivate)
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	return m.handleKey(key)
+}
 
-				l, err := m.global.LobbyManager.New(p, gameOpt, maxOpt, privOpt)
-				if err != nil {
-					m.err = err
-					return m, nil
-				}
-				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
-			}
+func (m *createModel) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if route, ok := views.GlobalRoute(key.String()); ok {
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }
+	}
+
+	switch key.String() {
+	case "esc", "q":
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < createCursorSubmit {
+			m.cursor++
+		}
+	case "left", "h":
+		m.adjustSetting(-1)
+	case "right", "l":
+		m.adjustSetting(+1)
+	case "enter":
+		if m.cursor == createCursorSubmit {
+			return m.createLobby()
 		}
 	}
 	return m, nil
+}
+
+// adjustSetting moves the highlighted setting by delta. The two booleans toggle in
+// either direction, matching how the row renders as "< value >".
+func (m *createModel) adjustSetting(delta int) {
+	switch m.cursor {
+	case createCursorGame:
+		if next := m.gameIndex + delta; next >= 0 && next < len(m.gameOptions) {
+			m.gameIndex = next
+			m.clampMaxPlayers()
+		}
+	case createCursorVisibility:
+		m.isPrivate = !m.isPrivate
+	case createCursorMode:
+		m.isRanked = !m.isRanked
+	case createCursorPlayers:
+		if next := m.maxPlayers + delta; next >= 2 && next <= m.gameMaxPlayers() {
+			m.maxPlayers = next
+		}
+	case createCursorSubmit:
+		// The submitted row has no left/right adjustment.
+	}
+}
+
+func (m *createModel) createLobby() (tea.Model, tea.Cmd) {
+	l, err := m.global.LobbyManager.New(views.SessionPlayer(m.global),
+		lobby.WithCardGame(&db.Game{Name: m.gameOptions[m.gameIndex]}),
+		lobby.WithMaxPlayers(m.maxPlayers),
+		lobby.WithPrivate(m.isPrivate),
+		lobby.WithRanked(m.isRanked),
+	)
+	if err != nil {
+		m.err = err
+		return m, nil
+	}
+	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
 }
 
 func (m *createModel) gameMaxPlayers() int {
@@ -131,12 +144,8 @@ func (m *createModel) clampMaxPlayers() {
 	if rules, err := m.global.GameRegistry.Create(m.gameOptions[m.gameIndex]); err == nil {
 		minP = rules.MinPlayers()
 	}
-	if m.maxPlayers > maxP {
-		m.maxPlayers = maxP
-	}
-	if m.maxPlayers < minP {
-		m.maxPlayers = minP
-	}
+	// minP is applied last so it wins if a game's bounds ever cross.
+	m.maxPlayers = max(min(m.maxPlayers, maxP), minP)
 }
 
 func (m *createModel) View() tea.View {
@@ -150,18 +159,24 @@ func (m *createModel) View() tea.View {
 		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
 	}
 
-	gameStr := renderOption(0, "Game", m.gameOptions[m.gameIndex])
-	playersStr := renderOption(1, "Max Players", fmt.Sprintf("%d", m.maxPlayers))
+	gameStr := renderOption(createCursorGame, "Game", m.gameOptions[m.gameIndex])
+	playersStr := renderOption(createCursorPlayers, "Max Players", strconv.Itoa(m.maxPlayers))
 
 	vis := fmt.Sprintf("%-7s", "Public")
 	if m.isPrivate {
 		vis = fmt.Sprintf("%-7s", "Private")
 	}
-	visStr := renderOption(2, "Visibility", vis)
+	visStr := renderOption(createCursorVisibility, "Visibility", vis)
+
+	mode := fmt.Sprintf("%-7s", "Casual")
+	if m.isRanked {
+		mode = fmt.Sprintf("%-7s", "Ranked")
+	}
+	modeStr := renderOption(createCursorMode, "Mode", mode)
 
 	submitCursor := "  "
 	submitText := "[ Create Lobby ]"
-	if m.cursor == 3 {
+	if m.cursor == createCursorSubmit {
 		submitCursor = "> "
 		submitText = lg.NewStyle().Foreground(lg.Color("42")).Render(submitText)
 	}
@@ -171,6 +186,7 @@ func (m *createModel) View() tea.View {
 		gameStr,
 		playersStr,
 		visStr,
+		modeStr,
 		"",
 		submitStr,
 	)
@@ -180,12 +196,12 @@ func (m *createModel) View() tea.View {
 		content += fmt.Sprintf("\n\nError: %v", m.err)
 	}
 
-	innerWidth := styles.GetInnerWidth(m.global.Width)
+	innerWidth := styles.InnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Create New Lobby", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
 
-	footerActions := append([]string{"enter - Confirm"}, styles.GlobalActions...)
+	footerActions := slices.Concat([]string{"enter - Confirm"}, styles.GlobalActions)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
 
 	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer))
