@@ -24,18 +24,28 @@ import (
 
 func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.Context) error, err error) {
 	var shutdownFuncs []func(context.Context) error
-	shutdown = func(ctx context.Context) error {
-		var err error
+	cleanup := func(ctx context.Context) error {
+		var errs error
 		for _, fn := range shutdownFuncs {
-			err = errors.Join(err, fn(ctx))
+			errs = errors.Join(errs, fn(ctx))
 		}
 		shutdownFuncs = nil
-		return err
+		return errs
 	}
+
+	// Every error path below returns a nil shutdown func, so providers already
+	// started have to be torn down here or they leak for the process lifetime.
+	// The closure must call cleanup rather than the named return, which is nil
+	// on exactly those paths.
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, cleanup(ctx))
+		}
+	}()
 
 	res, err := newResource(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("create resource: %w", err)
+		return nil, fmt.Errorf("create otel resource failed: %w", err)
 	}
 
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
@@ -71,7 +81,7 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 		return nil, fmt.Errorf("register app metrics: %w", err)
 	}
 
-	return shutdown, nil
+	return cleanup, nil
 }
 
 func newResource(cfg *config.Config) (*resource.Resource, error) {
