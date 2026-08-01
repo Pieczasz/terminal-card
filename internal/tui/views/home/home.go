@@ -33,20 +33,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "q":
 			return m, tea.Quit
 		case "n":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobbyCreate} }
 		case "f":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobbyJoin} }
 		case "p":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteProfile} }
 		case "t":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLeaderboard} }
 		}
 	}
 	return m, nil
 }
 
 func (m model) View() tea.View {
-	innerWidth := styles.GetInnerWidth(m.global.Width)
+	innerWidth := styles.InnerWidth(m.global.Width)
 
 	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
 	titleText := styles.Title.Render(titleFig)

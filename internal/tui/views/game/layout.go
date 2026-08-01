@@ -2,6 +2,7 @@ package game
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -16,7 +17,7 @@ import (
 )
 
 func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disableSelection bool) string {
-	var renderedCards []string
+	renderedCards := make([]string, 0, len(hand))
 	for i, c := range hand {
 		isSelected := i == selectedIdx && !disableSelection
 		var lift int
@@ -30,7 +31,7 @@ func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disabl
 			if isSelected {
 				numStyle = numStyle.Foreground(lg.Color("205")).Bold(true)
 			}
-			numView := numStyle.Render(fmt.Sprintf("%d", i))
+			numView := numStyle.Render(strconv.Itoa(i))
 			cardView = lg.JoinVertical(lg.Center, cardView, numView)
 		}
 
@@ -127,7 +128,7 @@ func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody str
 
 	sb.WriteString(topEdge)
 	sb.WriteByte('\n')
-	for i := 0; i < count-1; i++ {
+	for range count - 1 {
 		sb.WriteString(midEdge)
 		sb.WriteByte('\n')
 	}
@@ -145,11 +146,11 @@ func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody str
 }
 
 func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orientation) string {
-	nameStyle := lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true)
+	nameStyle := styles.SectionHeading
 	if isCurrentTurn {
 		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
 	}
-	nameView := nameStyle.Render(o.ID)
+	nameView := nameStyle.Render(o.Username)
 	cardsCountView := lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	infoView := lg.JoinVertical(lg.Center, nameView, cardsCountView)
@@ -177,11 +178,11 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 }
 
 func RenderOpponentMinimal(o game.PlayerSnapshot, isCurrentTurn bool) string {
-	nameStyle := lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true)
+	nameStyle := styles.SectionHeading
 	if isCurrentTurn {
 		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
 	}
-	nameView := nameStyle.Render(o.ID)
+	nameView := nameStyle.Render(o.Username)
 	cardsCountView := lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
@@ -211,7 +212,7 @@ func RenderStatus(currentPlayer string, isMyTurn bool) string {
 }
 
 func RenderWaitingScreen(width, height int, phase game.Phase, winner string) string {
-	innerWidth := styles.GetInnerWidth(width)
+	innerWidth := styles.InnerWidth(width)
 	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	header := styles.Title.Render(titleText)
