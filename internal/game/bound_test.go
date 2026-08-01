@@ -12,17 +12,16 @@ import (
 
 type bindRules struct{}
 
-func (bindRules) Name() string                             { return "BindTest" }
-func (bindRules) MinPlayers() int                          { return 2 }
-func (bindRules) MaxPlayers() int                          { return 4 }
-func (bindRules) InitialDeck() []deck.Card                 { return deck.StandardDeck() }
-func (bindRules) InitialDealCount() int                    { return 2 }
-func (bindRules) OnGameStart(*State) error                 { return nil }
-func (bindRules) PreActionCondition(*State, Action) error  { return nil }
-func (bindRules) PostActionCondition(*State, Action) error { return nil }
-func (bindRules) ApplyAction(*State, Action)               {}
-func (bindRules) CheckWinCondition(*State) bool            { return false }
-func (bindRules) GetStandings(s *State) []*player.Player   { return s.Players }
+func (bindRules) MinPlayers() int                     { return 2 }
+func (bindRules) MaxPlayers() int                     { return 4 }
+func (bindRules) InitialDeck() []deck.Card            { return deck.StandardDeck() }
+func (bindRules) InitialDealCount() int               { return 2 }
+func (bindRules) OnGameStart(*State) error            { return nil }
+func (bindRules) ValidateAction(*State, Action) error { return nil }
+func (bindRules) AfterAction(*State, Action) error    { return nil }
+func (bindRules) ApplyAction(*State, Action)          {}
+func (bindRules) CheckWinCondition(*State) bool       { return false }
+func (bindRules) Standings(s *State) []*player.Player { return s.Players }
 
 func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 	t.Parallel()

@@ -18,11 +18,6 @@ type MockRules struct {
 	mock.Mock
 }
 
-func (m *MockRules) Name() string {
-	args := m.Called()
-	return args.String(0)
-}
-
 func (m *MockRules) MinPlayers() int {
 	args := m.Called()
 	return args.Int(0)
@@ -48,7 +43,7 @@ func (m *MockRules) OnGameStart(state *State) error {
 	return args.Error(0)
 }
 
-func (m *MockRules) PreActionCondition(state *State, action Action) error {
+func (m *MockRules) ValidateAction(state *State, action Action) error {
 	args := m.Called(state, action)
 	return args.Error(0)
 }
@@ -57,7 +52,7 @@ func (m *MockRules) ApplyAction(state *State, action Action) {
 	m.Called(state, action)
 }
 
-func (m *MockRules) PostActionCondition(state *State, action Action) error {
+func (m *MockRules) AfterAction(state *State, action Action) error {
 	args := m.Called(state, action)
 	return args.Error(0)
 }
@@ -67,7 +62,7 @@ func (m *MockRules) CheckWinCondition(state *State) bool {
 	return args.Bool(0)
 }
 
-func (m *MockRules) GetStandings(state *State) []*player.Player {
+func (m *MockRules) Standings(state *State) []*player.Player {
 	args := m.Called(state)
 	return args.Get(0).([]*player.Player)
 }
@@ -123,9 +118,9 @@ func TestEngine_SubmitAction(t *testing.T) {
 	assert.ErrorContains(t, err, "wait for your turn")
 
 	validAction := MockAction{name: "MockDraw"}
-	m.On("PreActionCondition", mock.Anything, validAction).Return(nil)
+	m.On("ValidateAction", mock.Anything, validAction).Return(nil)
 	m.On("ApplyAction", mock.Anything, validAction)
-	m.On("PostActionCondition", mock.Anything, validAction).Return(nil)
+	m.On("AfterAction", mock.Anything, validAction).Return(nil)
 	m.On("CheckWinCondition", mock.Anything).Return(false)
 
 	err = engine.SubmitAction(currentPlayerID, validAction)
@@ -148,11 +143,11 @@ func TestEngine_SubmitAction_SetsWinnerFromStandings(t *testing.T) {
 
 	currentPlayerID := engine.CurrentPlayerID()
 	action := MockAction{name: "Win"}
-	m.On("PreActionCondition", mock.Anything, action).Return(nil)
+	m.On("ValidateAction", mock.Anything, action).Return(nil)
 	m.On("ApplyAction", mock.Anything, action)
-	m.On("PostActionCondition", mock.Anything, action).Return(nil)
+	m.On("AfterAction", mock.Anything, action).Return(nil)
 	m.On("CheckWinCondition", mock.Anything).Return(true)
-	m.On("GetStandings", mock.Anything).Return([]*player.Player{winner, loser})
+	m.On("Standings", mock.Anything).Return([]*player.Player{winner, loser})
 
 	err := engine.SubmitAction(currentPlayerID, action)
 	require.NoError(t, err)
@@ -183,9 +178,9 @@ func TestEngine_SubmitAction_PostConditionBeforeBroadcast(t *testing.T) {
 
 	currentPlayerID := engine.CurrentPlayerID()
 	action := MockAction{name: "Bad"}
-	m.On("PreActionCondition", mock.Anything, action).Return(nil)
+	m.On("ValidateAction", mock.Anything, action).Return(nil)
 	m.On("ApplyAction", mock.Anything, action)
-	m.On("PostActionCondition", mock.Anything, action).Return(assert.AnError)
+	m.On("AfterAction", mock.Anything, action).Return(assert.AnError)
 
 	err := engine.SubmitAction(currentPlayerID, action)
 	require.Error(t, err)
@@ -230,7 +225,7 @@ func TestEngine_RemovePlayer(t *testing.T) {
 
 // leaveAwareRules embeds MockRules and additionally implements
 // game.PlayerLeaveHandler so tests can drive the mid-hand leave path. The two
-// hooks delegate to configurable funcs so each test can inject behavior (e.g. a
+// hooks delegate to configurable funcs so each test can inject behavior (e.g., a
 // stale OverrideNextTurn) without touching MockRules' strict expectations.
 type leaveAwareRules struct {
 	*MockRules
@@ -266,17 +261,16 @@ func TestEngine_RemovePlayer_MidTurnOverrideClamped(t *testing.T) {
 		players := []*player.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
 		base := setupMockRules()
 		base.On("CheckWinCondition", mock.Anything).Return(false)
-		base.On("GetStandings", mock.Anything).Return([]*player.Player{}).Maybe()
-		base.On("PreActionCondition", mock.Anything, mock.Anything).Return(nil).Maybe()
+		base.On("Standings", mock.Anything).Return([]*player.Player{}).Maybe()
+		base.On("ValidateAction", mock.Anything, mock.Anything).Return(nil).Maybe()
 		base.On("ApplyAction", mock.Anything, mock.Anything).Maybe()
-		base.On("PostActionCondition", mock.Anything, mock.Anything).Return(nil).Maybe()
+		base.On("AfterAction", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 		r := &leaveAwareRules{MockRules: base}
 		// Simulate a stale index computed before removal: the pre-removal player
 		// count now points one seat past the end of the two remaining seats.
 		r.afterRemoved = func(state *State, _ int) {
-			stale := preRemovalCount
-			state.OverrideNextTurn = &stale
+			state.OverrideNextTurn = new(preRemovalCount)
 		}
 
 		engine := NewEngine(r, players, deck.StandardDeck())
@@ -361,11 +355,11 @@ func TestEngine_ConcurrentOperations(t *testing.T) {
 	}
 
 	base := setupMockRules()
-	base.On("PreActionCondition", mock.Anything, mock.Anything).Return(nil).Maybe()
+	base.On("ValidateAction", mock.Anything, mock.Anything).Return(nil).Maybe()
 	base.On("ApplyAction", mock.Anything, mock.Anything).Maybe()
-	base.On("PostActionCondition", mock.Anything, mock.Anything).Return(nil).Maybe()
+	base.On("AfterAction", mock.Anything, mock.Anything).Return(nil).Maybe()
 	base.On("CheckWinCondition", mock.Anything).Return(false).Maybe()
-	base.On("GetStandings", mock.Anything).Return(players).Maybe()
+	base.On("Standings", mock.Anything).Return(players).Maybe()
 
 	engine := NewEngine(base, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())

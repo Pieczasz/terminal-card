@@ -24,7 +24,7 @@ func createTestState() *game.State {
 	return state
 }
 
-func TestRules_PreActionCondition_PlayCard(t *testing.T) {
+func TestRules_ValidateAction_PlayCard(t *testing.T) {
 	t.Parallel()
 
 	t.Run("valid matching suit", func(t *testing.T) {
@@ -33,7 +33,7 @@ func TestRules_PreActionCondition_PlayCard(t *testing.T) {
 		rules := &Rules{}
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.NoError(t, err)
 	})
 
@@ -44,7 +44,7 @@ func TestRules_PreActionCondition_PlayCard(t *testing.T) {
 		rules := &Rules{}
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.NoError(t, err)
 	})
 
@@ -54,7 +54,7 @@ func TestRules_PreActionCondition_PlayCard(t *testing.T) {
 		rules := &Rules{}
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.NoError(t, err)
 	})
 
@@ -64,7 +64,7 @@ func TestRules_PreActionCondition_PlayCard(t *testing.T) {
 		rules := &Rules{}
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.ErrorContains(t, err, "card doesn't match top discard")
 	})
 
@@ -74,7 +74,7 @@ func TestRules_PreActionCondition_PlayCard(t *testing.T) {
 		rules := &Rules{}
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}}}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.ErrorContains(t, err, "you don't have that card")
 	})
 }
@@ -153,7 +153,7 @@ func TestRules_DrawCard_Reshuffle(t *testing.T) {
 		action := ActionDrawCard{}
 
 		// The discard pile can refill the stock, so the draw is legal.
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.NoError(t, err)
 
 		rules.ApplyAction(state, action)
@@ -179,7 +179,7 @@ func TestRules_DrawCard_Reshuffle(t *testing.T) {
 		state.Discard = deck.New([]deck.Card{{Rank: deck.Nine, Suit: deck.Spades}})
 
 		// Draw stays legal with nothing to draw; it becomes a forced pass.
-		assert.NoError(t, rules.PreActionCondition(state, ActionDrawCard{}))
+		assert.NoError(t, rules.ValidateAction(state, ActionDrawCard{}))
 
 		for range state.Players {
 			rules.ApplyAction(state, ActionDrawCard{})
@@ -201,7 +201,7 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 			Suit:  deck.NoSuit,
 		}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.ErrorContains(t, err, "must choose a suit when playing an eight")
 	})
 
@@ -214,7 +214,7 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 			Suit:  deck.Hearts,
 		}
 
-		err := rules.PreActionCondition(state, action)
+		err := rules.ValidateAction(state, action)
 		assert.NoError(t, err)
 
 		rules.ApplyAction(state, action)

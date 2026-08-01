@@ -195,17 +195,17 @@ func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 	// short all-in 100; mid and big put 300 each -> main 300 + side 400.
 	state.CurrentTurn = 0
 	rules.ApplyAction(state, ActionAllIn{})
-	require.NoError(t, rules.PostActionCondition(state, ActionAllIn{}))
+	require.NoError(t, rules.AfterAction(state, ActionAllIn{}))
 
 	state.CurrentTurn = *state.OverrideNextTurn
-	require.NoError(t, rules.PreActionCondition(state, ActionRaiseTo{Amount: 300}))
+	require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 300}))
 	rules.ApplyAction(state, ActionRaiseTo{Amount: 300})
-	require.NoError(t, rules.PostActionCondition(state, ActionRaiseTo{Amount: 300}))
+	require.NoError(t, rules.AfterAction(state, ActionRaiseTo{Amount: 300}))
 
 	state.CurrentTurn = *state.OverrideNextTurn
-	require.NoError(t, rules.PreActionCondition(state, ActionCall{}))
+	require.NoError(t, rules.ValidateAction(state, ActionCall{}))
 	rules.ApplyAction(state, ActionCall{})
-	require.NoError(t, rules.PostActionCondition(state, ActionCall{}))
+	require.NoError(t, rules.AfterAction(state, ActionCall{}))
 
 	assert.True(t, extra.HandComplete)
 	assert.Equal(t, uint(0), extra.MainPool)
@@ -326,7 +326,7 @@ func TestRaiseTo_UsesCommittedBet(t *testing.T) {
 	extra := state.Extra.(*State)
 	extra.PlayerChips["p1"] = 40
 	extra.CurrentBet = 0
-	// Apply without PreAction — commit clamps; CurrentBet must follow committed amount.
+	// Apply without PreAction - commit clamps; CurrentBet must follow committed amount.
 	(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 100})
 	assert.Equal(t, uint(40), extra.CurrentBet)
 	assert.Equal(t, uint(40), extra.PlayerBets["p1"])
@@ -352,7 +352,7 @@ func TestStandings_ChopStableByID(t *testing.T) {
 	extra.PlayerChips["p2"] = 1000
 	extra.PlayerChips["p3"] = 1000
 
-	standings := (&Rules{}).GetStandings(state)
+	standings := (&Rules{}).Standings(state)
 	assert.Equal(t, []string{"p1", "p2", "p3"}, []string{standings[0].ID, standings[1].ID, standings[2].ID})
 }
 

@@ -1,7 +1,7 @@
 package game
 
 import (
-	"fmt"
+	"errors"
 	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
@@ -48,7 +48,7 @@ func (b *BoundEngine) Broadcaster() *broadcaster.Broadcaster[Event] {
 // Submit applies an action as the bound player only.
 func (b *BoundEngine) Submit(action Action) error {
 	if b == nil || b.engine == nil {
-		return fmt.Errorf("no active game")
+		return errors.New("no active game")
 	}
 	return b.engine.SubmitAction(b.playerID, action)
 }
