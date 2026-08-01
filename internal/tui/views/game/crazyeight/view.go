@@ -10,6 +10,10 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
+const keyHints = "←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
+
+var hintStyle = lg.NewStyle().Foreground(lg.Color("#888888"))
+
 func (m *Model) View() tea.View {
 	if m.baseState.Phase != game.Playing {
 		return tea.NewView(gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner))
@@ -31,11 +35,10 @@ func (m *Model) View() tea.View {
 	if superCompact {
 		fullPlayerArea = mySection
 	} else if compactMode {
-		helperText := lg.NewStyle().Foreground(lg.Color("#888888")).Render("←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, helperText)
+		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, hintStyle.Render(keyHints))
 	} else {
-		helperText := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).Render("←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel")
-		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, helperText))
+		hints := hintStyle.MarginTop(1).Render(keyHints)
+		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
 	}
 
 	topHeight := lg.Height(topAreaContent)
@@ -78,7 +81,7 @@ func (m *Model) renderTopOpponent(superCompact bool) string {
 			idx = 1
 		}
 		o := m.baseState.Opponents[idx]
-		isTurn := m.baseState.CurrentPlayer == o.ID
+		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
 			return gameview.RenderOpponentMinimal(o, isTurn)
 		}
@@ -90,7 +93,7 @@ func (m *Model) renderTopOpponent(superCompact bool) string {
 func (m *Model) renderLeftOpponent(superCompact bool) string {
 	if len(m.baseState.Opponents) >= 2 {
 		o := m.baseState.Opponents[0]
-		isTurn := m.baseState.CurrentPlayer == o.ID
+		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
 			return gameview.RenderOpponentMinimal(o, isTurn)
 		}
@@ -102,14 +105,14 @@ func (m *Model) renderLeftOpponent(superCompact bool) string {
 func (m *Model) renderRightOpponent(superCompact bool) string {
 	if len(m.baseState.Opponents) == 2 {
 		o := m.baseState.Opponents[1]
-		isTurn := m.baseState.CurrentPlayer == o.ID
+		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
 			return gameview.RenderOpponentMinimal(o, isTurn)
 		}
 		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
 	} else if len(m.baseState.Opponents) >= 3 {
 		o := m.baseState.Opponents[2]
-		isTurn := m.baseState.CurrentPlayer == o.ID
+		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
 			return gameview.RenderOpponentMinimal(o, isTurn)
 		}

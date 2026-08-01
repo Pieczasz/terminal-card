@@ -2,6 +2,7 @@ package poker
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -132,44 +133,52 @@ func (m *Model) syncState() {
 		}
 
 		m.board = append(m.board, extra.Table...)
-
-		reveal := extra.HandComplete || extra.Phase == logic.Showdown || state.Phase == game.Finished
-
-		for i, p := range state.Players {
-			if p == nil {
-				continue
-			}
-			s := Seat{
-				PlayerID: p.ID,
-				Name:     p.Username(),
-				Chips:    extra.PlayerChips[p.ID],
-				Bet:      extra.PlayerBets[p.ID],
-				Folded:   extra.Folded[p.ID],
-				AllIn:    extra.PlayersAllIn[p.ID],
-				IsDealer: i == extra.DealerIndex,
-				IsSB:     i == extra.SBIndex,
-				IsBB:     i == extra.BBIndex,
-				IsTurn:   state.Phase == game.Playing && state.CurrentTurn == i && !extra.HandComplete,
-				IsHero:   p.ID == heroID,
-				HandSize: len(p.Cards),
-			}
-			if s.IsHero || (reveal && !s.Folded) {
-				s.Hole = append([]deck.Card(nil), p.Cards...)
-			}
-			m.seats = append(m.seats, s)
-		}
+		m.seats = buildSeats(state, extra, heroID)
 	})
 
 	if m.raising {
-		minTo := m.currentBet + m.minRaise
-		if m.raiseAmount < minTo {
-			m.raiseAmount = minTo
-		}
-		maxTo := m.streetBetMax()
-		if m.raiseAmount > maxTo {
-			m.raiseAmount = maxTo
-		}
+		m.raiseAmount = m.clampRaise(m.raiseAmount)
 	}
+}
+
+// buildSeats snapshots every seat for rendering. Hole cards are copied out only for
+// the hero, or for anyone still live once the hand is revealed - everyone else gets
+// a hand size and nothing more. Caller must hold the state lock.
+func buildSeats(state *game.State, extra *logic.State, heroID string) []Seat {
+	reveal := extra.HandComplete || extra.Phase == logic.Showdown || state.Phase == game.Finished
+
+	seats := make([]Seat, 0, len(state.Players))
+	for i, p := range state.Players {
+		if p == nil {
+			continue
+		}
+		s := Seat{
+			PlayerID: p.ID,
+			Name:     p.Username(),
+			Chips:    extra.PlayerChips[p.ID],
+			Bet:      extra.PlayerBets[p.ID],
+			Folded:   extra.Folded[p.ID],
+			AllIn:    extra.PlayersAllIn[p.ID],
+			IsDealer: i == extra.DealerIndex,
+			IsSB:     i == extra.SBIndex,
+			IsBB:     i == extra.BBIndex,
+			IsTurn:   state.Phase == game.Playing && state.CurrentTurn == i && !extra.HandComplete,
+			IsHero:   p.ID == heroID,
+			HandSize: len(p.Cards),
+		}
+		if s.IsHero || (reveal && !s.Folded) {
+			s.Hole = slices.Clone(p.Cards)
+		}
+		seats = append(seats, s)
+	}
+	return seats
+}
+
+// clampRaise holds a raise-to amount within [minimum legal raise, hero's stack].
+// The stack bound is applied last so a hero who cannot cover the minimum raise
+// is offered their whole stack rather than an amount they don't have.
+func (m *Model) clampRaise(amount uint) uint {
+	return min(max(amount, m.currentBet+m.minRaise), m.streetBetMax())
 }
 
 func (m *Model) streetBetMax() uint {
