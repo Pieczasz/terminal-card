@@ -7,3 +7,5 @@
 rules/
 coverage.out
 bin/
+# Local DB backups
+backups/

@@ -53,11 +53,9 @@ func main() {
 		otelslog.NewHandler("terminal-card"),
 	)))
 
-	if err := db.Migrate(cfg); err != nil {
-		slog.Error("failed to run database migrations", "error", err)
-		os.Exit(1)
-	}
-
+	// Schema migrations are applied out-of-band by the golang-migrate sidecar
+	// (compose service `migrate`, or `make migrate-up` for local runs), never
+	// coupled to the app process.
 	database, err := db.Connect(cfg)
 	if err != nil {
 		slog.Error("failed to setup database", "error", err)
