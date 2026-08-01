@@ -1,7 +1,7 @@
 version: "2"
 
 run:
-  tests: false
+  tests: true
   timeout: 5m
 
 linters:
@@ -22,12 +22,34 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - wrapcheck
+    # Size and shape gates. Thresholds sit just above the worst function that
+    # survived review, so they block regressions without failing on today's code.
+    # Tighten them when the outliers below get split, not before.
+    - cyclop
+    - funlen
+    - gocognit
+    - nestif
+    - lll
+    - prealloc
 
   exclusions:
     generated: lax
     rules:
       - text: '(slog|log)\.\w+'
         linters:
+          - noctx
+      # Table-driven tests are legitimately long and repetitive, and a test's
+      # branchiness is not a maintenance signal the way production code's is.
+      - path: _test\.go
+        linters:
+          - cyclop
+          - funlen
+          - gocognit
+          - nestif
+          - lll
+          - prealloc
+          - wrapcheck
+          - errcheck
           - noctx
 
   settings:
@@ -38,6 +60,22 @@ linters:
           disabled: true
         - name: package-comments
           disabled: true
+    cyclop:
+      # lobby view handleKey is 21: a flat key dispatch, branchy but not complex.
+      max-complexity: 21
+    funlen:
+      # game.Engine.RemovePlayer is 71 lines; cmd/server run is 53 statements.
+      lines: 75
+      statements: 55
+    gocognit:
+      min-complexity: 30
+    nestif:
+      # poker buildSidePots orphan-chip handling is 8.
+      min-complexity: 9
+    lll:
+      # A handful of repository method signatures sit at 121-134; wrapping those
+      # reads worse than leaving them.
+      line-length: 140
 
 issues:
   max-issues-per-linter: 0

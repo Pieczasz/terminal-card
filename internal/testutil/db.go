@@ -42,9 +42,11 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		),
 	)
 	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "docker") || strings.Contains(errStr, "Docker") || strings.Contains(errStr, "daemon") || strings.Contains(errStr, "provider") {
-			t.Skipf("skipping test because Docker is not available or not running: %v", err)
+		errStr := strings.ToLower(err.Error())
+		for _, marker := range []string{"docker", "daemon", "provider"} {
+			if strings.Contains(errStr, marker) {
+				t.Skipf("skipping test because Docker is not available or not running: %v", err)
+			}
 		}
 		t.Fatalf("failed to start postgres container: %v", err)
 	}
