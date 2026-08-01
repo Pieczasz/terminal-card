@@ -9,12 +9,12 @@ Thanks for contributing. These guidelines keep the project consistent and easy t
 Open an issue with:
 
 - What you were doing
-- What you expected vs what happened
+- What you expected vs. what happened
 - Terminal emulator, OS, and SSH client
 
 ### Suggesting Enhancements
 
-Open an issue describing the idea, why it helps players or operators, and any implementation notes (e.g. a new game for the registry).
+Open an issue describing the idea, why it helps players or operators, and any implementation notes (e.g., a new game for the registry).
 
 ### Code Contributions
 
@@ -40,13 +40,13 @@ make build
 
 ### Make targets
 
-| Target | Purpose |
-|--------|---------|
-| `make all` | fmt, fix, lint, short tests, build |
-| `make test-short` | Unit tests without Docker |
-| `make test` / `make test-integration` | Full suite (testcontainers / Docker) |
-| `make lint` | golangci-lint |
-| `make migrate-up` / `make migrate-down` | Apply SQL migrations via `$DB_DSN` |
+| Target                                  | Purpose                              |
+|-----------------------------------------|--------------------------------------|
+| `make all`                              | fmt, fix, lint, short tests, build   |
+| `make test-short`                       | Unit tests without Docker            |
+| `make test` / `make test-integration`   | Full suite (testcontainers / Docker) |
+| `make lint`                             | golangci-lint                        |
+| `make migrate-up` / `make migrate-down` | Apply SQL migrations via `$DB_DSN`   |
 
 ### Database migrations
 
@@ -69,32 +69,24 @@ Crazy Eights and Poker (NLHE) are registered reference implementations under `in
 
 ### Steps
 
-1. **Rules** — create `internal/game/<name>/` implementing `game.Rules` (and a compile-time `var _ game.Rules = (*YourRules)(nil)`).
-2. **Register the module** in [`cmd/server/main.go`](cmd/server/main.go):
+1. **Rules** - create `internal/game/<name>/` implementing `game.Rules` (and a compile-time `var _ game.Rules = (*YourRules)(nil)`). Add `var _ game.PlayerLeaveHandler = (*YourRules)(nil)` too if you handle mid-game disconnects.
+2. **TUI view** - add `internal/tui/views/game/<name>/` exposing `New(router.GlobalContext, *game.Engine) tea.Model`.
+3. **Register both together** - add one entry to `All` in [`internal/catalog/catalog.go`](internal/catalog/catalog.go). This is the only registration point; `cmd/server/main.go` and `internal/tui/app.go` both read from it, so rules and view can never drift apart:
 
    ```go
-   gameRegistry.RegisterModule(game.Module{
-       Name:    "My Game",
-       Slug:    "my_game",
-       Factory: func() game.Rules { return &mygame.Rules{} },
-   })
+   {
+       Name:  "My Game",
+       Slug:  "my_game",
+       Rules: func() game.Rules { return &mygamerules.Rules{} },
+       View:  mygameview.New,
+   },
    ```
 
-3. **TUI view** — add `internal/tui/views/game/<name>/` and register the factory in [`internal/tui/app.go`](internal/tui/app.go):
+   `internal/catalog` fails its own tests if an entry is missing a name, slug, rules factory or view, or if a slug is duplicated.
+4. **Tests** - unit-test rules (and engine interactions if needed).
+5. **Games table** – match recording calls `GetOrCreateGame` / `FinalizeRankedMatch` lazily; you do not need to seed a `games` row manually for development.
 
-   ```go
-   var gameViews = map[string]ViewFactory{
-       "crazy_eights": crazyeight.New,
-       "poker":        poker.New,
-       "my_game":      mygame.New,
-   }
-   ```
-
-4. **Tests** — unit-test rules (and engine interactions if needed).
-5. **Games table** — match recording calls `GetOrCreateGame` / `FinalizeRankedMatch` lazily; you do not need to seed a `games` row manually for development.
-6. **Tests** — unit-test rules (and engine interactions if needed).
-
-Lobby create options and route names (`game_<slug>`) are derived from the registry — you should not hardcode game lists.
+Lobby create options and route names (`game_<slug>`) are derived from the registry – you should not hardcode game lists.
 
 > **Note:** Production uses SQL migrations under `internal/db/migrations/`. Tests may use GORM AutoMigrate for speed; do not rely on AutoMigrate in production.
 
