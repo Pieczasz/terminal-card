@@ -22,7 +22,7 @@ func TestRouter_RegistrationAndRouting(t *testing.T) {
 	t.Parallel()
 	r := New(GlobalContext{})
 
-	r.Register("mock", func(gc GlobalContext, a any) tea.Model {
+	r.Register("mock", func(GlobalContext, any) tea.Model {
 		return MockModel{}
 	})
 
@@ -36,7 +36,7 @@ func TestRouter_UpdatePropagation(t *testing.T) {
 	t.Parallel()
 	r := New(GlobalContext{})
 
-	r.Register("mock", func(gc GlobalContext, a any) tea.Model {
+	r.Register("mock", func(GlobalContext, any) tea.Model {
 		return MockModel{}
 	})
 
@@ -62,7 +62,7 @@ func TestRouter_WindowSize(t *testing.T) {
 func TestRouter_ChangeViewMsg(t *testing.T) {
 	t.Parallel()
 	r := New(GlobalContext{})
-	r.Register("mock", func(gc GlobalContext, a any) tea.Model {
+	r.Register("mock", func(GlobalContext, any) tea.Model {
 		return MockModel{}
 	})
 
@@ -70,4 +70,59 @@ func TestRouter_ChangeViewMsg(t *testing.T) {
 	r.Update(msg)
 
 	assert.Equal(t, "mock", r.activeKey)
+}
+
+// closableModel records teardown so the router's release contract is observable.
+type closableModel struct {
+	closed *int
+}
+
+func (m closableModel) Init() tea.Cmd                       { return nil }
+func (m closableModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return m, nil }
+func (m closableModel) View() tea.View                      { return tea.NewView("closable") }
+func (m closableModel) Close()                              { *m.closed++ }
+
+func TestRouter_ReleasesOutgoingView(t *testing.T) {
+	t.Parallel()
+	var closed int
+	r := New(GlobalContext{})
+	r.Register("first", func(GlobalContext, any) tea.Model { return closableModel{closed: &closed} })
+	r.Register("second", func(GlobalContext, any) tea.Model { return MockModel{} })
+
+	r.Goto("first", nil)
+	assert.Zero(t, closed)
+
+	// Navigating away must release the view that held the subscription.
+	r.Goto("second", nil)
+	assert.Equal(t, 1, closed)
+
+	// A view that holds nothing is simply skipped.
+	r.Close()
+	assert.Equal(t, 1, closed)
+}
+
+func TestRouter_CloseReleasesActiveView(t *testing.T) {
+	t.Parallel()
+	var closed int
+	r := New(GlobalContext{})
+	r.Register("first", func(GlobalContext, any) tea.Model { return closableModel{closed: &closed} })
+	r.Goto("first", nil)
+
+	r.Close()
+	assert.Equal(t, 1, closed, "session teardown releases the active view")
+
+	r.Close()
+	assert.Equal(t, 1, closed, "Close is idempotent")
+}
+
+// An unknown route must not tear down the view the user is still looking at.
+func TestRouter_UnknownRouteKeepsActiveView(t *testing.T) {
+	t.Parallel()
+	var closed int
+	r := New(GlobalContext{})
+	r.Register("first", func(GlobalContext, any) tea.Model { return closableModel{closed: &closed} })
+	r.Goto("first", nil)
+
+	assert.Nil(t, r.Goto("nope", nil))
+	assert.Zero(t, closed)
 }
