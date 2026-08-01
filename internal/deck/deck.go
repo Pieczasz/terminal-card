@@ -78,7 +78,6 @@ func (p *Pile) IsEmpty() bool {
 	return len(p.cards) < 1
 }
 
-// Cards returns a defensive copy of the pile contents.
 func (p *Pile) Cards() []Card {
 	return slices.Clone(p.cards)
 }

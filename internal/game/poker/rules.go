@@ -23,7 +23,6 @@ var (
 	_ game.PlayerLeaveHandler = (*Rules)(nil)
 )
 
-func (r *Rules) Name() string    { return "Poker" }
 func (r *Rules) MinPlayers() int { return 2 }
 func (r *Rules) MaxPlayers() int { return 9 }
 
@@ -119,7 +118,7 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return extra.HandComplete
 }
 
-func (r *Rules) GetStandings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*player.Player {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return nil
@@ -206,8 +205,8 @@ func cannotAct(extra *State, id string) bool {
 	return isFolded(extra, id) || extra.PlayersAllIn[id] || extra.PlayerChips[id] == 0
 }
 
-// adjustSeatIndex maps a seat marker to its new index after the player at
-// removed leaves. When the marker's own holder leaves it moves back to the
+// adjustSeatIndex maps a seat marker to its new index after the player
+// removed leaves. When the marker's own holder leaves, it moves back to the
 // previous seat rather than silently landing on whoever shifted into the slot.
 func adjustSeatIndex(seat, removed, nAfter int) int {
 	if nAfter <= 0 {
@@ -252,7 +251,7 @@ type ActionAllIn struct{}
 
 func (a ActionAllIn) Name() string { return "poker.AllIn" }
 
-func (r *Rules) PreActionCondition(state *game.State, action game.Action) error {
+func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return errors.New("invalid state type")
@@ -391,7 +390,7 @@ func resetActedExcept(extra *State, state *game.State, exceptID string) {
 	}
 }
 
-func (r *Rules) PostActionCondition(state *game.State, _ game.Action) error {
+func (r *Rules) AfterAction(state *game.State, _ game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return errors.New("invalid state type")

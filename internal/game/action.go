@@ -23,7 +23,7 @@ const (
 )
 
 type PlayerSnapshot struct {
-	ID       string
+	Username string
 	HandSize int
 }
 

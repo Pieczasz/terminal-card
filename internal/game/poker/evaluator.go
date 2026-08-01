@@ -1,8 +1,8 @@
 package poker
 
 import (
+	"cmp"
 	"slices"
-	"sort"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
@@ -30,7 +30,7 @@ const (
 	kickerShift3  = 4
 )
 
-// HandValue is a classified poker hand with kickers for tie-breaking.
+// HandValue is a classified poker hand with kickers for tiebreaking.
 type HandValue struct {
 	Rank    HandRank
 	Kickers [5]int // descending importance; unused slots are 0
@@ -89,8 +89,8 @@ func normalizeCards(cards []deck.Card) []rankedCard {
 	for _, c := range cards {
 		hand = append(hand, rankedCard{rank: rankValue(c.Rank), suit: c.Suit})
 	}
-	sort.Slice(hand, func(i, j int) bool {
-		return hand[i].rank > hand[j].rank
+	slices.SortFunc(hand, func(a, b rankedCard) int {
+		return cmp.Compare(b.rank, a.rank)
 	})
 	return hand
 }

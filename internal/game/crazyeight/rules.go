@@ -2,6 +2,7 @@ package crazyeight
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 
@@ -12,9 +13,11 @@ import (
 
 type Rules struct{}
 
-var _ game.Rules = (*Rules)(nil)
+var (
+	_ game.Rules              = (*Rules)(nil)
+	_ game.PlayerLeaveHandler = (*Rules)(nil)
+)
 
-func (r *Rules) Name() string    { return "Crazy Eights" }
 func (r *Rules) MinPlayers() int { return 2 }
 func (r *Rules) MaxPlayers() int { return 6 }
 
@@ -67,7 +70,7 @@ func validSuit(s deck.Suit) bool {
 	}
 }
 
-func (r *Rules) PreActionCondition(state *game.State, action game.Action) error {
+func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	topCard, ok := state.Discard.Peek()
 	if !ok {
 		return errors.New("no cards in discard pile")
@@ -150,7 +153,11 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 
 	case ActionDrawCard:
 		if state.Deck.IsEmpty() {
-			reshuffleDiscardIntoDeck(state)
+			if err := reshuffleDiscardIntoDeck(state); err != nil {
+				slog.Error("crazy eights reshuffle failed", "error", err)
+				extra.Passes++ // fail closed: do not draw from an untrusted order
+				return
+			}
 		}
 		drawn, ok := state.Deck.Draw()
 		if !ok {
@@ -163,19 +170,26 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 }
 
 // reshuffleDiscardIntoDeck moves the discard pile (except its top card) back
-// into the stock and shuffles, conserving every card.
-func reshuffleDiscardIntoDeck(state *game.State) {
+// into the stock and shuffles, conserving every card. On shuffle failure the
+// discard is restored so the stock stays empty and the caller can fail closed.
+func reshuffleDiscardIntoDeck(state *game.State) error {
 	top, ok := state.Discard.Draw()
 	if !ok {
-		return
+		return nil
 	}
 	rest := state.Discard.Cards()
 	state.Discard = deck.New([]deck.Card{top})
 	state.Deck.AddCard(rest...)
-	_ = state.Deck.Shuffle()
+	if err := state.Deck.Shuffle(); err != nil {
+		// Restore prior piles so we never leave an unshuffled stock in play.
+		state.Discard.AddCard(rest...)
+		state.Deck = deck.New(nil)
+		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
+	}
+	return nil
 }
 
-func (r *Rules) PostActionCondition(_ *game.State, _ game.Action) error {
+func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
 	return nil
 }
 
@@ -186,7 +200,7 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 		}
 	}
 	// Every player passed in succession: the board is exhausted with no legal
-	// move, so the hand is deadlocked and ends (GetStandings ranks by fewest cards).
+	// move, so the hand is deadlocked and ends (Standings ranks by fewest cards).
 	if extra, ok := state.Extra.(*State); ok && len(state.Players) > 0 && extra.Passes >= len(state.Players) {
 		return true
 	}
@@ -200,7 +214,9 @@ func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 		if p.ID == playerID {
 			state.Deck.AddCard(p.Cards...)
 			p.Cards = nil
-			_ = state.Deck.Shuffle()
+			if err := state.Deck.Shuffle(); err != nil {
+				slog.Error("crazy eights shuffle after leave failed", "error", err, "player_id", playerID)
+			}
 			return
 		}
 	}
@@ -209,9 +225,8 @@ func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 // AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
-func (r *Rules) GetStandings(state *game.State) []*player.Player {
-	standings := make([]*player.Player, len(state.Players))
-	copy(standings, state.Players)
+func (r *Rules) Standings(state *game.State) []*player.Player {
+	standings := slices.Clone(state.Players)
 
 	slices.SortStableFunc(standings, func(a, b *player.Player) int {
 		return len(a.Cards) - len(b.Cards)
