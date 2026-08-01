@@ -38,33 +38,8 @@ const (
 	ctxKeyOwnsConnection ctxKey = iota
 	ctxKeyUser
 	ctxKeyTraceCtx
+	ctxKeyModel
 )
-
-// sessionTraceContext returns the context carrying the session span (set by the
-// outer middleware) so downstream DB calls and logs join the session trace.
-func sessionTraceContext(s ssh.Session) context.Context {
-	if ctx, ok := s.Context().Value(ctxKeyTraceCtx).(context.Context); ok {
-		return ctx
-	}
-	return s.Context()
-}
-
-// rateLimitAuth enforces per-host rate limiting during auth. It must run here,
-// not in a session middleware, which only runs after auth already succeeded.
-func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHandler) ssh.PublicKeyHandler {
-	return func(ctx ssh.Context, key ssh.PublicKey) bool {
-		host, _, err := net.SplitHostPort(ctx.RemoteAddr().String())
-		if err != nil {
-			host = ctx.RemoteAddr().String()
-		}
-		if !limiter.Allow(host) {
-			observability.RateLimitRejectsTotal.Add(1)
-			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String())
-			return false
-		}
-		return next(ctx, key)
-	}
-}
 
 type SessionTracker struct {
 	mu     sync.Mutex
@@ -105,20 +80,6 @@ type ServerDependencies struct {
 	GameRegistry    *game.Registry
 }
 
-func ensureHostKeyPermissions(path string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return fmt.Errorf("stat ssh host key: %w", err)
-	}
-	mode := info.Mode().Perm()
-	if mode&0o077 != 0 {
-		if err := os.Chmod(path, 0o600); err != nil {
-			return fmt.Errorf("chmod ssh host key: %w", err)
-		}
-	}
-	return nil
-}
-
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	key, err := keygen.New(deps.Config.SSHKeyPath, keygen.WithKeyType(keygen.Ed25519))
 	if err != nil {
@@ -149,65 +110,10 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		// runs the handler in a goroutine with no recover, so an escaped panic would
 		// crash the whole process, and cleanup must run on every disconnect.
 		wish.WithMiddleware(
-			bm.Middleware(func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
-				traceCtx := sessionTraceContext(s)
-				fingerprint, err := AuthenticateSession(s)
-				if err != nil {
-					wish.Fatalf(s, "%v\n", err)
-					return nil, nil
-				}
-				user, err := LoadOrRegisterUser(traceCtx, deps.UserRepository, s.User(), fingerprint)
-				if err != nil {
-					wish.Fatalf(s, "%v\n", err)
-					return nil, nil
-				}
-
-				if !tracker.Connect(user.ID) {
-					wish.Fatalf(s, "Account '%s' is already connected from another session.\n", user.Username)
-					return nil, nil
-				}
-
-				// Mark ownership immediately after Connect so panic recovery always disconnects.
-				s.Context().SetValue(ctxKeyOwnsConnection, true)
-				s.Context().SetValue(ctxKeyUser, user)
-
-				return tui.Model(traceCtx, *user, deps.UserRepository, deps.MatchRepository, deps.LobbyManager, deps.GameRegistry), []tea.ProgramOption{}
-			}),
+			bm.Middleware(sessionModel(deps, tracker)),
 			activeterm.Middleware(),
 			logging.StructuredMiddleware(),
-			func(sh ssh.Handler) ssh.Handler {
-				return func(s ssh.Session) {
-					ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
-						trace.WithAttributes(attribute.String("remote_addr", s.RemoteAddr().String())))
-					s.Context().SetValue(ctxKeyTraceCtx, ctx)
-					defer func() {
-						if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
-							span.SetAttributes(attribute.String("user", u.Username))
-						}
-						span.End()
-					}()
-
-					defer func() {
-						if r := recover(); r != nil {
-							slog.Error("critical panic recovered during ssh session",
-								"panic", r,
-								"remote_addr", s.RemoteAddr().String(),
-							)
-							wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
-						}
-
-						if s.Context().Value(ctxKeyOwnsConnection) == true {
-							if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
-								tracker.Disconnect(u.ID)
-								p := &player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u}
-								deps.LobbyManager.LeaveLobby(p)
-							}
-						}
-					}()
-
-					sh(s)
-				}
-			},
+			sessionLifecycle(deps, tracker),
 		),
 	)
 	if err != nil {
@@ -215,4 +121,135 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	}
 
 	return server, nil
+}
+
+func ensureHostKeyPermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("stat ssh host key: %w", err)
+	}
+	mode := info.Mode().Perm()
+	if mode&0o077 != 0 {
+		if err := os.Chmod(path, 0o600); err != nil {
+			return fmt.Errorf("chmod ssh host key: %w", err)
+		}
+	}
+	return nil
+}
+
+func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHandler) ssh.PublicKeyHandler {
+	return func(ctx ssh.Context, key ssh.PublicKey) bool {
+		host, _, err := net.SplitHostPort(ctx.RemoteAddr().String())
+		if err != nil {
+			host = ctx.RemoteAddr().String()
+		}
+		if !limiter.Allow(host) {
+			observability.RateLimitRejectsTotal.Add(1)
+			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String(), "session_id", ctx.SessionID())
+			return false
+		}
+		return next(ctx, key)
+	}
+}
+
+// sessionTraceContext returns the context carrying the session span (set by the
+// outer middleware), so downstream DB calls and logs join the session trace.
+func sessionTraceContext(s ssh.Session) context.Context {
+	if ctx, ok := s.Context().Value(ctxKeyTraceCtx).(context.Context); ok {
+		return ctx
+	}
+	return s.Context()
+}
+
+// sessionModel authenticates the session and builds the TUI for it, rejecting the
+// connection if the user is already connected elsewhere. Returning a nil model
+// after wish.Fatalf is how this middleware refuses a session.
+func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
+	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
+		traceCtx := sessionTraceContext(s)
+		fingerprint, err := AuthenticateSession(s)
+		if err != nil {
+			wish.Fatalf(s, "%v\n", err)
+			return nil, nil
+		}
+		user, err := LoadOrRegisterUser(traceCtx, deps.UserRepository, s.User(), fingerprint)
+		if err != nil {
+			wish.Fatalf(s, "%v\n", err)
+			return nil, nil
+		}
+		if !tracker.Connect(user.ID) {
+			wish.Fatalf(s, "Account '%s' is already connected from another session.\n", user.Username)
+			return nil, nil
+		}
+
+		s.Context().SetValue(ctxKeyOwnsConnection, true)
+		s.Context().SetValue(ctxKeyUser, user)
+
+		// Stash the model so sessionLifecycle can tear it down once the program
+		// returns; a disconnect never runs the views' own exit paths.
+		model := tui.Model(tui.ModelDependencies{
+			SessionCtx:   traceCtx,
+			User:         *user,
+			UserRepo:     deps.UserRepository,
+			MatchRepo:    deps.MatchRepository,
+			LobbyManager: deps.LobbyManager,
+			GameRegistry: deps.GameRegistry,
+		})
+		s.Context().SetValue(ctxKeyModel, model)
+
+		return model, []tea.ProgramOption{}
+	}
+}
+
+// sessionLifecycle spans the session, recovers panics, and releases everything the
+// session held. It is the outermost middleware so it wraps the bubbletea program:
+// charmbracelet/ssh runs the handler in a goroutine with no recover, so an escaped
+// panic would crash the whole process, and cleanup must run on every disconnect.
+func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Middleware {
+	return func(sh ssh.Handler) ssh.Handler {
+		return func(s ssh.Session) {
+			ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
+				trace.WithAttributes(attribute.String("remote_addr", s.RemoteAddr().String())))
+			s.Context().SetValue(ctxKeyTraceCtx, ctx)
+			defer func() {
+				if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
+					span.SetAttributes(attribute.String("user", u.Username))
+				}
+				span.End()
+			}()
+			defer releaseSession(s, deps, tracker)
+
+			sh(s)
+		}
+	}
+}
+
+// releaseSession runs on every disconnect, panic or not.
+//
+// It must stay deferred directly (defer releaseSession(...)): recover only stops a
+// panic when called by the deferred function itself, so wrapping this in another
+// helper would silently let panics escape and take the process down.
+func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
+	if r := recover(); r != nil {
+		slog.Error("critical panic recovered during ssh session",
+			"panic", r,
+			"remote_addr", s.RemoteAddr().String(),
+		)
+		wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+	}
+
+	// Release event subscriptions the active view still holds, or a mid-game
+	// disconnect parks its listener goroutine and keeps a broadcaster slot until
+	// the engine itself closes.
+	if c, ok := s.Context().Value(ctxKeyModel).(interface{ Close() }); ok {
+		c.Close()
+	}
+
+	if s.Context().Value(ctxKeyOwnsConnection) != true {
+		return
+	}
+	if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
+		tracker.Disconnect(u.ID)
+		deps.LobbyManager.LeaveLobby(&player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u})
+	}
 }

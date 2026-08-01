@@ -18,15 +18,15 @@ import (
 
 var tracer = otel.Tracer("terminal-card/repository")
 
-type GormMatchRepository struct {
+type gormMatchRepository struct {
 	db *gorm.DB
 }
 
 func NewMatchRepository(db *gorm.DB) db.MatchRepository {
-	return &GormMatchRepository{db: db}
+	return &gormMatchRepository{db: db}
 }
 
-func (q *GormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
+func (q *gormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
 	return getOrCreateGame(q.db.WithContext(ctx), name)
 }
 
@@ -48,7 +48,7 @@ func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
 	return &game, nil
 }
 
-func (q *GormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
+func (q *gormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
 	if len(orderedUserIDs) == 0 {
 		return map[uint]int{}, nil
 	}
@@ -65,7 +65,7 @@ func (q *GormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, o
 	return deltas, nil
 }
 
-func (q *GormMatchRepository) RecordMatch(ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
+func (q *gormMatchRepository) RecordMatch(ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
@@ -80,7 +80,7 @@ func (q *GormMatchRepository) RecordMatch(ctx context.Context, gameID uint, orde
 
 // FinalizeRankedMatch creates/looks up the game, updates rankings, and records the match
 // in a single database transaction so ELO and history cannot diverge.
-func (q *GormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
+func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
@@ -107,7 +107,7 @@ func (q *GormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 	return nil
 }
 
-func (q *GormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
+func (q *gormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
 	deltas := make(map[uint]int)
 
 	rankingMap, err := q.fetchRankings(tx, gameID, orderedUserIDs)
@@ -152,7 +152,7 @@ func (q *GormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, ordered
 	return deltas, nil
 }
 
-func (q *GormMatchRepository) recordMatchTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
+func (q *gormMatchRepository) recordMatchTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
 	match, err := q.recordNewMatch(tx, gameID)
 	if err != nil {
 		return err
@@ -172,7 +172,7 @@ func (q *GormMatchRepository) recordMatchTx(tx *gorm.DB, gameID uint, orderedUse
 	return nil
 }
 
-func (q *GormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uint) (map[uint]*db.Ranking, error) {
+func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uint) (map[uint]*db.Ranking, error) {
 	var rankings []db.Ranking
 	// FOR UPDATE: serialize concurrent finalize transactions to avoid lost Elo updates.
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -187,8 +187,8 @@ func (q *GormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []
 	return rankingMap, nil
 }
 
-func (q *GormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) map[string]float64 {
-	var players []elo.Player
+func (q *gormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) map[string]float64 {
+	players := make([]elo.Player, 0, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
 		rating := elo.DefaultRating
 		if r, ok := rankingMap[userID]; ok {
@@ -202,7 +202,7 @@ func (q *GormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap
 	return elo.Calculate(players)
 }
 
-func (q *GormMatchRepository) recordNewMatch(tx *gorm.DB, gameID uint) (*db.Match, error) {
+func (q *gormMatchRepository) recordNewMatch(tx *gorm.DB, gameID uint) (*db.Match, error) {
 	match := db.Match{GameID: gameID}
 	if err := tx.Create(&match).Error; err != nil {
 		return nil, fmt.Errorf("create match: %w", err)

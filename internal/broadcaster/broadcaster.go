@@ -14,8 +14,8 @@ type subscriber[T any] struct {
 	ch chan T
 }
 
-// This in-process broadcaster is intentional for the single-node deployment.
-// Horizontal scaling across servers would need a shared pub/sub (e.g. Watermill
+// Broadcaster is built for the single-node deployment.
+// Horizontal scaling across servers would need a shared pub/sub (e.g., Watermill
 // over Redis); revisit only if the app runs multi-node.
 type Broadcaster[T any] struct {
 	mu             sync.RWMutex
@@ -45,15 +45,12 @@ func (b *Broadcaster[T]) Subscribe() <-chan T {
 		return ch
 	}
 	if len(b.subscribers) >= b.maxSubscribers {
-		// A real subscriber getting a dead channel silently freezes its view, so
-		// make capacity exhaustion visible rather than swallowing it.
 		slog.Warn("broadcaster at capacity, rejecting subscriber", "max", b.maxSubscribers)
 		ch := make(chan T)
 		close(ch)
 		return ch
 	}
 
-	// Using a larger buffer size to reduce the chance of dropped messages under heavy UI interaction
 	ch := make(chan T, 256)
 	b.subscribers[b.nextID] = &subscriber[T]{ch: ch, id: b.nextID}
 	b.nextID++
@@ -115,7 +112,6 @@ func (b *Broadcaster[T]) Close() {
 	}
 }
 
-// Len returns the number of active subscribers (tests/metrics).
 func (b *Broadcaster[T]) Len() int {
 	b.mu.RLock()
 	defer b.mu.RUnlock()

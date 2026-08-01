@@ -2,6 +2,7 @@ package poker
 
 import (
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 
@@ -164,18 +165,11 @@ func showdownWinners(state *game.State, extra *State, scores map[string]int) []*
 }
 
 func buildSidePots(state *game.State, extra *State) []Pot {
-	var levels []uint
-	seen := map[uint]bool{}
-	// Include contributions from still-seated players and folded maps keyed by ID.
-	for id, c := range extra.TotalContributed {
-		if c == 0 || seen[c] {
-			continue
-		}
-		_ = id
-		seen[c] = true
-		levels = append(levels, c)
-	}
-	slices.Sort(levels)
+	// Distinct non-zero contribution levels, ascending: each one closes a pot
+	// layer. Contributions come from every player who put chips in, seated or not.
+	levels := slices.Sorted(maps.Values(extra.TotalContributed))
+	levels = slices.Compact(levels)
+	levels = slices.DeleteFunc(levels, func(c uint) bool { return c == 0 })
 
 	var pots []Pot
 	var orphan uint

@@ -45,7 +45,7 @@ func (m model) Init() tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.global.RequestContext(), 5*time.Second)
 		defer cancel()
-		rankings, err := m.global.UserRepository.GetBestPlayers(ctx, maxLeaderboardPlayers)
+		rankings, err := m.global.UserRepository.BestPlayers(ctx, maxLeaderboardPlayers)
 		return loadedMsg{rankings: rankings, err: err}
 	}
 }
@@ -62,24 +62,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("database error while fetching leaderboard", "error", msg.err)
 		}
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "esc", "q":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
-		case "n":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_create"} }
-		case "f":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby_join"} }
-		case "p":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "profile"} }
-		case "t":
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "leaderboard"} }
+		if route, ok := views.GlobalRoute(msg.String()); ok {
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }
+		}
+		if key := msg.String(); key == "esc" || key == "q" {
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 		}
 	}
 	return m, nil
 }
 
 func (m model) View() tea.View {
-	innerWidth := styles.GetInnerWidth(m.global.Width)
+	innerWidth := styles.InnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Leaderboard", innerWidth)
 	titleText := styles.Title.Render(titleFig)
 	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
@@ -93,8 +87,8 @@ func (m model) View() tea.View {
 	} else if len(m.rankings) == 0 {
 		content = m.renderEmpty()
 	} else {
-		contentHeight := styles.GetAvailableContentHeight(m.global.Height, titleText, footer)
-		contentWidth := styles.GetAvailableContentWidth(m.global.Width)
+		contentHeight := styles.AvailableContentHeight(m.global.Height, titleText, footer)
+		contentWidth := styles.AvailableContentWidth(m.global.Width)
 		content = m.renderRankings(contentWidth, contentHeight)
 	}
 
@@ -151,7 +145,7 @@ func (m model) renderRankings(contentWidth, contentHeight int) string {
 }
 
 func (m model) renderHeaderRow(playerWidth int) string {
-	return lg.NewStyle().Foreground(lg.Color("#FFA500")).Bold(true).Render(
+	return styles.SectionHeading.Render(
 		fmt.Sprintf("%-5s | %-*s | %-15s | %s", "Rank", playerWidth, "Player", "Game", "Elo"),
 	)
 }

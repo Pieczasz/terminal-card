@@ -61,7 +61,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 			ch = b.Subscribe()
 		}
 	}
-	m := Model{
+	m := &Model{
 		global:          global,
 		bound:           bound,
 		events:          ch,
@@ -69,11 +69,11 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 		selectionLift:   2.0,
 		selectionVel:    0,
 	}
-	m = m.syncState()
+	m.syncState()
 	return m
 }
 
-func (m Model) syncState() Model {
+func (m *Model) syncState() {
 	m.baseState = gameview.SyncBaseState(m.global, m.bound)
 
 	if m.bound != nil {
@@ -87,11 +87,9 @@ func (m Model) syncState() Model {
 	if m.selectedCardIdx >= len(m.baseState.Hand) {
 		m.selectedCardIdx = max(len(m.baseState.Hand)-1, 0)
 	}
-
-	return m
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		listenForEvents(m.events),
 		animation.Tick(),

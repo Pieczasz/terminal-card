@@ -23,7 +23,7 @@ type mockLogsService struct {
 	requests []*collogpb.ExportLogsServiceRequest
 }
 
-func (m *mockLogsService) Export(ctx context.Context, req *collogpb.ExportLogsServiceRequest) (*collogpb.ExportLogsServiceResponse, error) {
+func (m *mockLogsService) Export(_ context.Context, req *collogpb.ExportLogsServiceRequest) (*collogpb.ExportLogsServiceResponse, error) {
 	m.requests = append(m.requests, req)
 	return &collogpb.ExportLogsServiceResponse{}, nil
 }

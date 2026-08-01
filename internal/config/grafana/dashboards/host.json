@@ -7,7 +7,7 @@
   "tags": ["terminal-card", "host"],
   "time": {"from": "now-6h", "to": "now"},
   "timezone": "browser",
-  "title": "Terminal Card — Host (Linux)",
+  "title": "Terminal Card - Host (Linux)",
   "uid": "tc-host",
   "version": 1,
   "panels": [

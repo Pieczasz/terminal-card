@@ -88,7 +88,7 @@ func setupDefaultOptions() *options {
 	return &options{
 		maxPlayers: 4,
 		isPrivate:  true,
-		isRanked:   true,
+		isRanked:   false, // casual by default; leaders opt into ranked Elo
 	}
 }
 
@@ -108,6 +108,14 @@ func (l *Lobby) takeBroadcaster() *broadcaster.Broadcaster[Event] {
 func (l *Lobby) SetPrivate(actor *player.Player, isPrivate bool) error {
 	return l.withLeaderSettings(actor, func() error {
 		l.options.isPrivate = isPrivate
+		return nil
+	})
+}
+
+// SetRanked updates whether the lobby writes Elo on finish. Leader-only while waiting.
+func (l *Lobby) SetRanked(actor *player.Player, isRanked bool) error {
+	return l.withLeaderSettings(actor, func() error {
+		l.options.isRanked = isRanked
 		return nil
 	})
 }
@@ -142,7 +150,7 @@ func (l *Lobby) SetCardGame(actor *player.Player, g *db.Game) error {
 // actor is the leader and the lobby is Waiting. Broadcasts SETTINGS_UPDATED on success.
 func (l *Lobby) withLeaderSettings(actor *player.Player, mutate func() error) error {
 	l.mu.Lock()
-	if !l.leader.Compare(actor) {
+	if !l.leader.Equal(actor) {
 		l.mu.Unlock()
 		return errors.New("only the leader can change settings")
 	}
@@ -165,12 +173,12 @@ func (l *Lobby) withLeaderSettings(actor *player.Player, mutate func() error) er
 // RemovePlayer removes a player. Returns true if the lobby should be closed (empty).
 // Prefer Manager.LeaveLobby / Manager.Kick so playerLobby stays consistent.
 func (l *Lobby) RemovePlayer(p *player.Player) bool {
+	if p == nil {
+		return false
+	}
 	l.mu.Lock()
 
-	playerID := ""
-	if p != nil {
-		playerID = p.ID
-	}
+	playerID := p.ID
 	l.unsubscribePlayerLocked(playerID)
 
 	engine, bc, eventType, shouldClose, ok := l.detachPlayerLocked(p)
@@ -184,11 +192,16 @@ func (l *Lobby) RemovePlayer(p *player.Player) bool {
 
 // detachPlayerLocked mutates roster for a leaving player. Caller holds l.mu.
 // Returns false in ok if the player was not in the lobby.
-func (l *Lobby) detachPlayerLocked(p *player.Player) (engine *game.Engine, bc *broadcaster.Broadcaster[Event], eventType string, shouldClose, ok bool) {
+func (l *Lobby) detachPlayerLocked(p *player.Player) (
+	engine *game.Engine,
+	bc *broadcaster.Broadcaster[Event],
+	eventType string,
+	shouldClose, ok bool,
+) {
 	engine = l.activeEngine
 	bc = l.broadcaster
 
-	if l.leader.Compare(p) {
+	if l.leader.Equal(p) {
 		if len(l.guests) > 0 {
 			l.leader = l.guests[0]
 			l.guests = l.guests[1:]
@@ -199,7 +212,7 @@ func (l *Lobby) detachPlayerLocked(p *player.Player) (engine *game.Engine, bc *b
 		return engine, bc, EventLobbyClosed, true, true
 	}
 
-	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Compare(p) }); idx != -1 {
+	if idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Equal(p) }); idx != -1 {
 		l.removeGuestAtLocked(idx)
 		return engine, bc, EventPlayersUpdated, false, true
 	}
@@ -337,6 +350,12 @@ func (l *Lobby) MaxPlayers() int {
 	return l.options.maxPlayers
 }
 
+func (l *Lobby) IsRanked() bool {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.options.isRanked
+}
+
 func (l *Lobby) IsPrivate() bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -358,8 +377,7 @@ func (l *Lobby) Leader() *player.Player {
 func (l *Lobby) Guests() []*player.Player {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	guests := make([]*player.Player, len(l.guests))
-	copy(guests, l.guests)
+	guests := slices.Clone(l.guests)
 	return guests
 }
 
@@ -384,7 +402,7 @@ func (l *Lobby) IsReady(p *player.Player) bool {
 func (l *Lobby) IsLeader(p *player.Player) bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	return l.leader.Compare(p)
+	return l.leader.Equal(p)
 }
 
 func playerEloForGame(p *player.Player, gameName string) uint32 {
@@ -437,11 +455,11 @@ func (l *Lobby) addGuest(p *player.Player) error {
 		return errors.New("this lobby is full")
 	}
 
-	if l.leader.Compare(p) {
+	if l.leader.Equal(p) {
 		return errors.New("player is already the leader of this lobby")
 	}
 	for _, g := range l.guests {
-		if g.Compare(p) {
+		if g.Equal(p) {
 			return errors.New("player is already in this lobby")
 		}
 	}
@@ -452,11 +470,11 @@ func (l *Lobby) addGuest(p *player.Player) error {
 }
 
 func (l *Lobby) hasPlayerNoLock(p *player.Player) bool {
-	if l.leader.Compare(p) {
+	if l.leader.Equal(p) {
 		return true
 	}
 	for _, g := range l.guests {
-		if g.Compare(p) {
+		if g.Equal(p) {
 			return true
 		}
 	}
@@ -485,10 +503,10 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 		return nil, fmt.Errorf("need at least %d players to start", rules.MinPlayers())
 	}
 	if totalPlayers > rules.MaxPlayers() {
-		return nil, fmt.Errorf("too many players for this game")
+		return nil, errors.New("too many players for this game")
 	}
 
-	players := append([]*player.Player{l.leader}, l.guests...)
+	players := slices.Concat([]*player.Player{l.leader}, l.guests)
 	engine := game.NewEngine(rules, players, rules.InitialDeck())
 
 	if err := engine.Start(); err != nil {
@@ -543,9 +561,13 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 		l.mu.RUnlock()
 
 		if isRanked && gameName != "" && l.manager != nil && l.manager.matchRepo != nil {
+			// Registered before the write so shutdown waits for it rather than
+			// closing the database handle mid-statement.
+			l.manager.finalizing.Add(1)
 			ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
 			err := l.manager.matchRepo.FinalizeRankedMatch(ctx, gameName, userIDs)
 			cancel()
+			l.manager.finalizing.Done()
 			if err != nil {
 				slog.Error("failed to finalize ranked match", "error", err, "game", gameName)
 			}

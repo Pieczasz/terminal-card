@@ -33,10 +33,10 @@ func TestLoad_Defaults(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "development", cfg.Env)
 	assert.Equal(t, 6969, cfg.ServerPort)
-	assert.Equal(t, "disable", cfg.DBSslMode)
+	assert.Equal(t, "disable", cfg.DBSSLMode)
 	assert.Equal(t, 5, cfg.RateLimitCount)
 	assert.Equal(t, time.Second, cfg.RateLimitWindow)
-	assert.Equal(t, 25, cfg.DBMaxOpenConns)
+	assert.Equal(t, 25, cfg.DBMaxOpenConnections)
 	assert.True(t, cfg.OTelInsecure)
 	assert.NotEmpty(t, cfg.ServiceVersion)
 }
@@ -58,7 +58,7 @@ func TestLoad_ProductionSSLDefault(t *testing.T) {
 
 	cfg, err := config.Load()
 	require.NoError(t, err)
-	assert.Equal(t, "require", cfg.DBSslMode)
+	assert.Equal(t, "require", cfg.DBSSLMode)
 }
 
 func TestLoad_InvalidPort(t *testing.T) {
@@ -88,7 +88,7 @@ func TestDSN(t *testing.T) {
 		DBPassword: "secret",
 		DBName:     "terminal_card",
 		DBPort:     5432,
-		DBSslMode:  "disable",
+		DBSSLMode:  "disable",
 	}
 	assert.Contains(t, cfg.DSN(), "host=localhost")
 	migrate := cfg.MigrateDSN()
@@ -103,7 +103,7 @@ func TestMigrateDSN_EncodesPassword(t *testing.T) {
 		DBPassword: "p@ss:word/x",
 		DBName:     "terminal_card",
 		DBPort:     5432,
-		DBSslMode:  "require",
+		DBSSLMode:  "require",
 	}
 	migrate := cfg.MigrateDSN()
 	assert.Contains(t, migrate, "p%40ss%3Aword%2Fx")
@@ -113,13 +113,13 @@ func TestMigrateDSN_EncodesPassword(t *testing.T) {
 func TestValidate_InsecureDBRemoteHost(t *testing.T) {
 	t.Setenv("ALLOW_INSECURE_DB", "")
 	cfg := &config.Config{
-		Env:             "production",
-		DBPassword:      "secret",
-		DBHost:          "db.example.com",
-		DBSslMode:       "disable",
-		RateLimitCount:  5,
-		RateLimitWindow: time.Second,
-		DBMaxOpenConns:  25,
+		Env:                  "production",
+		DBPassword:           "secret",
+		DBHost:               "db.example.com",
+		DBSSLMode:            "disable",
+		RateLimitCount:       5,
+		RateLimitWindow:      time.Second,
+		DBMaxOpenConnections: 25,
 	}
 	err := cfg.Validate()
 	require.Error(t, err)

@@ -269,7 +269,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 	registry := game.NewRegistry()
 	mockRules := new(MockRules)
 	mockRules.On("MinPlayers").Return(members + 100)
-	registry.Register("NeverStarts", func() game.Rules { return mockRules })
+	registerGame(registry, "NeverStarts", mockRules)
 
 	var (
 		start = make(chan struct{})

@@ -5,12 +5,11 @@ import (
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
@@ -20,12 +19,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKey(msg)
 	case gameMsg:
 		m.lastErr = nil
-		return m.syncState(), listenForEvents(m.events)
+		m.syncState()
+		return m, listenForEvents(m.events)
 	}
 	return m, nil
 }
 
-func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		return m.handleEscape()
@@ -51,61 +51,61 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m.beginRaise()
 	case "[", "h":
-		if m.raising {
-			step := m.minRaise
-			if step == 0 {
-				step = logic.DefaultBigBlind
-			}
-			if m.raiseAmount > step {
-				m.raiseAmount -= step
-			}
-			minTo := m.currentBet + m.minRaise
-			if m.raiseAmount < minTo {
-				m.raiseAmount = minTo
-			}
-		}
+		m.stepRaise(-1)
 		return m, nil
 	case "]", "l":
-		if m.raising {
-			step := m.minRaise
-			if step == 0 {
-				step = logic.DefaultBigBlind
-			}
-			m.raiseAmount += step
-			maxTo := m.streetBetMax()
-			if m.raiseAmount > maxTo {
-				m.raiseAmount = maxTo
-			}
-		}
+		m.stepRaise(+1)
 		return m, nil
 	case "enter":
-		if m.baseState.Phase == game.Finished {
-			return m.returnToLobby()
-		}
-		if m.raising && m.baseState.MyTurn {
-			amt := m.raiseAmount
-			m.raising = false
-			return m.submit(logic.ActionRaiseTo{Amount: amt})
-		}
-		return m, nil
+		return m.confirm()
 	}
 	return m, nil
 }
 
-func (m Model) beginRaise() (tea.Model, tea.Cmd) {
+// stepRaise nudges the pending raise by one bet increment, staying inside the legal
+// range. It is a no-op unless the raise prompt is open.
+func (m *Model) stepRaise(direction int) {
+	if !m.raising {
+		return
+	}
+	step := m.minRaise
+	if step == 0 {
+		step = logic.DefaultBigBlind
+	}
+	if direction < 0 {
+		// uint: only subtract when it would not wrap.
+		if m.raiseAmount > step {
+			m.raiseAmount -= step
+		}
+	} else {
+		m.raiseAmount += step
+	}
+	m.raiseAmount = m.clampRaise(m.raiseAmount)
+}
+
+// confirm either leaves a finished hand or commits the pending raise.
+func (m *Model) confirm() (tea.Model, tea.Cmd) {
+	if m.baseState.Phase == game.Finished {
+		return m.returnToLobby()
+	}
+	if m.raising && m.baseState.MyTurn {
+		amount := m.raiseAmount
+		m.raising = false
+		return m.submit(logic.ActionRaiseTo{Amount: amount})
+	}
+	return m, nil
+}
+
+func (m *Model) beginRaise() (tea.Model, tea.Cmd) {
 	if !m.canRaise() {
 		return m, nil
 	}
 	m.raising = true
-	m.raiseAmount = m.currentBet + m.minRaise
-	maxTo := m.streetBetMax()
-	if m.raiseAmount > maxTo {
-		m.raiseAmount = maxTo
-	}
+	m.raiseAmount = m.clampRaise(m.currentBet + m.minRaise)
 	return m, nil
 }
 
-func (m Model) submit(action game.Action) (tea.Model, tea.Cmd) {
+func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	if m.bound == nil || !m.baseState.MyTurn {
 		return m, nil
 	}
@@ -117,20 +117,20 @@ func (m Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	// move without waiting for the broadcast event to round-trip.
 	m.lastErr = nil
 	m.raising = false
-	return m.syncState(), nil
+	m.syncState()
+	return m, nil
 }
 
-func (m Model) unsubscribe() Model {
+func (m *Model) unsubscribe() {
 	if m.bound != nil && m.events != nil {
 		if b := m.bound.Broadcaster(); b != nil {
 			b.Unsubscribe(m.events)
 		}
 		m.events = nil
 	}
-	return m
 }
 
-func (m Model) handleEscape() (tea.Model, tea.Cmd) {
+func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.raising {
 		m.raising = false
 		return m, nil
@@ -138,22 +138,29 @@ func (m Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
 		return m.returnToLobby()
 	}
-	p := gameview.SessionPlayer(m.global)
+	p := views.SessionPlayer(m.global)
 	if p == nil {
-		m = m.unsubscribe()
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+		m.unsubscribe()
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 	}
 	m.global.LobbyManager.LeaveLobby(p)
-	m = m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+	m.unsubscribe()
+	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 }
 
-func (m Model) returnToLobby() (tea.Model, tea.Cmd) {
-	p := gameview.SessionPlayer(m.global)
+func (m *Model) returnToLobby() (tea.Model, tea.Cmd) {
+	p := views.SessionPlayer(m.global)
 	var l any
 	if p != nil {
 		l = m.global.LobbyManager.FindLobbyByPlayer(p)
 	}
-	m = m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
+	m.unsubscribe()
+	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
+}
+
+// Close releases the engine subscription when the router replaces this view or the
+// session ends. Without it a mid-game disconnect never runs the esc/enter paths,
+// so the listener goroutine stays parked on the event channel.
+func (m *Model) Close() {
+	m.unsubscribe()
 }

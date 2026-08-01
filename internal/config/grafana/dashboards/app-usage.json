@@ -7,7 +7,7 @@
   "tags": ["terminal-card"],
   "time": {"from": "now-6h", "to": "now"},
   "timezone": "browser",
-  "title": "Terminal Card — App Usage",
+  "title": "Terminal Card - App Usage",
   "uid": "tc-app-usage",
   "version": 1,
   "panels": [

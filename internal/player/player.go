@@ -11,7 +11,7 @@ type Player struct {
 	Cards        []deck.Card
 }
 
-func (p *Player) Compare(other *Player) bool {
+func (p *Player) Equal(other *Player) bool {
 	if p == nil || other == nil {
 		return false
 	}
