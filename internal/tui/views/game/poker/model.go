@@ -2,6 +2,7 @@ package poker
 
 import (
 	"fmt"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -82,19 +83,20 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 			ch = b.Subscribe()
 		}
 	}
-	m := Model{
+	m := &Model{
 		global: global,
 		bound:  bound,
 		events: ch,
 	}
-	return m.syncState()
+	m.syncState()
+	return m
 }
 
-func (m Model) Init() tea.Cmd {
+func (m *Model) Init() tea.Cmd {
 	return listenForEvents(m.events)
 }
 
-func (m Model) syncState() Model {
+func (m *Model) syncState() {
 	m.baseState = gameview.SyncBaseState(m.global, m.bound)
 	m.seats = nil
 	m.board = nil
@@ -109,7 +111,7 @@ func (m Model) syncState() Model {
 	m.winnerName = m.baseState.Winner
 
 	if m.bound == nil || m.bound.Engine() == nil {
-		return m
+		return
 	}
 
 	heroID := m.bound.PlayerID()
@@ -131,49 +133,55 @@ func (m Model) syncState() Model {
 		}
 
 		m.board = append(m.board, extra.Table...)
-
-		reveal := extra.HandComplete || extra.Phase == logic.Showdown || state.Phase == game.Finished
-
-		for i, p := range state.Players {
-			if p == nil {
-				continue
-			}
-			s := Seat{
-				PlayerID: p.ID,
-				Name:     p.Username(),
-				Chips:    extra.PlayerChips[p.ID],
-				Bet:      extra.PlayerBets[p.ID],
-				Folded:   extra.Folded[p.ID],
-				AllIn:    extra.PlayersAllIn[p.ID],
-				IsDealer: i == extra.DealerIndex,
-				IsSB:     i == extra.SBIndex,
-				IsBB:     i == extra.BBIndex,
-				IsTurn:   state.Phase == game.Playing && state.CurrentTurn == i && !extra.HandComplete,
-				IsHero:   p.ID == heroID,
-				HandSize: len(p.Cards),
-			}
-			if s.IsHero || (reveal && !s.Folded) {
-				s.Hole = append([]deck.Card(nil), p.Cards...)
-			}
-			m.seats = append(m.seats, s)
-		}
+		m.seats = buildSeats(state, extra, heroID)
 	})
 
 	if m.raising {
-		minTo := m.currentBet + m.minRaise
-		if m.raiseAmount < minTo {
-			m.raiseAmount = minTo
-		}
-		maxTo := m.streetBetMax()
-		if m.raiseAmount > maxTo {
-			m.raiseAmount = maxTo
-		}
+		m.raiseAmount = m.clampRaise(m.raiseAmount)
 	}
-
-	return m
 }
 
-func (m Model) streetBetMax() uint {
+// buildSeats snapshots every seat for rendering. Hole cards are copied out only for
+// the hero, or for anyone still live once the hand is revealed - everyone else gets
+// a hand size and nothing more. Caller must hold the state lock.
+func buildSeats(state *game.State, extra *logic.State, heroID string) []Seat {
+	reveal := extra.HandComplete || extra.Phase == logic.Showdown || state.Phase == game.Finished
+
+	seats := make([]Seat, 0, len(state.Players))
+	for i, p := range state.Players {
+		if p == nil {
+			continue
+		}
+		s := Seat{
+			PlayerID: p.ID,
+			Name:     p.Username(),
+			Chips:    extra.PlayerChips[p.ID],
+			Bet:      extra.PlayerBets[p.ID],
+			Folded:   extra.Folded[p.ID],
+			AllIn:    extra.PlayersAllIn[p.ID],
+			IsDealer: i == extra.DealerIndex,
+			IsSB:     i == extra.SBIndex,
+			IsBB:     i == extra.BBIndex,
+			IsTurn:   state.Phase == game.Playing && state.CurrentTurn == i && !extra.HandComplete,
+			IsHero:   p.ID == heroID,
+			HandSize: len(p.Cards),
+		}
+		if s.IsHero || (reveal && !s.Folded) {
+			s.Hole = slices.Clone(p.Cards)
+		}
+		seats = append(seats, s)
+	}
+	return seats
+}
+
+// clampRaise holds a raise-to amount within [minimum legal raise, hero's stack].
+// The stack bound is applied last so a hero who cannot cover the minimum raise
+// is offered their whole stack rather than an amount they don't have.
+func (m *Model) clampRaise(amount uint) uint {
+	return min(max(amount, m.currentBet+m.minRaise), m.streetBetMax())
+}
+
+func (m *Model) streetBetMax() uint {
 	hero := m.heroSeat()
 	if hero == nil {
 		return 0
@@ -181,7 +189,7 @@ func (m Model) streetBetMax() uint {
 	return hero.Bet + hero.Chips
 }
 
-func (m Model) heroSeat() *Seat {
+func (m *Model) heroSeat() *Seat {
 	for i := range m.seats {
 		if m.seats[i].IsHero {
 			return &m.seats[i]
@@ -190,15 +198,15 @@ func (m Model) heroSeat() *Seat {
 	return nil
 }
 
-func (m Model) canCheck() bool {
+func (m *Model) canCheck() bool {
 	return m.baseState.MyTurn && m.toCall == 0 && !m.handDone
 }
 
-func (m Model) canCall() bool {
+func (m *Model) canCall() bool {
 	return m.baseState.MyTurn && m.toCall > 0 && !m.handDone
 }
 
-func (m Model) canRaise() bool {
+func (m *Model) canRaise() bool {
 	if !m.baseState.MyTurn || m.handDone {
 		return false
 	}
@@ -210,11 +218,11 @@ func (m Model) canRaise() bool {
 	return hero.Bet+hero.Chips > m.currentBet && hero.Bet+hero.Chips >= minTo
 }
 
-func (m Model) canAllIn() bool {
+func (m *Model) canAllIn() bool {
 	hero := m.heroSeat()
 	return m.baseState.MyTurn && !m.handDone && hero != nil && hero.Chips > 0
 }
 
-func (m Model) canFold() bool {
+func (m *Model) canFold() bool {
 	return m.baseState.MyTurn && !m.handDone
 }

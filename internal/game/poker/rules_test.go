@@ -56,33 +56,32 @@ func createTestState() *game.State {
 func TestRules_Metadata(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	assert.Equal(t, "Poker", rules.Name())
 	assert.Equal(t, 2, rules.MinPlayers())
 	assert.Equal(t, 9, rules.MaxPlayers())
 	assert.Equal(t, 2, rules.InitialDealCount())
 }
 
-func TestRules_PreActionCondition(t *testing.T) {
+func TestRules_ValidateAction(t *testing.T) {
 	t.Parallel()
 
 	t.Run("fold is always valid", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
-		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionFold{}))
+		assert.NoError(t, (&Rules{}).ValidateAction(state, ActionFold{}))
 	})
 
 	t.Run("check valid when nothing owed", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 0
-		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionCheck{}))
+		assert.NoError(t, (&Rules{}).ValidateAction(state, ActionCheck{}))
 	})
 
 	t.Run("check invalid when facing a bet", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		err := (&Rules{}).PreActionCondition(state, ActionCheck{})
+		err := (&Rules{}).ValidateAction(state, ActionCheck{})
 		assert.ErrorContains(t, err, "cannot check")
 	})
 
@@ -90,7 +89,7 @@ func TestRules_PreActionCondition(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		err := (&Rules{}).PreActionCondition(state, ActionRaiseTo{Amount: 50})
+		err := (&Rules{}).ValidateAction(state, ActionRaiseTo{Amount: 50})
 		assert.ErrorContains(t, err, "above current bet")
 	})
 
@@ -98,7 +97,7 @@ func TestRules_PreActionCondition(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).CurrentBet = 100
-		assert.NoError(t, (&Rules{}).PreActionCondition(state, ActionCall{}))
+		assert.NoError(t, (&Rules{}).ValidateAction(state, ActionCall{}))
 	})
 
 	t.Run("raise invalid if not enough chips", func(t *testing.T) {
@@ -107,7 +106,7 @@ func TestRules_PreActionCondition(t *testing.T) {
 		extra := state.Extra.(*State)
 		extra.CurrentBet = 100
 		extra.PlayerChips["p1"] = 10
-		err := (&Rules{}).PreActionCondition(state, ActionRaiseTo{Amount: 200})
+		err := (&Rules{}).ValidateAction(state, ActionRaiseTo{Amount: 200})
 		assert.ErrorContains(t, err, "not enough chips")
 	})
 }
@@ -160,7 +159,7 @@ func TestApplyBetIncrease_IncompleteRaiseRule(t *testing.T) {
 			extra.ActedThisRound[id] = true
 			extra.PlayerBets[id] = 100
 		}
-		// p1 shoves for a total of 150 → raiseSize 50 < MinRaise 100.
+		// p1 shoves for a total of 150 -> raiseSize 50 < MinRaise 100.
 		extra.PlayerBets["p1"] = 0
 		extra.PlayerChips["p1"] = 150
 		state.CurrentTurn = 0
@@ -192,7 +191,7 @@ func TestApplyBetIncrease_IncompleteRaiseRule(t *testing.T) {
 		extra.PlayerChips["p1"] = 1000
 		state.CurrentTurn = 0
 
-		// Raise to 250 → raiseSize 150 >= MinRaise 100, a full raise.
+		// Raise to 250 -> raiseSize 150 >= MinRaise 100, a full raise.
 		(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 250})
 
 		assert.Equal(t, uint(250), extra.CurrentBet)
@@ -219,14 +218,14 @@ func TestRules_CheckWinCondition(t *testing.T) {
 		extra.MainPool = 150
 		extra.Folded["p2"] = true
 		extra.Folded["p3"] = true
-		require.NoError(t, (&Rules{}).PostActionCondition(state, ActionFold{}))
+		require.NoError(t, (&Rules{}).AfterAction(state, ActionFold{}))
 		assert.True(t, extra.HandComplete)
 		assert.True(t, (&Rules{}).CheckWinCondition(state))
 		assert.Equal(t, uint(1150), extra.PlayerChips["p1"])
 	})
 }
 
-func TestRules_GetStandings(t *testing.T) {
+func TestRules_Standings(t *testing.T) {
 	t.Parallel()
 
 	t.Run("all folded except one", func(t *testing.T) {
@@ -235,7 +234,7 @@ func TestRules_GetStandings(t *testing.T) {
 		extra := state.Extra.(*State)
 		extra.Folded["p1"] = true
 		extra.Folded["p3"] = true
-		standings := (&Rules{}).GetStandings(state)
+		standings := (&Rules{}).Standings(state)
 		assert.Equal(t, "p2", standings[0].ID)
 	})
 
@@ -262,7 +261,7 @@ func TestRules_GetStandings(t *testing.T) {
 			{Rank: deck.Ace, Suit: deck.Spades},
 			{Rank: deck.King, Suit: deck.Diamonds},
 		}
-		standings := (&Rules{}).GetStandings(state)
+		standings := (&Rules{}).Standings(state)
 		assert.Equal(t, "p3", standings[0].ID)
 		assert.Equal(t, "p2", standings[1].ID)
 		assert.Equal(t, "p1", standings[2].ID)

@@ -17,16 +17,6 @@ func New(cards []Card) *Pile {
 	}
 }
 
-// MustNew creates a pile and panics if Shuffle fails. Prefer New + Shuffle in
-// production paths that can return errors (e.g. Engine.Start).
-func MustNew(cards []Card) *Pile {
-	pile := New(cards)
-	if err := pile.Shuffle(); err != nil {
-		panic(err)
-	}
-	return pile
-}
-
 // Shuffle uses crypto/rand for unpredictable deal order in ranked play.
 func (p *Pile) Shuffle() error {
 	n := len(p.cards)
@@ -88,7 +78,6 @@ func (p *Pile) IsEmpty() bool {
 	return len(p.cards) < 1
 }
 
-// Cards returns a defensive copy of the pile contents.
 func (p *Pile) Cards() []Card {
 	return slices.Clone(p.cards)
 }

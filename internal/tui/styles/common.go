@@ -7,26 +7,26 @@ import (
 	"github.com/common-nighthawk/go-figure"
 )
 
-func GetBoxWidth(screenWidth int) int {
+func BoxWidth(screenWidth int) int {
 	if screenWidth < 100 {
 		return screenWidth - 4
 	}
 	return screenWidth * 5 / 6
 }
 
-func GetBoxHeight(screenHeight int) int {
+func BoxHeight(screenHeight int) int {
 	if screenHeight < 30 {
 		return screenHeight - 2
 	}
 	return screenHeight * 5 / 7
 }
 
-func GetInnerWidth(screenWidth int) int {
-	return GetBoxWidth(screenWidth) - 6
+func InnerWidth(screenWidth int) int {
+	return BoxWidth(screenWidth) - 6
 }
 
-func GetAvailableContentHeight(screenHeight int, header, footer string) int {
-	boxHeight := GetBoxHeight(screenHeight)
+func AvailableContentHeight(screenHeight int, header, footer string) int {
+	boxHeight := BoxHeight(screenHeight)
 	innerHeight := boxHeight - 4
 
 	header = strings.TrimRight(header, "\r\n")
@@ -35,8 +35,8 @@ func GetAvailableContentHeight(screenHeight int, header, footer string) int {
 	return innerHeight - lg.Height(header) - lg.Height(footer)
 }
 
-func GetAvailableContentWidth(screenWidth int) int {
-	return GetBoxWidth(screenWidth) - 6
+func AvailableContentWidth(screenWidth int) int {
+	return BoxWidth(screenWidth) - 6
 }
 
 func RenderFigureASCII(text string, maxWidth int) string {
@@ -52,8 +52,8 @@ func RenderFigureASCII(text string, maxWidth int) string {
 }
 
 func RenderMainLayout(width, height int, header, content, footer string) string {
-	boxWidth := GetBoxWidth(width)
-	boxHeight := GetBoxHeight(height)
+	boxWidth := BoxWidth(width)
+	boxHeight := BoxHeight(height)
 
 	innerWidth := boxWidth - 6
 	innerHeight := boxHeight - 4
@@ -84,7 +84,7 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 }
 
 func RenderActionFooter(actions []string) string {
-	var renderedActions []string
+	renderedActions := make([]string, 0, len(actions))
 	for _, action := range actions {
 		renderedActions = append(renderedActions, ActionsText.Render(action))
 	}
@@ -112,6 +112,12 @@ var (
 		Foreground(lg.Color("#00FFFF"))
 
 	LobbyCode = lg.NewStyle().
+			Foreground(lg.Color("#FFA500")).
+			Bold(true)
+
+	// SectionHeading labels a block of content within a view (Settings, Players,
+	// Rankings, Recent Matches, and the player name in the game layout).
+	SectionHeading = lg.NewStyle().
 			Foreground(lg.Color("#FFA500")).
 			Bold(true)
 

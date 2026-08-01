@@ -192,24 +192,24 @@ func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 	}
 	state.Extra = extra
 
-	// short all-in 100; mid and big put 300 each → main 300 + side 400.
+	// short all-in 100; mid and big put 300 each -> main 300 + side 400.
 	state.CurrentTurn = 0
 	rules.ApplyAction(state, ActionAllIn{})
-	require.NoError(t, rules.PostActionCondition(state, ActionAllIn{}))
+	require.NoError(t, rules.AfterAction(state, ActionAllIn{}))
 
 	state.CurrentTurn = *state.OverrideNextTurn
-	require.NoError(t, rules.PreActionCondition(state, ActionRaiseTo{Amount: 300}))
+	require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 300}))
 	rules.ApplyAction(state, ActionRaiseTo{Amount: 300})
-	require.NoError(t, rules.PostActionCondition(state, ActionRaiseTo{Amount: 300}))
+	require.NoError(t, rules.AfterAction(state, ActionRaiseTo{Amount: 300}))
 
 	state.CurrentTurn = *state.OverrideNextTurn
-	require.NoError(t, rules.PreActionCondition(state, ActionCall{}))
+	require.NoError(t, rules.ValidateAction(state, ActionCall{}))
 	rules.ApplyAction(state, ActionCall{})
-	require.NoError(t, rules.PostActionCondition(state, ActionCall{}))
+	require.NoError(t, rules.AfterAction(state, ActionCall{}))
 
 	assert.True(t, extra.HandComplete)
 	assert.Equal(t, uint(0), extra.MainPool)
-	// short has trips aces → wins 300 main; mid has kings → wins 400 side vs big.
+	// short has trips aces -> wins 300 main; mid has kings -> wins 400 side vs big.
 	assert.Equal(t, uint(300), extra.PlayerChips["short"])
 	assert.Equal(t, uint(600), extra.PlayerChips["mid"]) // 500-300+400
 	assert.Equal(t, uint(200), extra.PlayerChips["big"]) // 500-300
@@ -326,7 +326,7 @@ func TestRaiseTo_UsesCommittedBet(t *testing.T) {
 	extra := state.Extra.(*State)
 	extra.PlayerChips["p1"] = 40
 	extra.CurrentBet = 0
-	// Apply without PreAction — commit clamps; CurrentBet must follow committed amount.
+	// Apply without PreAction - commit clamps; CurrentBet must follow committed amount.
 	(&Rules{}).ApplyAction(state, ActionRaiseTo{Amount: 100})
 	assert.Equal(t, uint(40), extra.CurrentBet)
 	assert.Equal(t, uint(40), extra.PlayerBets["p1"])
@@ -344,7 +344,7 @@ func TestStandings_ChopStableByID(t *testing.T) {
 		{Rank: deck.Jack, Suit: deck.Spades},
 		{Rank: deck.Nine, Suit: deck.Hearts},
 	}
-	// Identical hands (board plays) → stable ID order.
+	// Identical hands (board plays) -> stable ID order.
 	state.Players[0].Cards = []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Clubs}}
 	state.Players[1].Cards = []deck.Card{{Rank: deck.Four, Suit: deck.Clubs}, {Rank: deck.Five, Suit: deck.Clubs}}
 	state.Players[2].Cards = []deck.Card{{Rank: deck.Six, Suit: deck.Clubs}, {Rank: deck.Seven, Suit: deck.Clubs}}
@@ -352,7 +352,7 @@ func TestStandings_ChopStableByID(t *testing.T) {
 	extra.PlayerChips["p2"] = 1000
 	extra.PlayerChips["p3"] = 1000
 
-	standings := (&Rules{}).GetStandings(state)
+	standings := (&Rules{}).Standings(state)
 	assert.Equal(t, []string{"p1", "p2", "p3"}, []string{standings[0].ID, standings[1].ID, standings[2].ID})
 }
 

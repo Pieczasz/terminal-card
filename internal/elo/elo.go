@@ -17,13 +17,7 @@ const (
 
 // ClampRating bounds a rating to [MinRating, MaxRating].
 func ClampRating(rating float64) float64 {
-	if rating < MinRating {
-		return MinRating
-	}
-	if rating > MaxRating {
-		return MaxRating
-	}
-	return rating
+	return min(max(rating, MinRating), MaxRating)
 }
 
 // ToUint32 converts a rating to a stored Elo value after clamping and rounding.

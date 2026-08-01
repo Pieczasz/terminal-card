@@ -13,12 +13,9 @@ import (
 )
 
 var (
-	ErrNoPublicKey      = errors.New("SSH key authentication is required")
-	ErrInternal         = errors.New("internal server error")
-	ErrUsernameTaken    = errors.New("username already taken, please choose another via ssh config")
-	ErrInvalidUsername  = errors.New("invalid username")
-	ErrKeyAlreadyUsed   = errors.New("public key already registered")
-	ErrRegistrationFail = errors.New("registration failed")
+	ErrNoPublicKey        = errors.New("SSH key authentication is required")
+	ErrInternal           = errors.New("internal server error")
+	ErrRegistrationFailed = errors.New("registration failed")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
@@ -49,15 +46,17 @@ func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUser
 	return user, nil
 }
 
+// mapRegisterError passes through the registration failures a user can act on and
+// collapses everything else into a generic failure. The repository sentinels are
+// returned unchanged rather than translated into ssh-local copies, so errors.Is
+// still matches at the caller and the underlying cause survives for logging.
 func mapRegisterError(err error) error {
 	switch {
-	case errors.Is(err, repository.ErrUsernameTaken):
-		return ErrUsernameTaken
-	case errors.Is(err, repository.ErrInvalidUsername):
-		return ErrInvalidUsername
-	case errors.Is(err, repository.ErrKeyAlreadyRegistered):
-		return ErrKeyAlreadyUsed
+	case errors.Is(err, repository.ErrUsernameTaken),
+		errors.Is(err, repository.ErrInvalidUsername),
+		errors.Is(err, repository.ErrKeyAlreadyRegistered):
+		return err
 	default:
-		return ErrRegistrationFail
+		return ErrRegistrationFailed
 	}
 }

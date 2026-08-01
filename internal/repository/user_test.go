@@ -119,7 +119,7 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	assert.True(t, updatedKey.LastUsedAt.After(initialUsedAt) || updatedKey.LastUsedAt.Equal(initialUsedAt))
 }
 
-func TestUserRepository_GetBestPlayers(t *testing.T) {
+func TestUserRepository_BestPlayers(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{})
 	repo := NewUserRepository(database)
@@ -134,7 +134,7 @@ func TestUserRepository_GetBestPlayers(t *testing.T) {
 		database.Create(&db.Ranking{UserID: u.ID, GameID: game.ID, Elo: uint32(1000 + i*100)})
 	}
 
-	best, err := repo.GetBestPlayers(ctx, 3)
+	best, err := repo.BestPlayers(ctx, 3)
 	assert.NoError(t, err)
 	assert.Len(t, best, 3)
 	assert.Equal(t, uint32(1500), best[0].Elo)
@@ -142,12 +142,12 @@ func TestUserRepository_GetBestPlayers(t *testing.T) {
 	assert.Equal(t, uint32(1300), best[2].Elo)
 
 	// Test cache
-	bestCached, err := repo.GetBestPlayers(ctx, 2)
+	bestCached, err := repo.BestPlayers(ctx, 2)
 	assert.NoError(t, err)
 	assert.Len(t, bestCached, 2)
 }
 
-func TestUserRepository_GetUserProfile(t *testing.T) {
+func TestUserRepository_UserProfile(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{})
 	repo := NewUserRepository(database)
@@ -159,18 +159,18 @@ func TestUserRepository_GetUserProfile(t *testing.T) {
 	database.Create(game)
 	database.Create(&db.Ranking{UserID: u.ID, GameID: game.ID, Elo: 1600})
 
-	profile, err := repo.GetUserProfile(ctx, u.ID)
+	profile, err := repo.UserProfile(ctx, u.ID)
 	assert.NoError(t, err)
 	assert.Equal(t, "profile_user", profile.Username)
 	assert.Len(t, profile.PublicKeys, 1)
 	assert.Len(t, profile.Rankings, 1)
 	assert.Equal(t, "ProfileGame", profile.Rankings[0].Game.Name)
 
-	_, err = repo.GetUserProfile(ctx, 9999)
+	_, err = repo.UserProfile(ctx, 9999)
 	assert.Error(t, err)
 }
 
-func TestUserRepository_GetUserMatchHistory(t *testing.T) {
+func TestUserRepository_UserMatchHistory(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{})
 	repo := NewUserRepository(database)
@@ -186,7 +186,7 @@ func TestUserRepository_GetUserMatchHistory(t *testing.T) {
 
 	database.Create(&db.MatchParticipant{MatchID: match.ID, UserID: u.ID, Placement: 1, EloDelta: 15})
 
-	history, err := repo.GetUserMatchHistory(ctx, u.ID, 10)
+	history, err := repo.UserMatchHistory(ctx, u.ID, 10)
 	assert.NoError(t, err)
 	assert.Len(t, history, 1)
 	assert.Equal(t, 1, history[0].Placement)

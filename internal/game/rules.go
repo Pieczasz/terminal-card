@@ -6,7 +6,6 @@ import (
 )
 
 type Rules interface {
-	Name() string
 	MinPlayers() int
 	MaxPlayers() int
 
@@ -15,11 +14,11 @@ type Rules interface {
 
 	OnGameStart(state *State) error
 
-	PreActionCondition(state *State, action Action) error
-	PostActionCondition(state *State, action Action) error
+	ValidateAction(state *State, action Action) error
+	AfterAction(state *State, action Action) error
 	ApplyAction(state *State, action Action)
 	CheckWinCondition(state *State) bool
-	GetStandings(state *State) []*player.Player
+	Standings(state *State) []*player.Player
 }
 
 // PlayerLeaveHandler is an optional Rules extension for mid-hand disconnects.

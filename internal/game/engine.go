@@ -85,9 +85,9 @@ func (e *Engine) StandingsIDs() []string {
 	return ids
 }
 
-// Standings returns players ordered from first to last place.
+// Standings return players ordered from first to last place.
 // Callers must treat returned pointers as read-only snapshots of identity; card
-// slices may still be shared — prefer WithState for hand inspection.
+// slices may still be shared - prefer WithState for hand inspection.
 func (e *Engine) Standings() []*player.Player {
 	e.mu.Lock()
 	e.state.mu.Lock()
@@ -96,10 +96,10 @@ func (e *Engine) Standings() []*player.Player {
 	return e.standingsLocked()
 }
 
-// standingsLocked returns rules standings followed by LeftPlayers (most recent leave last place).
-// Caller must hold e.mu and e.state.mu.
+// standingsLocked returns rules standings followed by LeftPlayers (the most
+// recent leave-last place). Caller must hold e.mu and e.state.mu.
 func (e *Engine) standingsLocked() []*player.Player {
-	standings := e.state.Rules.GetStandings(e.state)
+	standings := e.state.Rules.Standings(e.state)
 	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
 	for _, p := range slices.Backward(e.state.LeftPlayers) {
@@ -144,7 +144,7 @@ func (e *Engine) SnapshotFor(_ string) StateSnapshot {
 				continue
 			}
 			snap.Players = append(snap.Players, PlayerSnapshot{
-				ID:       p.Username(),
+				Username: p.Username(),
 				HandSize: len(p.Cards),
 			})
 		}
@@ -221,19 +221,20 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 		return errors.New("wait for your turn to perform an action")
 	}
 
-	if err := e.state.Rules.PreActionCondition(e.state, action); err != nil {
+	if err := e.state.Rules.ValidateAction(e.state, action); err != nil {
 		return fmt.Errorf("you can't perform that action: %w", err)
 	}
 
-	// Apply only after pre-conditions pass. Post-conditions run before any broadcast
-	// so clients never observe a rejected mutation. On post-condition failure the
-	// game is finished to avoid continued play on inconsistent state; rules that can
-	// fully validate beforehand should do so in PreActionCondition.
+	// AfterAction is where rules advance their own state machine (poker settles
+	// bets, deals the next street and picks the next actor), so it runs before any
+	// broadcast and clients never observe a half-applied move. A failure here means
+	// the rules could not reach a consistent state, so the game is finished rather
+	// than played on; anything checkable up front belongs in ValidateAction.
 	e.state.Rules.ApplyAction(e.state, action)
 
-	if err := e.state.Rules.PostActionCondition(e.state, action); err != nil {
+	if err := e.state.Rules.AfterAction(e.state, action); err != nil {
 		e.state.Phase = Finished
-		return fmt.Errorf("post condition doesn't hold: %w", err)
+		return fmt.Errorf("post-action rules failed: %w", err)
 	}
 
 	e.broadcaster.Broadcast(Event{
@@ -244,7 +245,7 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 
 	if e.state.Rules.CheckWinCondition(e.state) {
 		e.state.Phase = Finished
-		standings := e.state.Rules.GetStandings(e.state)
+		standings := e.state.Rules.Standings(e.state)
 		if len(standings) > 0 {
 			e.state.Winner = standings[0]
 		} else {
@@ -314,7 +315,7 @@ func (e *Engine) RemovePlayer(playerID string) {
 
 	if e.state.Rules.CheckWinCondition(e.state) {
 		e.state.Phase = Finished
-		standings := e.state.Rules.GetStandings(e.state)
+		standings := e.state.Rules.Standings(e.state)
 		if len(standings) > 0 {
 			e.state.Winner = standings[0]
 		} else if len(e.state.Players) > 0 {
