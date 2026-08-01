@@ -2,6 +2,7 @@ package poker
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -53,7 +54,7 @@ func (m *Model) renderHandOver() string {
 	winner := accentStyle.Render(m.winnerName + " wins")
 	hint := dimStyle.Render("esc / enter -> lobby")
 
-	var seatLines []string
+	seatLines := make([]string, 0, len(m.seats))
 	for _, s := range m.seats {
 		line := fmt.Sprintf("%s  %d", s.Name, s.Chips)
 		if s.Folded {
@@ -189,7 +190,7 @@ func (m *Model) renderCenter(compact bool) string {
 
 	lines := []string{board, "", potLine, street, betLine}
 	if m.handDone {
-		lines = append(lines, "", accentStyle.Render("HAND COMPLETE — "+m.winnerName+" wins"))
+		lines = append(lines, "", accentStyle.Render("HAND COMPLETE - "+m.winnerName+" wins"))
 	}
 	return lg.JoinVertical(lg.Center, lines...)
 }
@@ -246,7 +247,7 @@ func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientatio
 		name = lg.JoinHorizontal(lg.Center, name, " ", badgeStyle.Render(badges))
 	}
 
-	stack := metaStyle.Render(fmt.Sprintf("%d", s.Chips))
+	stack := metaStyle.Render(strconv.FormatUint(uint64(s.Chips), 10))
 	if s.Bet > 0 {
 		stack = lg.JoinHorizontal(lg.Center, stack, metaStyle.Render(fmt.Sprintf(" · bet %d", s.Bet)))
 	}
@@ -355,7 +356,7 @@ func rankShort(r deck.Rank) string {
 	case deck.Ten:
 		return "T"
 	default:
-		return fmt.Sprintf("%d", int(r)+1) // Two=1 -> "2"
+		return strconv.Itoa(int(r) + 1) // Two=1 -> "2"
 	}
 }
 

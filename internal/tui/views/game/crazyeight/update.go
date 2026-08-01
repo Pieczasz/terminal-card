@@ -7,7 +7,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/animation"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -68,22 +67,22 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	p := gameview.SessionPlayer(m.global)
+	p := views.SessionPlayer(m.global)
 
 	if m.baseState.Phase == game.Finished {
 		m.unsubscribe()
 		if p == nil {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 		}
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
 	}
 
 	if p != nil {
 		m.global.LobbyManager.LeaveLobby(p)
 	}
 	m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 }
 
 func (m *Model) handleLeft() (tea.Model, tea.Cmd) {
@@ -148,13 +147,13 @@ func (m *Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.baseState.Phase == game.Finished {
-		p := gameview.SessionPlayer(m.global)
+		p := views.SessionPlayer(m.global)
 		m.unsubscribe()
 		if p == nil {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "home"} }
+			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
 		}
 		l := m.global.LobbyManager.FindLobbyByPlayer(p)
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: "lobby", Context: l} }
+		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
 	}
 
 	if !m.baseState.MyTurn || len(m.baseState.Hand) == 0 {
@@ -212,4 +211,10 @@ func (m *Model) handleDraw() (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// Close releases the engine subscription when the router replaces this view or the
+// session ends. See the poker view for why the esc/enter paths are not enough.
+func (m *Model) Close() {
+	m.unsubscribe()
 }
