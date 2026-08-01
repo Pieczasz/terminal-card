@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -9,7 +10,7 @@ import (
 
 func TestManager_WaitForFinalizers(t *testing.T) {
 	t.Parallel()
-	m := NewManager(nil)
+	m := NewManagerWithContext(context.Background(), nil)
 
 	assert.True(t, m.WaitForFinalizers(time.Second), "nothing in flight drains immediately")
 

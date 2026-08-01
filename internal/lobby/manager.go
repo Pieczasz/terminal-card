@@ -42,10 +42,6 @@ type Manager struct {
 	finalizing sync.WaitGroup
 }
 
-func NewManager(matchRepo db.MatchRepository) *Manager {
-	return NewManagerWithContext(context.Background(), matchRepo)
-}
-
 func NewManagerWithContext(ctx context.Context, matchRepo db.MatchRepository) *Manager {
 	if ctx == nil {
 		ctx = context.Background()

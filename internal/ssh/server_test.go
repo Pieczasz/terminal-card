@@ -69,7 +69,7 @@ func setupTestEnvironment(t *testing.T) testEnv {
 		},
 		UserRepository:  userRepo,
 		MatchRepository: matchRepo,
-		LobbyManager:    lobby.NewManager(matchRepo),
+		LobbyManager:    lobby.NewManagerWithContext(context.Background(), matchRepo),
 		GameRegistry:    game.NewRegistry(),
 	}
 
