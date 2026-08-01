@@ -9,8 +9,9 @@ const (
 	MinRating     float64 = 100.0
 	MaxRating     float64 = 4000.0
 
-	// KFactor determines how much ratings can change in a single match.
-	// TODO: check if we can improve this.
+	// KFactor determines how much ratings can change in a single match. 32 is the
+	// standard chess default; a tiered K (higher for new accounts, lower once
+	// established) is the upgrade path if rating volatility becomes a problem.
 	KFactor float64 = 32.0
 )
 
