@@ -2,14 +2,12 @@ package tui
 
 import (
 	"context"
-	"fmt"
 
+	"github.com/Pieczasz/terminal-card/internal/catalog"
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/tui/views/game/poker"
+	"github.com/Pieczasz/terminal-card/internal/tui/views"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/home"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/leaderboard"
 	"github.com/Pieczasz/terminal-card/internal/tui/views/lobby"
@@ -20,56 +18,56 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// ViewFactory builds a TUI model for a started game engine.
-type ViewFactory func(g router.GlobalContext, e *game.Engine) tea.Model
-
-// gameViews maps module slug -> TUI factory. Add an entry when registering a new Module.
-var gameViews = map[string]ViewFactory{
-	"crazy_eights": crazyeight.New,
-	"poker":        poker.New,
+type ModelDependencies struct {
+	SessionCtx   context.Context
+	User         db.User
+	UserRepo     db.UserRepository
+	MatchRepo    db.MatchRepository
+	LobbyManager *internallobby.Manager
+	GameRegistry *game.Registry
 }
 
-func Model(sessionCtx context.Context, user db.User, userRepo db.UserRepository, matchRepo db.MatchRepository, lobbyManager *internallobby.Manager, gameRegistry *game.Registry) tea.Model {
+func Model(deps ModelDependencies) tea.Model {
 	global := router.GlobalContext{
-		User:            &user,
-		UserRepository:  userRepo,
-		MatchRepository: matchRepo,
-		LobbyManager:    lobbyManager,
-		GameRegistry:    gameRegistry,
-		SessionCtx:      sessionCtx,
+		User:            &deps.User,
+		UserRepository:  deps.UserRepo,
+		MatchRepository: deps.MatchRepo,
+		LobbyManager:    deps.LobbyManager,
+		GameRegistry:    deps.GameRegistry,
+		SessionCtx:      deps.SessionCtx,
 	}
 
 	r := router.New(global)
 
-	r.Register("home", func(g router.GlobalContext, _ any) tea.Model {
+	r.Register(router.RouteHome, func(g router.GlobalContext, _ any) tea.Model {
 		return home.New(g)
 	})
 
-	r.Register("profile", func(g router.GlobalContext, _ any) tea.Model {
+	r.Register(router.RouteProfile, func(g router.GlobalContext, _ any) tea.Model {
 		return profile.New(g)
 	})
 
-	r.Register("leaderboard", func(g router.GlobalContext, _ any) tea.Model {
+	r.Register(router.RouteLeaderboard, func(g router.GlobalContext, _ any) tea.Model {
 		return leaderboard.New(g)
 	})
 
-	r.Register("lobby_create", func(g router.GlobalContext, _ any) tea.Model {
-		p := &player.Player{ID: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
+	r.Register(router.RouteLobbyCreate, func(g router.GlobalContext, _ any) tea.Model {
+		p := views.SessionPlayer(g)
 		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
 			return lobby.New(g, l)
 		}
 		return lobby.NewCreate(g)
 	})
 
-	r.Register("lobby_join", func(g router.GlobalContext, _ any) tea.Model {
-		p := &player.Player{ID: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
+	r.Register(router.RouteLobbyJoin, func(g router.GlobalContext, _ any) tea.Model {
+		p := views.SessionPlayer(g)
 		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
 			return lobby.New(g, l)
 		}
 		return lobby.NewJoin(g)
 	})
 
-	r.Register("lobby", func(g router.GlobalContext, ctx any) tea.Model {
+	r.Register(router.RouteLobby, func(g router.GlobalContext, ctx any) tea.Model {
 		l, ok := ctx.(*internallobby.Lobby)
 		if !ok {
 			return home.New(g)
@@ -77,31 +75,21 @@ func Model(sessionCtx context.Context, user db.User, userRepo db.UserRepository,
 		return lobby.New(g, l)
 	})
 
-	registerGameViews(r, gameRegistry)
+	registerGameViews(r)
 
-	r.Goto("home", nil)
+	r.Goto(router.RouteHome, nil)
 
 	return r
 }
 
-func registerGameViews(r *router.Router, gameRegistry *game.Registry) {
-	for _, name := range gameRegistry.GameNames() {
-		mod, ok := gameRegistry.Module(name)
-		if !ok {
-			continue
-		}
-		viewFactory, ok := gameViews[mod.Slug]
-		if !ok {
-			continue
-		}
-		route := mod.RouteName()
-		vf := viewFactory
-		r.Register(route, func(g router.GlobalContext, ctx any) tea.Model {
-			e, ok := ctx.(*game.Engine)
+func registerGameViews(r *router.Router) {
+	for _, e := range catalog.All {
+		r.Register(router.GameRoute(e.Slug), func(g router.GlobalContext, ctx any) tea.Model {
+			engine, ok := ctx.(*game.Engine)
 			if !ok {
 				return home.New(g)
 			}
-			return vf(g, e)
+			return e.View(g, engine)
 		})
 	}
 }
