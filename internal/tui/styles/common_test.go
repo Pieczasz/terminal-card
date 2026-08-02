@@ -37,3 +37,28 @@ func TestSizing_FitsWithinScreen(t *testing.T) {
 		assert.LessOrEqual(t, styles.InnerWidth(size), max(size, 0), "InnerWidth(%d) overflows the screen", size)
 	}
 }
+
+// Growing the terminal must never shrink the box. A previous form switched to a 5/6
+// proportion at 100 columns, so widening from 99 to 100 lost 12 columns.
+func TestSizing_IsMonotonic(t *testing.T) {
+	t.Parallel()
+
+	for size := 1; size < 400; size++ {
+		assert.GreaterOrEqual(t, styles.BoxWidth(size), styles.BoxWidth(size-1),
+			"BoxWidth shrank going from %d to %d columns", size-1, size)
+		assert.GreaterOrEqual(t, styles.BoxHeight(size), styles.BoxHeight(size-1),
+			"BoxHeight shrank going from %d to %d rows", size-1, size)
+		assert.GreaterOrEqual(t, styles.InnerWidth(size), styles.InnerWidth(size-1),
+			"InnerWidth shrank going from %d to %d columns", size-1, size)
+		assert.GreaterOrEqual(t, styles.AvailableContentWidth(size), styles.AvailableContentWidth(size-1),
+			"AvailableContentWidth shrank going from %d to %d columns", size-1, size)
+	}
+}
+
+// The box stops growing so text stays readable on an ultra-wide terminal.
+func TestSizing_StopsGrowing(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, styles.BoxWidth(400), styles.BoxWidth(4000), "width is capped")
+	assert.Equal(t, styles.BoxHeight(400), styles.BoxHeight(4000), "height is capped")
+}
