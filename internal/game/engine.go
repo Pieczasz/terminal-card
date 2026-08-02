@@ -96,14 +96,27 @@ func (e *Engine) Standings() []*player.Player {
 	return e.standingsLocked()
 }
 
-// standingsLocked returns rules standings followed by LeftPlayers (the most
-// recent leave-last place). Caller must hold e.mu and e.state.mu.
+// standingsLocked returns rules standings followed by any LeftPlayers the rules
+// did not place themselves (the most recent leave taking the higher spot). Rules
+// that can rank a departed player on what they actually did - poker ranks them on
+// the chips they walked out with - place them, and are not second-guessed here.
+// Caller must hold e.mu and e.state.mu.
 func (e *Engine) standingsLocked() []*player.Player {
 	standings := e.state.Rules.Standings(e.state)
+
+	placed := make(map[string]bool, len(standings))
+	for _, p := range standings {
+		if p != nil {
+			placed[p.ID] = true
+		}
+	}
+
 	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
 	for _, p := range slices.Backward(e.state.LeftPlayers) {
-		out = append(out, p)
+		if p != nil && !placed[p.ID] {
+			out = append(out, p)
+		}
 	}
 	return out
 }

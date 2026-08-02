@@ -52,6 +52,37 @@ func TestMatch_ChipsAndButtonCarryIntoTheNextHand(t *testing.T) {
 	})
 }
 
+// Walking out mid-match forfeits it, however far ahead the leaver was: they place
+// below everyone who saw the match through. Between themselves, leavers are still
+// ranked on the chips they won, not on who quit first.
+func TestStandings_LeavingForfeitsTheMatchButNotTheChipsWon(t *testing.T) {
+	t.Parallel()
+	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra, ok := s.Extra.(*State)
+		require.True(t, ok)
+		// p2 is well clear of the table, as if they had taken a couple of hands.
+		extra.PlayerChips["p1"] = 700
+		extra.PlayerChips["p2"] = 1600
+		extra.PlayerChips["p3"] = 700
+	})
+
+	engine.RemovePlayer("p2")
+	assert.Equal(t, []string{"p1", "p3", "p2"}, engine.StandingsIDs(),
+		"the chip leader drops behind both players still at the table")
+
+	engine.RemovePlayer("p3")
+	assert.Equal(t, []string{"p1", "p2", "p3"}, engine.StandingsIDs(),
+		"between leavers the bigger stack still places higher")
+
+	engine.WithState(func(s *game.State) {
+		require.NotNil(t, s.Winner)
+		assert.Equal(t, "p1", s.Winner.ID, "the last player standing wins the match")
+	})
+}
+
 func TestMatch_NextHandRejectedWhileTheHandIsLive(t *testing.T) {
 	t.Parallel()
 	engine := startTable(t, 2)
