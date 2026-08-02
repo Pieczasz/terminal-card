@@ -23,26 +23,26 @@ Local multi-client testing: `./scripts/dev-session.sh` opens three tmux-attached
 
 ## Architecture
 
-SSH connection → wish middleware → Bubble Tea `Router` → view → `game.BoundEngine` → `game.Engine` → `Rules`.
+SSH connection -> wish middleware -> Bubble Tea `Router` -> view -> `game.BoundEngine` -> `game.Engine` -> `Rules`.
 
 ### Game registration is a single point
 
 `internal/catalog/catalog.go` `All` is the only place a game is declared, and each entry carries both the rules factory and the TUI view constructor. `cmd/server/main.go` builds the `game.Registry` from it; `internal/tui/app.go` registers routes from it. Rules and view therefore cannot drift. `catalog_test.go` fails on a missing field or duplicate slug.
 
-Two identifiers, two consumers: `Module.Name` (display name) is the registry key and what `db.Game.Name` stores; `Slug` is what the TUI derives routes from (`router.GameRoute(slug)` → `"game_<slug>"`). `internal/game` deliberately knows nothing about routes.
+Two identifiers, two consumers: `Module.Name` (display name) is the registry key and what `db.Game.Name` stores; `Slug` is what the TUI derives routes from (`router.GameRoute(slug)` -> `"game_<slug>"`). `internal/game` deliberately knows nothing about routes.
 
 ### Layer boundaries
 
-- `internal/db` — GORM models **and** the `UserRepository` / `MatchRepository` interfaces. It defines the contract.
-- `internal/repository` — the GORM implementations. Everything else depends on the `db` interfaces, never on this package (except `internal/ssh` for its error sentinels).
-- `internal/game` — pure rules/engine, no db, no TUI, no routes.
-- `internal/tui` — presentation only; reaches state through `router.GlobalContext`.
+- `internal/db` - GORM models **and** the `UserRepository` / `MatchRepository` interfaces. It defines the contract.
+- `internal/repository` - the GORM implementations. Everything else depends on the `db` interfaces, never on this package (except `internal/ssh` for its error sentinels).
+- `internal/game` - pure rules/engine, no db, no TUI, no routes.
+- `internal/tui` - presentation only; reaches state through `router.GlobalContext`.
 
 ### Engine and Rules contract
 
 `Engine` holds `e.mu` and `state.mu` together for the whole of `Start`, `SubmitAction`, and `RemovePlayer`. `Rules` methods are called with both held, so a `Rules` implementation must never call back into `Engine` (deadlock) and may mutate `*State` freely.
 
-Per-game state lives in `State.Extra` (`crazyeight.State`, `poker.State`). The turn cursor is settled by `applyNextTurnLocked`: `State.OverrideNextTurn` wins, else advance, else honor `State.CurrentTurn` — that is how poker picks the next actor from `AfterAction`. `ApplyAction` runs then `AfterAction`; an `AfterAction` error finishes the game, so anything checkable up front belongs in `ValidateAction`.
+Per-game state lives in `State.Extra` (`crazyeight.State`, `poker.State`). The turn cursor is settled by `applyNextTurnLocked`: `State.OverrideNextTurn` wins, else advance, else honor `State.CurrentTurn` - that is how poker picks the next actor from `AfterAction`. `ApplyAction` runs then `AfterAction`; an `AfterAction` error finishes the game, so anything checkable up front belongs in `ValidateAction`.
 
 Mid-hand disconnects: implement the optional `game.PlayerLeaveHandler` (`OnPlayerLeave` before removal, `AfterPlayerRemoved` after seat indices shift).
 
@@ -52,11 +52,11 @@ Mid-hand disconnects: implement the optional `game.PlayerLeaveHandler` (`OnPlaye
 
 ### Subscription lifecycle
 
-`broadcaster.Broadcaster[T]` is latest-wins (drops the oldest on a full buffer) and hands back a *closed* channel when at capacity — engines size it `len(players)+8` for the ranked-finalize watcher and reconnect overlap.
+`broadcaster.Broadcaster[T]` is latest-wins (drops the oldest on a full buffer) and hands back a *closed* channel when at capacity - engines size it `len(players)+8` for the ranked-finalize watcher and reconnect overlap.
 
 Any view holding a subscription must implement `router.Closer`. The router closes the active view on navigation; `ssh.releaseSession` closes the whole model on disconnect. Skipping `Close()` parks a listener goroutine and burns a subscriber slot until the engine closes.
 
-Lock order when both are involved is manager (`m.mu`) then lobby (`l.mu`) — see `Manager.Kick` / `RemoveLobby`.
+Lock order when both are involved is manager (`m.mu`) then lobby (`l.mu`) - see `Manager.Kick` / `RemoveLobby`.
 
 ### SSH server
 
