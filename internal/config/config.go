@@ -159,8 +159,12 @@ func detectVersion() string {
 	return "0.1.0"
 }
 
+// getEnv returns the environment value for key, falling back when it is unset or
+// empty. An empty value must not win: a blank SSH_KEY_PATH or DB_HOST in a .env or
+// compose file would otherwise silently defeat the default. This matches
+// getEnvAsInt, which already treats "" as absent.
 func getEnv(key string, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
+	if value, exists := os.LookupEnv(key); exists && value != "" {
 		return value
 	}
 	return fallback

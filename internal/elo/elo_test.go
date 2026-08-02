@@ -2,6 +2,7 @@ package elo
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"testing"
 
@@ -306,4 +307,20 @@ func BenchmarkCalculate(b *testing.B) {
 			}
 		})
 	}
+}
+
+// FuzzToUint32 pins the storage boundary: whatever arithmetic upstream produces, the
+// value written to the rankings table must sit inside [MinRating, MaxRating].
+func FuzzToUint32(f *testing.F) {
+	f.Add(1500.0)
+	f.Add(math.NaN())
+	f.Add(math.Inf(1))
+	f.Add(math.Inf(-1))
+	f.Add(math.Copysign(0, -1)) // negative zero; -0.0 is just 0.0 in Go
+
+	f.Fuzz(func(t *testing.T, rating float64) {
+		got := ToUint32(rating)
+		assert.GreaterOrEqual(t, got, uint32(MinRating), "stored Elo must not fall below MinRating")
+		assert.LessOrEqual(t, got, uint32(MaxRating), "stored Elo must not exceed MaxRating")
+	})
 }

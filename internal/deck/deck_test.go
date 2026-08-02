@@ -93,3 +93,33 @@ func TestPile_AddAllCards(t *testing.T) {
 
 	assert.Equal(t, 2, p.Size())
 }
+
+// FuzzPile_DrawNCards guards the arithmetic in DrawNCards: it slices by the caller's
+// count, and a negative count used to reach make([]Card, n) and panic the server via
+// Engine.Start -> Rules.InitialDealCount.
+func FuzzPile_DrawNCards(f *testing.F) {
+	f.Add(0, 0)
+	f.Add(3, -1)
+	f.Add(3, 5)
+	f.Add(52, 52)
+
+	f.Fuzz(func(t *testing.T, size, want int) {
+		if size < 0 || size > 512 {
+			t.Skip()
+		}
+		cards := make([]Card, 0, size)
+		for i := range size {
+			cards = append(cards, Card{Rank: Rank(i % 14), Suit: Suit(i % 4)})
+		}
+		p := New(cards)
+
+		got, ok := p.DrawNCards(want)
+		if !ok {
+			assert.Empty(t, got, "a refused draw yields no cards")
+			assert.Equal(t, size, p.Size(), "a refused draw leaves the pile untouched")
+			return
+		}
+		assert.Len(t, got, want, "a successful draw yields exactly the requested count")
+		assert.Equal(t, size-want, p.Size(), "the pile shrinks by exactly what was drawn")
+	})
+}

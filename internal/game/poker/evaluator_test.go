@@ -483,8 +483,10 @@ func FuzzClassifyHand(f *testing.F) {
 		}
 
 		got := EvaluateHand(cards)
+		// Determinism is the property worth pinning: bestFlush once walked a map and
+		// returned a different flush between runs for identical input. Asserting
+		// Score() equals EvaluateHand() would just restate EvaluateHand's body.
 		assert.Equal(t, got, EvaluateHand(cards), "EvaluateHand must be deterministic")
-		assert.Equal(t, got, ClassifyHand(cards).Score(), "Score must agree with EvaluateHand")
 
 		if len(cards) < 5 {
 			assert.Zero(t, got, "fewer than five cards has no hand value")

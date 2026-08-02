@@ -169,11 +169,15 @@ func TestSystem_CasualGameWritesNothing(t *testing.T) {
 			break
 		}
 	}
-	require.True(t, manager.WaitForFinalizers(10*time.Second))
-
+	// WaitForFinalizers cannot be used here: a casual game never reaches
+	// finalizing.Add, so the counter is zero and it returns immediately - the
+	// assertion would run before the watcher had even seen the game end. Assert the
+	// absence holds over time instead.
 	for _, p := range players {
-		history, err := userRepo.UserMatchHistory(ctx, p.DatabaseUser.ID, 10)
-		require.NoError(t, err)
-		assert.Empty(t, history, "a casual game must not be recorded")
+		userID := p.DatabaseUser.ID
+		require.Never(t, func() bool {
+			history, err := userRepo.UserMatchHistory(ctx, userID, 10)
+			return err == nil && len(history) > 0
+		}, 2*time.Second, 100*time.Millisecond, "a casual game must not be recorded")
 	}
 }
