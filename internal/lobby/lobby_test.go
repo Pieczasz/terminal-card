@@ -85,7 +85,8 @@ func TestLobby_ToggleReady(t *testing.T) {
 	guest := mockPlayer("p2", 2)
 
 	cardGame := &db.Game{Name: "MockGame"}
-	l, _ := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
+	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
+	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	registry := game.NewRegistry()
@@ -99,7 +100,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 	registerGame(registry, "MockGame", mockRules)
 
-	err := l.ToggleReady(leader, registry)
+	err = l.ToggleReady(leader, registry)
 	require.NoError(t, err)
 	assert.True(t, l.IsReady(leader))
 	assert.Equal(t, Waiting, l.state)
@@ -155,7 +156,8 @@ func TestLobby_BasicGetters(t *testing.T) {
 	leader := mockPlayer("leader", 1)
 
 	cardGame := &db.Game{Name: "CrazyEights"}
-	l, _ := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithMaxPlayers(4))
+	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithMaxPlayers(4))
+	require.NoError(t, err)
 
 	assert.Equal(t, cardGame.Name, l.GameName())
 	assert.Len(t, l.Code(), 8)
@@ -185,7 +187,8 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	guest := mockPlayer("guest", 2)
 
 	cardGame := &db.Game{Name: "MockGame"}
-	l, _ := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(true))
+	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(true))
+	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	registry := game.NewRegistry()
@@ -210,7 +213,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 	ch := l.Broadcaster().Subscribe()
 
-	err := l.ToggleReady(leader, registry)
+	err = l.ToggleReady(leader, registry)
 	require.NoError(t, err)
 	err = l.ToggleReady(guest, registry)
 	require.NoError(t, err)
@@ -240,7 +243,8 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	guest := mockPlayer("p2", 2)
 	guest3 := mockPlayer("p3", 3)
 
-	l, _ := m.New(leader, WithMaxPlayers(3), WithCardGame(&db.Game{Name: "Mock"}))
+	l, err := m.New(leader, WithMaxPlayers(3), WithCardGame(&db.Game{Name: "Mock"}))
+	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest3))
 
@@ -254,12 +258,13 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
-	err := l.ToggleReady(guest3, registry) // This triggers start game and should fail due to max players!
+	err = l.ToggleReady(guest3, registry) // This triggers start game and should fail due to max players!
 	require.ErrorContains(t, err, "too many players")
 
 	// Missing game in registry
 	leader2 := mockPlayer("p4", 4)
-	l2, _ := m.New(leader2, WithCardGame(&db.Game{Name: "Missing"}))
+	l2, err := m.New(leader2, WithCardGame(&db.Game{Name: "Missing"}))
+	require.NoError(t, err)
 	err = l2.ToggleReady(leader2, registry) // Should fail on create game rules
 	require.ErrorContains(t, err, "failed to create game rules")
 
@@ -273,7 +278,8 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	registerGame(registry, "Mock2", mockRules2)
 
 	leader3 := mockPlayer("p5", 5)
-	l3, _ := m.New(leader3, WithCardGame(&db.Game{Name: "Mock2"}))
+	l3, err := m.New(leader3, WithCardGame(&db.Game{Name: "Mock2"}))
+	require.NoError(t, err)
 	_ = m.JoinLobbyByCode(l3.Code(), guest) // guest is already in lobby l, so this join is expected to fail.
 	guest4 := mockPlayer("p6", 6)
 	require.NoError(t, m.JoinLobbyByCode(l3.Code(), guest4))

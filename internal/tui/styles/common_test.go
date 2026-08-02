@@ -59,6 +59,8 @@ func TestSizing_IsMonotonic(t *testing.T) {
 func TestSizing_StopsGrowing(t *testing.T) {
 	t.Parallel()
 
+	assert.Equal(t, 120, styles.BoxWidth(400), "width settles on the configured cap")
+	assert.Equal(t, 40, styles.BoxHeight(400), "height settles on the configured cap")
 	assert.Equal(t, styles.BoxWidth(400), styles.BoxWidth(4000), "width is capped")
 	assert.Equal(t, styles.BoxHeight(400), styles.BoxHeight(4000), "height is capped")
 }

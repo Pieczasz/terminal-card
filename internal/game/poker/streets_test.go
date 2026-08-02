@@ -440,6 +440,7 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(2, 6).Draw(rt, "players")
 		engine := startTable(rt, n)
+		defer engine.Close()
 		want := uint(n) * DefaultStack
 
 		require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "blinds must not create or destroy chips")
@@ -494,6 +495,7 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 func TestAllInPreflop_RunsOutBoardAndPays(t *testing.T) {
 	t.Parallel()
 	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
 	want := 3 * DefaultStack
 
 	for range 10 {
@@ -522,6 +524,7 @@ func TestAllInPreflop_RunsOutBoardAndPays(t *testing.T) {
 func TestUnequalAllIns_ShortStackCannotWinSidePot(t *testing.T) {
 	t.Parallel()
 	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
 
 	engine.WithState(func(s *game.State) {
 		extra, ok := s.Extra.(*State)

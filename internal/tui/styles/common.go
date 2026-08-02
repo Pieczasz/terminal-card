@@ -58,8 +58,8 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	boxWidth := BoxWidth(width)
 	boxHeight := BoxHeight(height)
 
-	innerWidth := boxWidth - 6
-	innerHeight := boxHeight - 4
+	innerWidth := max(boxWidth-6, 0)
+	innerHeight := max(boxHeight-4, 0)
 
 	// go-figure leaves trailing newlines that inflate the measured height below.
 	header = strings.TrimRight(header, "\r\n")

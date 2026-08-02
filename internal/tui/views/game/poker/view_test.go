@@ -2,6 +2,7 @@ package poker
 
 import (
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -50,7 +51,10 @@ func TestSeatZones_WithoutAHeroPlacesEverybody(t *testing.T) {
 	m := &Model{seats: []Seat{{PlayerID: "a"}, {PlayerID: "b"}, {PlayerID: "c"}}}
 	z := m.seatZones()
 
-	assert.Len(t, append(append(append([]Seat{}, z.left...), z.top...), z.right...), 3)
+	// ElementsMatch, not Len: a duplicated seat standing in for a dropped one keeps
+	// the count right while losing a player off the table.
+	placed := slices.Concat(z.left, z.top, z.right)
+	assert.ElementsMatch(t, m.seats, placed)
 }
 
 func TestSeatZones_EmptyTable(t *testing.T) {
