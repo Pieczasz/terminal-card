@@ -299,15 +299,28 @@ func awardUncontested(extra *State, winner *player.Player) {
 	extra.Pots = nil
 }
 
-// rankPlayers orders by: chips desc, bust-out hand desc, active before folded,
-// hand score desc, ID asc. Chips lead because a match is decided by the stack a
-// player walks away with; everyone who busted is level on chips, so how long they
-// lasted is what separates them. The hand-level keys only matter for a table that
-// finished the match still holding equal stacks.
+// rankPlayers ranks everyone who sat down, with the players who walked out last.
+// Leaving mid-match forfeits the match, so no leaver places above someone who saw
+// it through - but leavers are still ranked against each other on what they won
+// while they were playing, not on who happened to quit first.
 func rankPlayers(state *game.State, extra *State) []*player.Player {
-	players := slices.Clone(state.Players)
-	scores := handScores(state.Players, extra)
-	slices.SortFunc(players, func(a, b *player.Player) int {
+	byResult := resultOrder(state, extra)
+
+	seated := slices.Clone(state.Players)
+	left := slices.Clone(state.LeftPlayers)
+	slices.SortFunc(seated, byResult)
+	slices.SortFunc(left, byResult)
+	return slices.Concat(seated, left)
+}
+
+// resultOrder compares two players by: chips desc, bust-out hand desc, active
+// before folded, hand score desc, ID asc. Chips lead because a match is decided by
+// the stack a player walks away with; everyone who busted is level on chips, so how
+// long they lasted is what separates them. The hand-level keys only matter for
+// players who finished holding equal stacks.
+func resultOrder(state *game.State, extra *State) func(a, b *player.Player) int {
+	scores := handScores(slices.Concat(state.Players, state.LeftPlayers), extra)
+	return func(a, b *player.Player) int {
 		ca, cb := extra.PlayerChips[a.ID], extra.PlayerChips[b.ID]
 		if ca != cb {
 			if ca > cb {
@@ -332,6 +345,5 @@ func rankPlayers(state *game.State, extra *State) []*player.Player {
 			}
 		}
 		return strings.Compare(a.ID, b.ID)
-	})
-	return players
+	}
 }
