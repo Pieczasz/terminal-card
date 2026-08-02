@@ -61,6 +61,10 @@ type rankedCard struct {
 	suit deck.Suit
 }
 
+// rankValue is not joker-aware: deck.Joker is 13, so it maps to 14 and is
+// indistinguishable from an ace. Harmless today because StandardDeck is the only deck
+// builder and it stops at King, but dealing jokers needs wildness taught to
+// rankCounts, straightHigh and bestFlush, not just to this function.
 func rankValue(r deck.Rank) int {
 	if r == deck.Ace {
 		return 14
