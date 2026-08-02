@@ -130,10 +130,19 @@ func (m model) historyRows(maxItems int) []string {
 		if i >= maxItems {
 			return append(rows, "... and more")
 		}
-		rows = append(rows, fmt.Sprintf("%s: %s (Elo change: %s)",
-			h.Match.Game.Name, placementLabel(h.Placement), eloDeltaLabel(h.EloDelta)))
+		rows = append(rows, fmt.Sprintf("%s: %s (%s)",
+			h.Match.Game.Name, placementLabel(h.Placement), resultLabel(h)))
 	}
 	return rows
+}
+
+// resultLabel says what the match was worth: a rating swing for a ranked game,
+// and plainly "casual" for one that was never going to move Elo.
+func resultLabel(h db.MatchParticipant) string {
+	if !h.Match.Ranked {
+		return lg.NewStyle().Foreground(lg.Color("250")).Render("casual game")
+	}
+	return "Elo change: " + eloDeltaLabel(h.EloDelta)
 }
 
 func eloDeltaLabel(delta int) string {

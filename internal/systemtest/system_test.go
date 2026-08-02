@@ -84,7 +84,7 @@ func (r *recordingMatchRepo) UpdateRankings(_ context.Context, _ uint, _ []uint)
 	return map[uint]int{}, nil
 }
 
-func (r *recordingMatchRepo) RecordMatch(_ context.Context, _ uint, _ []uint, _ map[uint]int) error {
+func (r *recordingMatchRepo) RecordMatch(_ context.Context, _ uint, _ []uint, _ map[uint]int, _ bool) error {
 	return nil
 }
 
@@ -145,21 +145,27 @@ func chipsInPlay(t *testing.T, engine *game.Engine) uint {
 	return total
 }
 
-func handComplete(t *testing.T, engine *game.Engine) bool {
+// playOutMatch drives every hand of a poker match to its end.
+func playOutMatch(t *testing.T, engine *game.Engine) {
 	t.Helper()
-	done := false
-	engine.WithState(func(s *game.State) {
-		extra, ok := s.Extra.(*poker.State)
-		require.True(t, ok)
-		done = extra.HandComplete
-	})
-	return done
+	for range maxActions * poker.HandsPerMatch {
+		if engine.IsFinished() {
+			return
+		}
+		if !actOnce(engine) {
+			break
+		}
+	}
+	require.True(t, engine.IsFinished(), "the match must reach its end")
 }
 
-// actOnce plays the cheapest legal action for whoever is on turn.
+// actOnce plays the cheapest legal action for whoever is on turn, dealing the
+// next hand when the table is between hands.
 func actOnce(engine *game.Engine) bool {
 	id := engine.CurrentPlayerID()
-	for _, act := range []game.Action{poker.ActionCheck{}, poker.ActionCall{}, poker.ActionFold{}} {
+	for _, act := range []game.Action{
+		poker.ActionCheck{}, poker.ActionCall{}, poker.ActionFold{}, poker.ActionNextHand{},
+	} {
 		if err := engine.SubmitAction(id, act); err == nil {
 			return true
 		}
@@ -232,17 +238,10 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	assert.Equal(t, startingChips, chipsInPlay(t, engine),
 		"a mid-hand disconnect must not create or destroy chips")
 
-	for range maxActions {
-		if engine.IsFinished() || handComplete(t, engine) {
-			break
-		}
-		if !actOnce(engine) {
-			break
-		}
-	}
+	playOutMatch(t, engine)
 
-	// --- the hand resolved cleanly -----------------------------------------
-	assert.Equal(t, startingChips, chipsInPlay(t, engine), "chips survive the whole hand")
+	// --- the match resolved cleanly -----------------------------------------
+	assert.Equal(t, startingChips, chipsInPlay(t, engine), "chips survive the whole match")
 	standings := engine.StandingsIDs()
 	assert.NotEmpty(t, standings, "a finished hand ranks its players")
 	assert.Contains(t, standings, leaver.ID, "a player who left still places")

@@ -6,7 +6,10 @@ import (
 
 type Match struct {
 	gorm.Model
-	GameID       uint
+	GameID uint
+	// Ranked separates a rated result from a casual one, which is recorded for
+	// history but leaves every participant's Elo where it was.
+	Ranked       bool
 	Game         Game               `gorm:"foreignKey:GameID"`
 	Participants []MatchParticipant `gorm:"foreignKey:MatchID"`
 }

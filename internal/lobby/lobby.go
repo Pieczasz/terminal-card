@@ -560,18 +560,41 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 		parentCtx := l.manager.shutdownCtx()
 		l.mu.RUnlock()
 
-		if isRanked && gameName != "" && l.manager != nil && l.manager.matchRepo != nil {
-			// Registered before the write so shutdown waits for it rather than
-			// closing the database handle mid-statement.
-			l.manager.finalizing.Add(1)
-			ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
-			err := l.manager.matchRepo.FinalizeRankedMatch(ctx, gameName, userIDs)
-			cancel()
-			l.manager.finalizing.Done()
-			if err != nil {
-				slog.Error("failed to finalize ranked match", "error", err, "game", gameName)
-			}
+		if gameName == "" || l.manager == nil || l.manager.matchRepo == nil {
+			return
+		}
+
+		// Registered before the write so shutdown waits for it rather than
+		// closing the database handle mid-statement.
+		l.manager.finalizing.Add(1)
+		ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
+		err := l.recordFinishedMatch(ctx, gameName, userIDs, isRanked)
+		cancel()
+		l.manager.finalizing.Done()
+		if err != nil {
+			slog.Error("failed to record finished match", "error", err, "game", gameName, "ranked", isRanked)
 		}
 		return
 	}
+}
+
+// recordFinishedMatch writes match history for every finished game. Only a ranked
+// lobby also moves Elo; a casual one still belongs in the players' history.
+func (l *Lobby) recordFinishedMatch(ctx context.Context, gameName string, userIDs []uint, isRanked bool) error {
+	repo := l.manager.matchRepo
+	if isRanked {
+		if err := repo.FinalizeRankedMatch(ctx, gameName, userIDs); err != nil {
+			return fmt.Errorf("finalize ranked match: %w", err)
+		}
+		return nil
+	}
+	g, err := repo.GetOrCreateGame(ctx, gameName)
+	if err != nil {
+		return fmt.Errorf("resolve game: %w", err)
+	}
+	// No Elo deltas: a casual result is history only, it must not move ratings.
+	if err := repo.RecordMatch(ctx, g.ID, userIDs, nil, false); err != nil {
+		return fmt.Errorf("record casual match: %w", err)
+	}
+	return nil
 }
