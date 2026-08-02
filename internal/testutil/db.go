@@ -51,8 +51,6 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 	}
 
 	t.Cleanup(func() {
-		// Errorf, not Fatalf: Fatalf calls runtime.Goexit, which would abandon every
-		// cleanup registered before this one.
 		if err := postgresContainer.Terminate(ctx); err != nil {
 			t.Errorf("failed to terminate container: %v", err)
 		}
@@ -71,8 +69,7 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 	}
 
 	// Close the pool before the container goes away. Without this each test leaks
-	// sql.DB's connection-opener and cleaner goroutines for the rest of the run,
-	// which goleak correctly reports.
+	// sql.DB's connection-opener and cleaner goroutines for the rest of the run.
 	t.Cleanup(func() {
 		sqlDB, err := gormDB.DB()
 		if err != nil {

@@ -90,8 +90,6 @@ func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
 }
 
-// Allow runs on every SSH connection attempt and every lobby join, under a single
-// global mutex, and filterExpired allocates a fresh slice on each call.
 func BenchmarkAllow(b *testing.B) {
 	for _, keys := range []int{1, 64, 10_000} {
 		b.Run(fmt.Sprintf("keys=%d", keys), func(b *testing.B) {
