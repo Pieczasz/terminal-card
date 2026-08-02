@@ -20,9 +20,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gameMsg:
 		m.lastErr = nil
 		m.syncState()
-		return m, listenForEvents(m.events)
+		return m, tea.Batch(listenForEvents(m.events), m.autoDealTimer())
+	case autoDealMsg:
+		return m.autoDeal(msg)
 	}
 	return m, nil
+}
+
+// autoDeal deals for a player who did not press enter in time. The hand tag stops
+// a tick left over from an already-dealt hand from dealing a second one.
+func (m *Model) autoDeal(msg autoDealMsg) (tea.Model, tea.Cmd) {
+	if msg.afterHand != m.handNumber || !m.canDeal() {
+		return m, nil
+	}
+	return m.submit(logic.ActionNextHand{})
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -50,6 +61,9 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "r":
 		return m.beginRaise()
+	case "1", "2", "3", "4":
+		m.addChip(msg.String())
+		return m, nil
 	case "[", "h":
 		m.stepRaise(-1)
 		return m, nil
@@ -62,16 +76,26 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// stepRaise nudges the pending raise by one bet increment, staying inside the legal
-// range. It is a no-op unless the raise prompt is open.
+// addChip pushes one chip of the keyed denomination into the pending raise, which
+// is how a raise is built up: start at the minimum, then stack chips on top.
+func (m *Model) addChip(key string) {
+	if !m.raising {
+		return
+	}
+	value, ok := chipForKey(key)
+	if !ok {
+		return
+	}
+	m.raiseAmount = m.clampRaise(m.raiseAmount + value)
+}
+
+// stepRaise nudges the pending raise by the smallest chip, staying inside the
+// legal range. It is a no-op unless the raise prompt is open.
 func (m *Model) stepRaise(direction int) {
 	if !m.raising {
 		return
 	}
-	step := m.minRaise
-	if step == 0 {
-		step = logic.DefaultBigBlind
-	}
+	step := smallestChip()
 	if direction < 0 {
 		// uint: only subtract when it would not wrap.
 		if m.raiseAmount > step {
@@ -83,10 +107,13 @@ func (m *Model) stepRaise(direction int) {
 	m.raiseAmount = m.clampRaise(m.raiseAmount)
 }
 
-// confirm either leaves a finished hand or commits the pending raise.
+// confirm deals the next hand, leaves a finished match, or commits the pending raise.
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
-	if m.baseState.Phase == game.Finished {
+	if m.matchDone {
 		return m.returnToLobby()
+	}
+	if m.canDeal() {
+		return m.submit(logic.ActionNextHand{})
 	}
 	if m.raising && m.baseState.MyTurn {
 		amount := m.raiseAmount
@@ -96,6 +123,8 @@ func (m *Model) confirm() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// beginRaise opens the raise prompt at the smallest legal raise, so every chip
+// the player then adds is on top of an amount that is already valid.
 func (m *Model) beginRaise() (tea.Model, tea.Cmd) {
 	if !m.canRaise() {
 		return m, nil
@@ -135,7 +164,7 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 		m.raising = false
 		return m, nil
 	}
-	if m.baseState.Phase == game.Finished {
+	if m.matchDone {
 		return m.returnToLobby()
 	}
 	p := views.SessionPlayer(m.global)

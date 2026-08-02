@@ -3,6 +3,8 @@ package poker
 import (
 	"testing"
 
+	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -70,6 +72,118 @@ func TestStepRaise_ClampsWithinTheLegalBandAndNeverWraps(t *testing.T) {
 		require.LessOrEqual(t, m.raiseAmount, wantMax, "repeated increase never exceeds the stack")
 	}
 	assert.Equal(t, wantMax, m.raiseAmount, "increasing eventually reaches the stack")
+}
+
+// Chips are how a raise is built, so a keyed chip must land on top of an already
+// legal amount and never push the raise outside the band.
+func TestAddChip_StacksOntoTheOpenRaise(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	// The button is dealt at random, so the prompt is opened directly rather than
+	// through beginRaise, which needs the hero to be on turn.
+	m.raising = true
+	m.raiseAmount = m.clampRaise(m.currentBet + m.minRaise)
+	opening := m.raiseAmount
+
+	m.addChip("3") // 25
+	assert.Equal(t, opening+25, m.raiseAmount)
+
+	m.addChip("1") // 100
+	assert.Equal(t, opening+125, m.raiseAmount)
+
+	for range 50 {
+		m.addChip("1")
+	}
+	assert.Equal(t, m.streetBetMax(), m.raiseAmount, "chips stop at the player's stack")
+}
+
+func TestAddChip_IsANoOpWhenNotRaising(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.raising = false
+	m.raiseAmount = 0
+
+	m.addChip("1")
+
+	assert.Zero(t, m.raiseAmount, "chips only move inside the raise prompt")
+}
+
+// Between hands the table waits on one player to deal. Enter must send that, not
+// drop everyone back to the lobby the way the end of a match does.
+func TestConfirm_DealsTheNextHandInsteadOfLeaving(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	// Fold the hand out heads-up; the match still has hands left to play.
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
+	m.syncState()
+	require.True(t, m.handDone)
+	require.False(t, m.matchDone, "one hand is not the whole match")
+
+	// The button lands on either seat, so both sides of the prompt get asserted.
+	heroDeals := m.canDeal()
+	_, cmd := m.confirm()
+	assert.Nil(t, cmd, "enter between hands never navigates away")
+	if !heroDeals {
+		assert.True(t, m.handDone, "the hero cannot deal on another player's button")
+		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionNextHand{}))
+		m.syncState()
+	}
+
+	assert.False(t, m.handDone, "the next hand is under way")
+	assert.Equal(t, 2, m.handNumber)
+}
+
+// A pot nobody contested is won face-down. The hand-over screen is shown between
+// hands now, so a leaked hole card is a live read for the rest of the match.
+func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
+	m.syncState()
+	require.True(t, m.handDone)
+
+	for _, s := range m.seats {
+		if s.IsHero {
+			continue
+		}
+		assert.Empty(t, s.Hole, "%s never had to show", s.Name)
+	}
+}
+
+// The fallback deal is tagged with the hand it was armed for; a tick that arrives
+// after that hand is already dealt must not deal a second one.
+func TestAutoDeal_IgnoresATickFromAnEarlierHand(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
+	m.syncState()
+	require.True(t, m.handDone)
+
+	_, cmd := m.autoDeal(autoDealMsg{afterHand: m.handNumber - 1})
+
+	assert.Nil(t, cmd)
+	assert.True(t, m.handDone, "a stale tick deals nothing")
+	assert.NoError(t, m.lastErr)
+}
+
+// esc on the between-hands screen leaves the whole match, so the screen has to say
+// so: it otherwise looks exactly like the end-of-game screen where esc was free.
+func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.handDone = true
+	m.matchDone = false
+
+	assert.Contains(t, m.handOverHint(), "forfeiting")
+
+	m.matchDone = true
+	assert.NotContains(t, m.handOverHint(), "forfeiting", "the match is over, esc costs nothing")
 }
 
 // Stepping while the raise prompt is closed must do nothing at all.
