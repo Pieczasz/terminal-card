@@ -20,12 +20,12 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/ssh"
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
 	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/keygen"
-	"github.com/charmbracelet/ssh"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -201,7 +201,7 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 
 // sessionLifecycle spans the session, recovers panics, and releases everything the
 // session held. It is the outermost middleware so it wraps the bubbletea program:
-// charmbracelet/ssh runs the handler in a goroutine with no recover, so an escaped
+// charm.land/ssh runs the handler in a goroutine with no recover, so an escaped
 // panic would crash the whole process, and cleanup must run on every disconnect.
 func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Middleware {
 	return func(sh ssh.Handler) ssh.Handler {
