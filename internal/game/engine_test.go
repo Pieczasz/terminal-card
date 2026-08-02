@@ -181,6 +181,7 @@ func TestEngine_SubmitAction_PostConditionBeforeBroadcast(t *testing.T) {
 	m.On("ValidateAction", mock.Anything, action).Return(nil)
 	m.On("ApplyAction", mock.Anything, action)
 	m.On("AfterAction", mock.Anything, action).Return(assert.AnError)
+	m.On("Standings", mock.Anything).Return([]*player.Player{players[0], players[1]})
 
 	err := engine.SubmitAction(currentPlayerID, action)
 	require.Error(t, err)
@@ -190,14 +191,25 @@ func TestEngine_SubmitAction_PostConditionBeforeBroadcast(t *testing.T) {
 	})
 
 	// Broadcast is synchronous under the engine mutex and returns before
-	// SubmitAction does, so by now the event either sits in the buffered channel or
+	// SubmitAction does, so by now the events either sit in the buffered channel or
 	// never will. A timeout would only make this slower and let a merely-slow
 	// broadcast pass.
-	select {
-	case ev := <-ch:
-		t.Fatalf("unexpected broadcast after post-condition failure: %+v", ev)
-	default:
+	//
+	// The half-applied move must never reach a client, but the game really is over,
+	// so the end of it has to be announced: without it every other player's view
+	// waits on a frame that will never come and the lobby never records the match.
+	var seen []EventType
+	for {
+		select {
+		case ev := <-ch:
+			seen = append(seen, ev.Type)
+			continue
+		default:
+		}
+		break
 	}
+	assert.Equal(t, []EventType{EventGameEnded}, seen,
+		"a failed post-condition ends the game without publishing the action")
 }
 
 func TestEngine_RemovePlayer(t *testing.T) {

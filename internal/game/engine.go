@@ -233,7 +233,10 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	e.state.Rules.ApplyAction(e.state, action)
 
 	if err := e.state.Rules.AfterAction(e.state, action); err != nil {
-		e.state.Phase = Finished
+		// The game is over either way, so it ends the same way a win does: without
+		// the broadcast every other client sits on a frame that will never update,
+		// and the lobby never records the match.
+		e.finishGameLocked(currentPlayer)
 		return fmt.Errorf("post-action rules failed: %w", err)
 	}
 
@@ -244,17 +247,7 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	})
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.state.Phase = Finished
-		standings := e.state.Rules.Standings(e.state)
-		if len(standings) > 0 {
-			e.state.Winner = standings[0]
-		} else {
-			e.state.Winner = currentPlayer
-		}
-		e.broadcaster.Broadcast(Event{
-			Type:     EventGameEnded,
-			PlayerID: e.state.Winner.ID,
-		})
+		e.finishGameLocked(currentPlayer)
 		return nil
 	}
 
@@ -265,6 +258,32 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	})
 
 	return nil
+}
+
+// finishGameLocked settles the winner from the rules standings and announces the
+// end of the game. fallback names the winner when the rules rank nobody. Caller
+// must hold e.mu and e.state.mu.
+func (e *Engine) finishGameLocked(fallback *player.Player) {
+	e.state.Phase = Finished
+
+	standings := e.state.Rules.Standings(e.state)
+	switch {
+	case len(standings) > 0:
+		e.state.Winner = standings[0]
+	case fallback != nil:
+		e.state.Winner = fallback
+	case len(e.state.Players) > 0:
+		e.state.Winner = e.state.Players[0]
+	}
+
+	winnerID := ""
+	if e.state.Winner != nil {
+		winnerID = e.state.Winner.ID
+	}
+	e.broadcaster.Broadcast(Event{
+		Type:     EventGameEnded,
+		PlayerID: winnerID,
+	})
 }
 
 func (e *Engine) IsFinished() bool {
@@ -314,21 +333,7 @@ func (e *Engine) RemovePlayer(playerID string) {
 	}
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.state.Phase = Finished
-		standings := e.state.Rules.Standings(e.state)
-		if len(standings) > 0 {
-			e.state.Winner = standings[0]
-		} else if len(e.state.Players) > 0 {
-			e.state.Winner = e.state.Players[0]
-		}
-		winnerID := ""
-		if e.state.Winner != nil {
-			winnerID = e.state.Winner.ID
-		}
-		e.broadcaster.Broadcast(Event{
-			Type:     EventGameEnded,
-			PlayerID: winnerID,
-		})
+		e.finishGameLocked(nil)
 		return
 	}
 
