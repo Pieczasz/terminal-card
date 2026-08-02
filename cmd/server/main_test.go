@@ -45,17 +45,19 @@ func runServe(t *testing.T, server sshServer) error {
 }
 
 func TestServe_AcceptLoopFailureIsReturned(t *testing.T) {
+	t.Parallel()
 	boom := errors.New("listener exploded")
 	err := runServe(t, &fakeServer{serveErr: boom})
 
 	require.Error(t, err)
-	assert.ErrorIs(t, err, boom, "the cause must survive so operators can see it")
+	require.ErrorIs(t, err, boom, "the cause must survive so operators can see it")
 	assert.Contains(t, err.Error(), "accept loop failed")
 }
 
 // ErrServerClosed without a shutdown signal still means the server stopped serving,
 // but it must not be dressed up as an accept-loop failure.
 func TestServe_UnexpectedCleanStopIsReturned(t *testing.T) {
+	t.Parallel()
 	err := runServe(t, &fakeServer{serveErr: charmssh.ErrServerClosed})
 
 	require.Error(t, err)

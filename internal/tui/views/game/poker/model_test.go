@@ -60,27 +60,22 @@ func TestSyncState_BuildsSeatsFromEngine(t *testing.T) {
 	}
 }
 
-// Seat flags drive the whole table render, so pin the ones a split could scramble.
+// Seat flags drive the whole table render. Assert what a player can observe - who
+// paid which blind, and that the markers are unique - rather than re-stating the
+// assignment in syncState, which no change to the code could ever contradict.
 func TestSyncState_SeatFlagsMatchBlinds(t *testing.T) {
 	t.Parallel()
-	engine, m := startedTable(t)
+	_, m := startedTable(t)
 
 	var sb, bb, dealer, turns int
-	engine.WithState(func(state *game.State) {
-		extra, ok := state.Extra.(*logic.State)
-		require.True(t, ok)
-		for i, s := range m.seats {
-			assert.Equal(t, i == extra.SBIndex, s.IsSB)
-			assert.Equal(t, i == extra.BBIndex, s.IsBB)
-			assert.Equal(t, i == extra.DealerIndex, s.IsDealer)
-		}
-	})
 	for _, s := range m.seats {
 		if s.IsSB {
 			sb++
+			assert.Equal(t, logic.DefaultSmallBlind, s.Bet, "the small-blind seat posted the small blind")
 		}
 		if s.IsBB {
 			bb++
+			assert.Equal(t, logic.DefaultBigBlind, s.Bet, "the big-blind seat posted the big blind")
 		}
 		if s.IsDealer {
 			dealer++
@@ -89,10 +84,20 @@ func TestSyncState_SeatFlagsMatchBlinds(t *testing.T) {
 			turns++
 		}
 	}
-	assert.Equal(t, 1, sb)
-	assert.Equal(t, 1, bb)
-	assert.Equal(t, 1, dealer)
+
+	assert.Equal(t, 1, sb, "exactly one small blind")
+	assert.Equal(t, 1, bb, "exactly one big blind")
+	assert.Equal(t, 1, dealer, "exactly one dealer button")
 	assert.Equal(t, 1, turns, "exactly one seat is on turn mid-hand")
+
+	// Heads-up, the button posts the small blind.
+	hero := m.heroSeat()
+	require.NotNil(t, hero)
+	for _, s := range m.seats {
+		if s.IsDealer {
+			assert.True(t, s.IsSB, "heads-up: the dealer is the small blind")
+		}
+	}
 }
 
 func TestSyncState_ChipsAndBetsSumToStacks(t *testing.T) {

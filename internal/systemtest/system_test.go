@@ -23,7 +23,13 @@ import (
 	"gorm.io/gorm"
 )
 
-const pokerGame = "Poker"
+const (
+	pokerGame = "Poker"
+
+	// maxActions bounds the action driver so a rules change that stops a hand from
+	// terminating fails the test instead of hanging it.
+	maxActions = 60
+)
 
 // recordingMatchRepo captures what the ranked-finalize path would persist, so the
 // no-database tier can still assert the full game-over flow.
@@ -69,10 +75,13 @@ func realRegistry(t *testing.T) *game.Registry {
 }
 
 func newPlayer(id uint, name string) *player.Player {
-	return &player.Player{
-		ID:           fmt.Sprint(id),
-		DatabaseUser: &db.User{Model: gorm.Model{ID: id}, Username: name},
-	}
+	return playerFor(&db.User{Model: gorm.Model{ID: id}, Username: name})
+}
+
+// playerFor derives the in-game player from a database user exactly as the SSH
+// session layer does, so IDs line up with what the lobby and engine expect.
+func playerFor(user *db.User) *player.Player {
+	return &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
 }
 
 // awaitGameStart drains lobby events until the engine arrives.
@@ -140,7 +149,7 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	t.Parallel()
 
 	repo := &recordingMatchRepo{}
-	manager := lobby.NewManagerWithContext(context.Background(), repo)
+	manager := lobby.NewManager(context.Background(), repo)
 	registry := realRegistry(t)
 
 	leader := newPlayer(1, "alice")
@@ -198,7 +207,7 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	assert.Equal(t, startingChips, chipsInPlay(t, engine),
 		"a mid-hand disconnect must not create or destroy chips")
 
-	for range 60 {
+	for range maxActions {
 		if engine.IsFinished() || handComplete(t, engine) {
 			break
 		}
@@ -229,7 +238,7 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManagerWithContext(context.Background(), &recordingMatchRepo{})
+	manager := lobby.NewManager(context.Background(), &recordingMatchRepo{})
 	registry := realRegistry(t)
 
 	leader := newPlayer(1, "alice")
@@ -254,7 +263,7 @@ func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 func TestSystem_LeaderLeavingPromotesGuest(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManagerWithContext(context.Background(), &recordingMatchRepo{})
+	manager := lobby.NewManager(context.Background(), &recordingMatchRepo{})
 	leader := newPlayer(1, "alice")
 	guest := newPlayer(2, "bob")
 
@@ -270,6 +279,3 @@ func TestSystem_LeaderLeavingPromotesGuest(t *testing.T) {
 	_, err = manager.FindLobbyByCode(l.Code())
 	assert.Error(t, err, "an empty lobby is cleaned up")
 }
-
-// itoa mirrors how the SSH layer derives a player ID from the database user ID.
-func itoa(id uint) string { return fmt.Sprint(id) }

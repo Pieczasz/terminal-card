@@ -94,7 +94,7 @@ func run() (err error) {
 
 	userRepo := repository.NewUserRepository(database)
 	matchRepo := repository.NewMatchRepository(database)
-	lobbyManager := lobby.NewManagerWithContext(ctx, matchRepo)
+	lobbyManager := lobby.NewManager(ctx, matchRepo)
 
 	// Registered after the sqlDB.Close defer above, so LIFO drains in-flight ranked
 	// finalizes before the handle they write through is closed. The app context is

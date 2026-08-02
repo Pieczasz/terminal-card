@@ -29,7 +29,7 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(gormDB)
 	matchRepo := repository.NewMatchRepository(gormDB)
-	manager := lobby.NewManagerWithContext(ctx, matchRepo)
+	manager := lobby.NewManager(ctx, matchRepo)
 	registry := realRegistry(t)
 
 	// Register real users the way the SSH layer does, by public key.
@@ -37,7 +37,7 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	for _, name := range []string{"alice", "bob", "carol"} {
 		user, _, err := userRepo.RegisterUserWithKey(ctx, name, "fingerprint-"+name)
 		require.NoError(t, err)
-		players = append(players, &player.Player{ID: itoa(user.ID), DatabaseUser: user})
+		players = append(players, playerFor(user))
 	}
 	leader := players[0]
 
@@ -60,7 +60,7 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	engine := awaitGameStart(t, events)
 
 	// Everyone shoves so the hand reaches showdown without needing a full strategy.
-	for range 40 {
+	for range maxActions {
 		if engine.IsFinished() || handComplete(t, engine) {
 			break
 		}
@@ -70,9 +70,15 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	}
 	require.True(t, handComplete(t, engine) || engine.IsFinished(), "the hand must finish")
 
-	require.True(t, manager.WaitForFinalizers(30*time.Second), "ranked write must complete")
+	// The finalize runs on the lobby's watcher goroutine once it observes the
+	// game-ended event, so poll for the row. WaitForFinalizers only covers writes
+	// already in flight and returns immediately for one that has yet to start.
+	require.Eventually(t, func() bool {
+		history, err := userRepo.UserMatchHistory(ctx, leader.DatabaseUser.ID, 10)
+		return err == nil && len(history) == 1
+	}, 30*time.Second, 100*time.Millisecond, "the ranked match must be recorded")
+	require.True(t, manager.WaitForFinalizers(30*time.Second), "ranked write must drain")
 
-	// --- leaderboard --------------------------------------------------------
 	best, err := userRepo.BestPlayers(ctx, 10)
 	require.NoError(t, err)
 	require.NotEmpty(t, best, "a finished ranked game must populate the leaderboard")
@@ -85,7 +91,6 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	}
 	assert.True(t, moved, "at least one player's Elo must change after a ranked game")
 
-	// --- profile ------------------------------------------------------------
 	for _, p := range players {
 		profile, err := userRepo.UserProfile(ctx, p.DatabaseUser.ID)
 		require.NoError(t, err)
@@ -106,14 +111,14 @@ func TestSystem_CasualGameWritesNothing(t *testing.T) {
 
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(gormDB)
-	manager := lobby.NewManagerWithContext(ctx, repository.NewMatchRepository(gormDB))
+	manager := lobby.NewManager(ctx, repository.NewMatchRepository(gormDB))
 	registry := realRegistry(t)
 
 	players := make([]*player.Player, 0, 2)
 	for _, name := range []string{"dave", "erin"} {
 		user, _, err := userRepo.RegisterUserWithKey(ctx, name, "fingerprint-"+name)
 		require.NoError(t, err)
-		players = append(players, &player.Player{ID: itoa(user.ID), DatabaseUser: user})
+		players = append(players, playerFor(user))
 	}
 
 	l, err := manager.New(players[0],
@@ -131,7 +136,7 @@ func TestSystem_CasualGameWritesNothing(t *testing.T) {
 	}
 	engine := awaitGameStart(t, events)
 
-	for range 40 {
+	for range maxActions {
 		if engine.IsFinished() || handComplete(t, engine) {
 			break
 		}

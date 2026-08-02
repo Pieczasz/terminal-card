@@ -36,7 +36,7 @@ func testRegistry() *game.Registry {
 // leaderView returns the lobby view as seen by the lobby's leader.
 func leaderView(t *testing.T) (*model, *lobby.Lobby, *lobby.Manager) {
 	t.Helper()
-	manager := lobby.NewManagerWithContext(context.Background(), nil)
+	manager := lobby.NewManager(context.Background(), nil)
 	leaderUser := testUser(1, "alice")
 	leader := &player.Player{ID: "1", DatabaseUser: leaderUser}
 

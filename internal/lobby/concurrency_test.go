@@ -59,7 +59,7 @@ func TestConcurrent_JoinUpToCapacity(t *testing.T) {
 	)
 	freeSlots := maxPlayers - 1 // leader already occupies one slot
 
-	m := NewManagerWithContext(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame(&db.Game{Name: "TestGame"}))
@@ -133,7 +133,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	const players = 8 // leader + 7 guests
 
-	m := NewManagerWithContext(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame(&db.Game{Name: "TestGame"}))
@@ -190,7 +190,7 @@ func TestConcurrent_JoinRacingLastLeave(t *testing.T) {
 
 	runWithTimeout(t, 30*time.Second, func() {
 		for i := range iterations {
-			m := NewManagerWithContext(context.Background(), nil)
+			m := NewManager(context.Background(), nil)
 			unlimitedJoins(m)
 
 			leader := mockPlayer(fmt.Sprintf("leader-%d", i), uint(2*i+1))
@@ -252,7 +252,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 		perGoTurns = 40
 	)
 
-	m := NewManagerWithContext(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame(&db.Game{Name: "NeverStarts"}))

@@ -1,9 +1,6 @@
-.PHONY: all build test test-short test-integration lint fmt fix clean ci
-
-all: ci
+.PHONY: build test test-short test-integration lint fmt fix clean ci
 
 ci: fmt fix lint test build
-
 
 build:
 	go build -o bin/server ./cmd/server

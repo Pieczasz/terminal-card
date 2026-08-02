@@ -10,7 +10,7 @@ import (
 
 func TestManager_WaitForFinalizers(t *testing.T) {
 	t.Parallel()
-	m := NewManagerWithContext(context.Background(), nil)
+	m := NewManager(context.Background(), nil)
 
 	assert.True(t, m.WaitForFinalizers(time.Second), "nothing in flight drains immediately")
 
