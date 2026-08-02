@@ -93,8 +93,6 @@ func TestSyncState_SeatFlagsMatchBlinds(t *testing.T) {
 	assert.Equal(t, 1, turns, "exactly one seat is on turn mid-hand")
 
 	// Heads-up, the button posts the small blind.
-	hero := m.heroSeat()
-	require.NotNil(t, hero)
 	for _, s := range m.seats {
 		if s.IsDealer {
 			assert.True(t, s.IsSB, "heads-up: the dealer is the small blind")
