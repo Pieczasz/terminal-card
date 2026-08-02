@@ -16,7 +16,14 @@ const (
 )
 
 // ClampRating bounds a rating to [MinRating, MaxRating].
+//
+// NaN cannot be ordered against the bounds, so min/max would propagate it and
+// ToUint32 would store 0 - below MinRating, breaking this function's contract.
+// A rating that is not a number is treated as unrated.
 func ClampRating(rating float64) float64 {
+	if math.IsNaN(rating) {
+		return DefaultRating
+	}
 	return min(max(rating, MinRating), MaxRating)
 }
 

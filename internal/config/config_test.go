@@ -112,3 +112,28 @@ func TestValidate_InsecureDBRemoteHost(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DB_SSLMODE=disable")
 }
+
+// An env var that is present but blank must not defeat the default. A blank
+// SSH_KEY_PATH in a .env or compose file previously reached keygen.New("").
+func TestLoad_BlankEnvFallsBackToDefault(t *testing.T) {
+	blanked := []string{
+		"SERVER_HOST", "SSH_KEY_PATH", "DB_HOST", "DB_USER", "DB_NAME",
+		"DB_SSLMODE", "OTEL_EXPORTER_OTLP_ENDPOINT", "SERVICE_VERSION",
+	}
+	t.Setenv("ENV", "development")
+	for _, key := range blanked {
+		t.Setenv(key, "")
+	}
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.0.0.0", cfg.ServerHost)
+	assert.Equal(t, ".wishlist/server", cfg.SSHKeyPath)
+	assert.Equal(t, "localhost", cfg.DBHost)
+	assert.Equal(t, "postgres", cfg.DBUser)
+	assert.Equal(t, "terminal_card", cfg.DBName)
+	assert.Equal(t, "disable", cfg.DBSSLMode)
+	assert.Equal(t, "localhost:4317", cfg.OTelEndpoint)
+	assert.NotEmpty(t, cfg.ServiceVersion, "version always resolves to something")
+}

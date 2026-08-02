@@ -13,13 +13,22 @@ import (
 	"pgregory.net/rapid"
 )
 
-func startHeadsUp(t *testing.T) (*game.Engine, *Rules) {
+// testingT is the slice of *testing.T and *rapid.T these helpers need. Threading
+// rapid's own T into them is what lets a property failure be reported to rapid,
+// which then shrinks the counterexample; reporting to the parent *testing.T instead
+// aborts the property goroutine and loses the seed.
+type testingT interface {
+	require.TestingT
+	Helper()
+}
+
+func startHeadsUp(t testingT) (*game.Engine, *Rules) {
 	t.Helper()
 	// Rules is stateless, so the caller's handle need not be the engine's own.
 	return startTable(t, 2), &Rules{}
 }
 
-func extraOf(t *testing.T, e *game.Engine) *State {
+func extraOf(t testingT, e *game.Engine) *State {
 	t.Helper()
 	var extra *State
 	e.WithState(func(s *game.State) {
@@ -399,7 +408,7 @@ func chipsInPlay(extra *State) uint {
 	return total
 }
 
-func startTable(t *testing.T, n int) *game.Engine {
+func startTable(t testingT, n int) *game.Engine {
 	t.Helper()
 	players := make([]*player.Player, 0, n)
 	for i := range n {
@@ -427,16 +436,16 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(2, 6).Draw(rt, "players")
-		engine := startTable(t, n)
+		engine := startTable(rt, n)
 		want := uint(n) * DefaultStack
 
-		require.Equal(t, want, chipsInPlay(extraOf(t, engine)), "blinds must not create or destroy chips")
+		require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "blinds must not create or destroy chips")
 
 		for step := range 200 {
 			if engine.IsFinished() {
 				break
 			}
-			extra := extraOf(t, engine)
+			extra := extraOf(rt, engine)
 			if extra.HandComplete {
 				break
 			}
@@ -460,19 +469,19 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 				break // no legal action for the player on turn
 			}
 
-			assert.Equal(t, want, chipsInPlay(extraOf(t, engine)),
+			require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)),
 				"chips changed after step %d (%d players)", step, n)
 		}
 
 		// However the hand ended, every chip must be back in a stack.
-		final := extraOf(t, engine)
+		final := extraOf(rt, engine)
 		if final.HandComplete {
-			assert.Zero(t, final.MainPool, "a completed hand must leave nothing in the pool")
+			require.Zero(rt, final.MainPool, "a completed hand must leave nothing in the pool")
 			var stacks uint
 			for _, c := range final.PlayerChips {
 				stacks += c
 			}
-			assert.Equal(t, want, stacks, "payouts must return exactly the chips collected")
+			require.Equal(rt, want, stacks, "payouts must return exactly the chips collected")
 		}
 	})
 }

@@ -146,9 +146,19 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+	defer func() {
+		// Serve closes the listener on its own way out, so a second close is
+		// expected and only the unexpected kind is worth reporting.
+		if err := proxyListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("failed to close listener", "error", err)
+		}
+	}()
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	// Without Stop the handler outlives serve. That is invisible in production (the
+	// process is exiting) but in a test binary it swallows Ctrl-C for good.
+	defer signal.Stop(done)
 
 	slog.Info("starting ssh server",
 		"address", addr,

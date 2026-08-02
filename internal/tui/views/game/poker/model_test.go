@@ -117,15 +117,15 @@ func TestClampRaise_BoundsToLegalRange(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
 
-	minTo := m.currentBet + m.minRaise
-	maxTo := m.streetBetMax()
-	require.Positive(t, maxTo)
+	// Hardcoded rather than recomputed from m: deriving the expectation from
+	// currentBet+minRaise and streetBetMax would restate clampRaise's own body, and
+	// swapping its min and max would still pass. Heads-up with DefaultStack=1000,
+	// SB=25 and BB=50 the legal band is exactly [100, 1000].
+	const wantMin, wantMax = uint(100), uint(1000)
 
-	assert.Equal(t, minTo, m.clampRaise(0), "below the minimum raises up to it")
-	assert.Equal(t, maxTo, m.clampRaise(maxTo+1_000), "above the stack clamps down to it")
-	if minTo < maxTo {
-		assert.Equal(t, minTo+1, m.clampRaise(minTo+1), "in-range amounts pass through")
-	}
+	assert.Equal(t, wantMin, m.clampRaise(0), "below the minimum raises up to it")
+	assert.Equal(t, wantMax, m.clampRaise(50_000), "above the stack clamps down to it")
+	assert.Equal(t, uint(500), m.clampRaise(500), "an in-range amount passes through")
 }
 
 func TestSyncState_NilBoundIsInert(t *testing.T) {
