@@ -59,7 +59,7 @@ func TestRules_Metadata(t *testing.T) {
 	rules := &Rules{}
 	assert.Equal(t, 2, rules.MinPlayers())
 	assert.Equal(t, 9, rules.MaxPlayers())
-	assert.Equal(t, 2, rules.InitialDealCount())
+	assert.Equal(t, 0, rules.InitialDealCount(), "poker deals its own hole cards, once per hand")
 }
 
 func TestRules_ValidateAction(t *testing.T) {
@@ -270,10 +270,10 @@ func TestRules_Standings(t *testing.T) {
 }
 
 // A keypress must turn into an updated table for every player well inside one
-// terminal frame (~16ms). This plays a whole hand - deal, blinds, every betting
-// round, the street machine and the showdown - so a full hand comfortably under a
-// millisecond means no single action can be felt.
-func BenchmarkPlayFullHand(b *testing.B) {
+// terminal frame (~16ms). This plays a whole match - deal, blinds, every betting
+// round, the street machine, the showdown and the re-deal between hands - so a
+// full match comfortably under a millisecond means no single action can be felt.
+func BenchmarkPlayFullMatch(b *testing.B) {
 	for _, seats := range []int{2, 6, 9} {
 		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
 			players := make([]*player.Player, 0, seats)
@@ -287,7 +287,7 @@ func BenchmarkPlayFullHand(b *testing.B) {
 				if err := engine.Start(); err != nil {
 					b.Fatal(err)
 				}
-				for range 200 {
+				for range 200 * HandsPerMatch {
 					if engine.IsFinished() {
 						break
 					}
@@ -296,6 +296,9 @@ func BenchmarkPlayFullHand(b *testing.B) {
 						continue
 					}
 					if engine.SubmitAction(id, ActionCall{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionNextHand{}) == nil {
 						continue
 					}
 					if engine.SubmitAction(id, ActionFold{}) != nil {
