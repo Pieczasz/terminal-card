@@ -189,11 +189,14 @@ func TestEngine_SubmitAction_PostConditionBeforeBroadcast(t *testing.T) {
 		assert.Equal(t, Finished, state.Phase)
 	})
 
+	// Broadcast is synchronous under the engine mutex and returns before
+	// SubmitAction does, so by now the event either sits in the buffered channel or
+	// never will. A timeout would only make this slower and let a merely-slow
+	// broadcast pass.
 	select {
 	case ev := <-ch:
 		t.Fatalf("unexpected broadcast after post-condition failure: %+v", ev)
-	case <-time.After(50 * time.Millisecond):
-		// expected: no EventActionApplied
+	default:
 	}
 }
 
