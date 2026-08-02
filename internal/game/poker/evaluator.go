@@ -124,6 +124,8 @@ func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
 // first qualifying entry of the map: with 7 cards only one suit can ever reach five,
 // but on a larger hand two can, and map iteration order would then make the hand's
 // score differ between runs for identical input.
+//
+// NoSuit is deliberately absent: it marks a joker, and five jokers are not a flush.
 func bestFlush(hand []rankedCard) []int {
 	suits := make(map[deck.Suit][]int, 4)
 	for _, c := range hand {
@@ -131,7 +133,7 @@ func bestFlush(hand []rankedCard) []int {
 	}
 
 	var best []int
-	for _, suit := range []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs, deck.NoSuit} {
+	for _, suit := range []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs} {
 		ranks := suits[suit]
 		if len(ranks) < 5 {
 			continue
