@@ -96,6 +96,10 @@ func RenderActionFooter(actions []string) string {
 
 var GlobalActions = []string{"n - New Game", "f - Join Game", "p - Profile", "t - Leaderboard", "ctrl+c - Quit"}
 
+// Gold highlights the thing the player is meant to look at: the lobby leader,
+// the selected suit, a poker chip stack.
+var Gold = lg.Color("#FFD700")
+
 var (
 	Box = lg.NewStyle().
 		Border(lg.RoundedBorder()).
@@ -127,7 +131,7 @@ var (
 				Foreground(lg.Color("205"))
 
 	HostTag = lg.NewStyle().
-		Foreground(lg.Color("#FFD700")).
+		Foreground(Gold).
 		Bold(true)
 
 	GuestTag = lg.NewStyle().
