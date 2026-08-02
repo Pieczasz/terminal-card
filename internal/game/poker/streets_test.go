@@ -65,10 +65,19 @@ func TestBetting_FoldWinsHand(t *testing.T) {
 	}
 
 	require.NoError(t, engine.SubmitAction(actor, ActionFold{}))
-	assert.True(t, engine.IsFinished())
 	extra := extraOf(t, engine)
+	assert.True(t, extra.HandComplete)
+	assert.False(t, engine.IsFinished(), "one hand does not end a match")
 	assert.Equal(t, uint(0), extra.MainPool)
 	assert.Greater(t, extra.PlayerChips[other], DefaultStack)
+
+	// The pot is settled, so the only thing left to do is deal the next hand.
+	dealer := engine.CurrentPlayerID()
+	require.NoError(t, engine.SubmitAction(dealer, ActionNextHand{}))
+	extra = extraOf(t, engine)
+	assert.False(t, extra.HandComplete)
+	assert.Equal(t, 2, extra.HandNumber)
+	assert.Equal(t, PreFlop, extra.Phase)
 }
 
 func TestBetting_CheckThroughFlop(t *testing.T) {
@@ -375,26 +384,30 @@ func TestSmoke_PassiveHands(t *testing.T) {
 			}
 			engine := game.NewEngine(rules, players, deck.StandardDeck())
 			require.NoError(t, engine.Start())
-			for i := 0; i < 100 && !engine.IsFinished(); i++ {
+			// Every hand of a passive match: check it down, then deal the next one.
+			for i := 0; i < 100*HandsPerMatch && !engine.IsFinished(); i++ {
 				extra := extraOf(t, engine)
 				id := engine.CurrentPlayerID()
-				toCall := ToCall(extra, id)
 				var err error
-				if toCall == 0 {
+				switch {
+				case extra.HandComplete:
+					err = engine.SubmitAction(id, ActionNextHand{})
+				case ToCall(extra, id) == 0:
 					err = engine.SubmitAction(id, ActionCheck{})
-				} else {
+				default:
 					err = engine.SubmitAction(id, ActionCall{})
 				}
 				require.NoError(t, err)
 			}
 			assert.True(t, engine.IsFinished())
 			extra := extraOf(t, engine)
+			assert.Equal(t, HandsPerMatch, extra.HandNumber, "a passive match runs the full distance")
 			assert.Len(t, extra.Table, 5)
 			var total uint
 			for _, p := range players {
 				total += extra.PlayerChips[p.ID]
 			}
-			// Departed none; chip conservation.
+			// Departed none; chip conservation across every hand of the match.
 			assert.Equal(t, DefaultStack*uint(n), total)
 		})
 	}

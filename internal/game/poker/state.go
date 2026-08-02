@@ -39,6 +39,21 @@ type State struct {
 	Pots         []Pot
 	HandComplete bool
 	Winners      []*player.Player
+	// ReachedShowdown is true only when the hand was actually shown down. A pot
+	// nobody contested is won face-down, so the winner's cards must stay hidden -
+	// the match has more hands to play and the table would be reading them.
+	ReachedShowdown bool
+
+	// A match is HandsTotal hands long and chips carry across them, so a single
+	// unlucky hand no longer ends the game. MatchComplete is what the engine
+	// checks; HandComplete only pauses the table for the result screen.
+	HandNumber    int
+	HandsTotal    int
+	MatchComplete bool
+	// BustedAtHand records the hand a player ran out of chips on. Everyone who
+	// busts ends on zero chips, so it is the only thing that separates them: going
+	// out later is a better finish.
+	BustedAtHand map[string]int
 }
 
 type RoundPhase uint8

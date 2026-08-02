@@ -138,6 +138,7 @@ func runOutBoard(state *game.State, extra *State) error {
 
 func runShowdown(state *game.State, extra *State) error {
 	extra.Phase = Showdown
+	extra.ReachedShowdown = true
 	scores := handScores(state.Players, extra)
 	extra.Pots = buildSidePots(state, extra)
 	awardPots(state, extra, scores)
@@ -298,11 +299,25 @@ func awardUncontested(extra *State, winner *player.Player) {
 	extra.Pots = nil
 }
 
-// rankPlayers orders by: active before folded, hand score desc, chips desc, ID asc.
+// rankPlayers orders by: chips desc, bust-out hand desc, active before folded,
+// hand score desc, ID asc. Chips lead because a match is decided by the stack a
+// player walks away with; everyone who busted is level on chips, so how long they
+// lasted is what separates them. The hand-level keys only matter for a table that
+// finished the match still holding equal stacks.
 func rankPlayers(state *game.State, extra *State) []*player.Player {
 	players := slices.Clone(state.Players)
 	scores := handScores(state.Players, extra)
 	slices.SortFunc(players, func(a, b *player.Player) int {
+		ca, cb := extra.PlayerChips[a.ID], extra.PlayerChips[b.ID]
+		if ca != cb {
+			if ca > cb {
+				return -1
+			}
+			return 1
+		}
+		if ba, bb := extra.BustedAtHand[a.ID], extra.BustedAtHand[b.ID]; ba != bb {
+			return bb - ba
+		}
 		fa, fb := isFolded(extra, a.ID), isFolded(extra, b.ID)
 		if fa != fb {
 			if fa {
@@ -315,13 +330,6 @@ func rankPlayers(state *game.State, extra *State) []*player.Player {
 			if sa != sb {
 				return sb - sa
 			}
-		}
-		ca, cb := extra.PlayerChips[a.ID], extra.PlayerChips[b.ID]
-		if ca != cb {
-			if ca > cb {
-				return -1
-			}
-			return 1
 		}
 		return strings.Compare(a.ID, b.ID)
 	})
