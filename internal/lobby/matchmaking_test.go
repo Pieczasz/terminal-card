@@ -86,7 +86,7 @@ func TestManager_New(t *testing.T) {
 	leader := mockPlayer("p1", 1)
 
 	l, err := m.New(leader, WithMaxPlayers(3), WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, l)
 
 	assert.Equal(t, leader, l.Leader())
@@ -97,10 +97,10 @@ func TestManager_New(t *testing.T) {
 	assert.Equal(t, l, m.FindLobbyByPlayer(leader))
 
 	_, err = m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
-	assert.ErrorContains(t, err, "already in a lobby")
+	require.ErrorContains(t, err, "already in a lobby")
 
 	_, err = m.New(mockPlayer("p2", 2))
-	assert.ErrorContains(t, err, "card game is required")
+	require.ErrorContains(t, err, "card game is required")
 }
 
 func TestManager_JoinLobbyByCode(t *testing.T) {
@@ -111,21 +111,21 @@ func TestManager_JoinLobbyByCode(t *testing.T) {
 	guest2 := mockPlayer("g2", 3)
 
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(&db.Game{Name: "TestGame"}))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	err = m.JoinLobbyByCode(l.Code(), guest1)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, l.HasPlayer(guest1))
 	assert.Equal(t, 2, l.CurrentPlayers())
 
 	err = m.JoinLobbyByCode(l.Code(), guest2)
-	assert.ErrorContains(t, err, "this lobby is full")
+	require.ErrorContains(t, err, "this lobby is full")
 
 	err = m.JoinLobbyByCode("FAKE12XX", guest2)
-	assert.ErrorContains(t, err, "lobby not found")
+	require.ErrorContains(t, err, "lobby not found")
 
 	err = m.JoinLobbyByCode(l.Code(), guest1)
-	assert.ErrorContains(t, err, "player is already in a lobby")
+	require.ErrorContains(t, err, "player is already in a lobby")
 }
 
 func TestManager_LeaveLobby(t *testing.T) {
@@ -151,7 +151,7 @@ func TestManager_LeaveLobby(t *testing.T) {
 
 	m.LeaveLobby(guest2)
 	_, err := m.FindLobbyByCode(l.Code())
-	assert.ErrorContains(t, err, "lobby not found")
+	require.ErrorContains(t, err, "lobby not found")
 }
 
 func TestLobby_ToggleReady(t *testing.T) {
@@ -176,12 +176,12 @@ func TestLobby_ToggleReady(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	err := l.ToggleReady(leader, registry)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.True(t, l.IsReady(leader))
 	assert.Equal(t, Waiting, l.state)
 
 	err = l.ToggleReady(guest, registry)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, InGame, l.state)
 	assert.NotNil(t, l.activeEngine)
@@ -196,23 +196,23 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 	cardGame := &db.Game{Name: "CrazyEights"}
 	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithRanked(true))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, cardGame, l.options.cardGame)
 	assert.True(t, l.IsPrivate())
 	assert.True(t, l.IsRanked())
 
-	assert.NoError(t, l.SetPrivate(leader, false))
+	require.NoError(t, l.SetPrivate(leader, false))
 	assert.False(t, l.IsPrivate())
 
-	assert.NoError(t, l.SetRanked(leader, false))
+	require.NoError(t, l.SetRanked(leader, false))
 	assert.False(t, l.IsRanked())
 
-	assert.NoError(t, l.SetMaxPlayers(leader, 5, 2, 6))
+	require.NoError(t, l.SetMaxPlayers(leader, 5, 2, 6))
 	assert.Equal(t, 5, l.MaxPlayers())
 
 	newGame := &db.Game{Name: "Poker"}
-	assert.NoError(t, l.SetCardGame(leader, newGame))
+	require.NoError(t, l.SetCardGame(leader, newGame))
 	assert.Equal(t, newGame, l.options.cardGame)
 }
 
@@ -221,7 +221,7 @@ func TestLobby_DefaultCasual(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.False(t, l.IsRanked(), "new lobbies default to casual to limit Elo farming under open registration")
 }
 
@@ -309,9 +309,9 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 	// Start the game
 	err := l.ToggleReady(leader, registry)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	err = l.ToggleReady(guest, registry)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// Game is started, let's trigger GameEnded event directly to test handleBroadcasterEvents
 	engine := l.activeEngine
@@ -339,7 +339,7 @@ func TestManager_CodeCollisions(t *testing.T) {
 	// The function retries 10 times. Let's just mock a collision by forcing lobbies map to contain a generated code.
 	// Actually testing true exhaustion is hard with 6-char random strings. We will just test generation works.
 	code, err := m.generateLobbyCode()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Len(t, code, 8)
 }
 
@@ -409,13 +409,13 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
 	err := l.ToggleReady(guest3, registry) // This triggers start game and should fail due to max players!
-	assert.ErrorContains(t, err, "too many players")
+	require.ErrorContains(t, err, "too many players")
 
 	// Missing game in registry
 	leader2 := mockPlayer("p4", 4)
 	l2, _ := m.New(leader2, WithCardGame(&db.Game{Name: "Missing"}))
 	err = l2.ToggleReady(leader2, registry) // Should fail on create game rules
-	assert.ErrorContains(t, err, "failed to create game rules")
+	require.ErrorContains(t, err, "failed to create game rules")
 
 	// Game already in progress
 	mockRules2 := new(MockRules)
@@ -435,11 +435,11 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	require.NoError(t, l3.ToggleReady(guest4, registry)) // Starts game!
 
 	err = l3.ToggleReady(leader3, registry) // Game is already in progress
-	assert.ErrorContains(t, err, "game is already in progress")
+	require.ErrorContains(t, err, "game is already in progress")
 
 	// Unknown player toggling ready
 	err = l2.ToggleReady(guest3, registry)
-	assert.ErrorContains(t, err, "not in lobby")
+	require.ErrorContains(t, err, "not in lobby")
 
 	// Remove non-existent player
 	removed := l3.RemovePlayer(guest3)
@@ -455,8 +455,8 @@ func TestManager_RejectMidGameJoin(t *testing.T) {
 
 	cardGame := &db.Game{Name: "MockGame"}
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
-	assert.NoError(t, err)
-	assert.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, err)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	registry := game.NewRegistry()
 	mockRules := new(MockRules)
@@ -467,12 +467,12 @@ func TestManager_RejectMidGameJoin(t *testing.T) {
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
 	registerGame(registry, "MockGame", mockRules)
 
-	assert.NoError(t, l.ToggleReady(leader, registry))
-	assert.NoError(t, l.ToggleReady(guest, registry))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
 	assert.Equal(t, InGame, l.state)
 
 	err = m.JoinLobbyByCode(l.Code(), late)
-	assert.ErrorContains(t, err, "not accepting players")
+	require.ErrorContains(t, err, "not accepting players")
 }
 
 func TestManager_Kick(t *testing.T) {
@@ -484,19 +484,19 @@ func TestManager_Kick(t *testing.T) {
 	intruder := mockPlayer("p3", 3)
 
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
-	assert.NoError(t, err)
-	assert.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
-	assert.NoError(t, m.JoinLobbyByCode(l.Code(), guest2))
+	require.NoError(t, err)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest2))
 
-	assert.ErrorContains(t, m.Kick(guest, leader), "only the leader")
-	assert.ErrorContains(t, m.Kick(intruder, guest), "host is not in a lobby")
-	assert.ErrorContains(t, m.Kick(leader, leader), "cannot kick yourself")
-	assert.ErrorContains(t, m.Kick(nil, guest), "required")
-	assert.NoError(t, m.Kick(leader, guest))
+	require.ErrorContains(t, m.Kick(guest, leader), "only the leader")
+	require.ErrorContains(t, m.Kick(intruder, guest), "host is not in a lobby")
+	require.ErrorContains(t, m.Kick(leader, leader), "cannot kick yourself")
+	require.ErrorContains(t, m.Kick(nil, guest), "required")
+	require.NoError(t, m.Kick(leader, guest))
 	assert.False(t, l.HasPlayer(guest))
 	assert.Nil(t, m.FindLobbyByPlayer(guest))
 	assert.True(t, l.HasPlayer(guest2))
-	assert.ErrorContains(t, m.Kick(leader, guest), "player not in lobby")
+	require.ErrorContains(t, m.Kick(leader, guest), "player not in lobby")
 }
 
 func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
@@ -509,7 +509,7 @@ func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
 	require.NoError(t, err)
 
-	assert.NoError(t, m.JoinLobbyByCode(l.Code(), joiner))
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), joiner))
 	m.LeaveLobby(joiner)
 
 	other := mockPlayer("other", 3)
@@ -517,10 +517,10 @@ func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	// Second attempt still under limit.
-	assert.ErrorContains(t, m.JoinLobbyByCode("ZZZZZZZZ", joiner), "lobby not found")
+	require.ErrorContains(t, m.JoinLobbyByCode("ZZZZZZZZ", joiner), "lobby not found")
 	// Third attempt exceeds limit.
 	err = m.JoinLobbyByCode("ZZZZZZZZ", joiner)
-	assert.ErrorContains(t, err, "too many join attempts")
+	require.ErrorContains(t, err, "too many join attempts")
 }
 
 func TestValidLobbyCode(t *testing.T) {

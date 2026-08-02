@@ -8,6 +8,7 @@ import (
 )
 
 func TestValidateUsername_Valid(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
 		gen := rapid.StringMatching(`^[A-Za-z0-9_]{1,16}$`)
 		username := gen.Draw(t, "username")
@@ -18,6 +19,7 @@ func TestValidateUsername_Valid(t *testing.T) {
 }
 
 func TestValidateUsername_InvalidLength(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
 		gen := rapid.StringMatching(`^.{17,50}$`)
 		username := gen.Draw(t, "username")
@@ -28,6 +30,7 @@ func TestValidateUsername_InvalidLength(t *testing.T) {
 }
 
 func TestValidateUsername_InvalidCharacters(t *testing.T) {
+	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
 		gen := rapid.StringMatching(`^.*[^A-Za-z0-9_].*$`).Filter(func(s string) bool {
 			return len(s) > 0 && len(s) <= 16

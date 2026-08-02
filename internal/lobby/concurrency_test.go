@@ -167,7 +167,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	// Lobby must be gone from the manager entirely.
 	_, err = m.FindLobbyByCode(l.Code())
-	assert.ErrorContains(t, err, "lobby not found", "empty lobby must be removed")
+	require.ErrorContains(t, err, "lobby not found", "empty lobby must be removed")
 
 	// No ghost membership: the manager's playerLobby map is the authoritative
 	// membership index, and no player may still resolve to a lobby through it.

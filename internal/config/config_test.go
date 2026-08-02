@@ -71,6 +71,7 @@ func TestLoad_InvalidPort(t *testing.T) {
 }
 
 func TestValidate_RateLimit(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Env:             "development",
 		RateLimitCount:  0,
@@ -82,6 +83,7 @@ func TestValidate_RateLimit(t *testing.T) {
 }
 
 func TestDSN(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		DBHost:     "localhost",
 		DBUser:     "postgres",

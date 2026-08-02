@@ -8,6 +8,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func createTestState() *game.State {
@@ -34,7 +35,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
 
 		err := rules.ValidateAction(state, action)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("valid matching rank", func(t *testing.T) {
@@ -45,7 +46,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
 		err := rules.ValidateAction(state, action)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("valid eight wildcard", func(t *testing.T) {
@@ -55,7 +56,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}}
 
 		err := rules.ValidateAction(state, action)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 
 	t.Run("invalid mismatch", func(t *testing.T) {
@@ -65,7 +66,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
 
 		err := rules.ValidateAction(state, action)
-		assert.ErrorContains(t, err, "card doesn't match top discard")
+		require.ErrorContains(t, err, "card doesn't match top discard")
 	})
 
 	t.Run("invalid card not in hand", func(t *testing.T) {
@@ -75,7 +76,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}}}
 
 		err := rules.ValidateAction(state, action)
-		assert.ErrorContains(t, err, "you don't have that card")
+		require.ErrorContains(t, err, "you don't have that card")
 	})
 }
 
@@ -154,7 +155,7 @@ func TestRules_DrawCard_Reshuffle(t *testing.T) {
 
 		// The discard pile can refill the stock, so the draw is legal.
 		err := rules.ValidateAction(state, action)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		rules.ApplyAction(state, action)
 
@@ -179,7 +180,7 @@ func TestRules_DrawCard_Reshuffle(t *testing.T) {
 		state.Discard = deck.New([]deck.Card{{Rank: deck.Nine, Suit: deck.Spades}})
 
 		// Draw stays legal with nothing to draw; it becomes a forced pass.
-		assert.NoError(t, rules.ValidateAction(state, ActionDrawCard{}))
+		require.NoError(t, rules.ValidateAction(state, ActionDrawCard{}))
 
 		for range state.Players {
 			rules.ApplyAction(state, ActionDrawCard{})
@@ -202,7 +203,7 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 		}
 
 		err := rules.ValidateAction(state, action)
-		assert.ErrorContains(t, err, "must choose a suit when playing an eight")
+		require.ErrorContains(t, err, "must choose a suit when playing an eight")
 	})
 
 	t.Run("eight with a valid suit is allowed and updates CurrentSuit", func(t *testing.T) {
@@ -215,7 +216,7 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 		}
 
 		err := rules.ValidateAction(state, action)
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		rules.ApplyAction(state, action)
 
@@ -246,7 +247,7 @@ func TestRules_Init(t *testing.T) {
 
 	state := createTestState()
 	err := rules.OnGameStart(state)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	extra := state.Extra.(*State)
 	assert.NotNil(t, extra)
