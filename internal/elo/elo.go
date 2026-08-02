@@ -1,6 +1,7 @@
 package elo
 
 import (
+	"log/slog"
 	"math"
 )
 
@@ -19,9 +20,12 @@ const (
 //
 // NaN cannot be ordered against the bounds, so min/max would propagate it and
 // ToUint32 would store 0 - below MinRating, breaking this function's contract.
-// A rating that is not a number is treated as unrated.
+// A rating that is not a number is treated as unrated, and logged: the only way to
+// get here is already-corrupt arithmetic upstream, and resetting a rating to the
+// default without a trace would launder that into a plausible-looking number.
 func ClampRating(rating float64) float64 {
 	if math.IsNaN(rating) {
+		slog.Error("NaN rating clamped to the default", "default", DefaultRating)
 		return DefaultRating
 	}
 	return min(max(rating, MinRating), MaxRating)
