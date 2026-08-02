@@ -6,21 +6,15 @@ package systemtest
 
 import (
 	"context"
-	"fmt"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/Pieczasz/terminal-card/internal/catalog"
 	"github.com/Pieczasz/terminal-card/internal/db"
-	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 const (
@@ -31,151 +25,13 @@ const (
 	maxActions = 60
 )
 
-// recordingMatchRepo captures what the ranked-finalize path would persist, so the
-// no-database tier can still assert the full game-over flow.
-//
-// The finalize happens on the lobby's watcher goroutine, so the recorder signals
-// each call on a channel. Tests wait for that signal rather than sleeping or
-// polling, which keeps them deterministic regardless of scheduling.
-type recordingMatchRepo struct {
-	mu        sync.Mutex
-	finalized [][]uint
-	signal    chan struct{}
-}
-
-func newRecordingMatchRepo() *recordingMatchRepo {
-	return &recordingMatchRepo{signal: make(chan struct{}, 8)}
-}
-
-func (r *recordingMatchRepo) FinalizeRankedMatch(_ context.Context, _ string, orderedUserIDs []uint) error {
-	r.mu.Lock()
-	r.finalized = append(r.finalized, append([]uint(nil), orderedUserIDs...))
-	r.mu.Unlock()
-
-	select {
-	case r.signal <- struct{}{}:
-	default: // no test is waiting; never block the game
-	}
-	return nil
-}
-
-// awaitFinalize blocks until the ranked write has run, failing the test rather than
-// hanging if it never does.
-func (r *recordingMatchRepo) awaitFinalize(t *testing.T) {
-	t.Helper()
-	select {
-	case <-r.signal:
-	case <-time.After(10 * time.Second):
-		t.Fatal("ranked finalize never ran")
-	}
-}
-
-func (r *recordingMatchRepo) calls() [][]uint {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([][]uint(nil), r.finalized...)
-}
-
-func (r *recordingMatchRepo) GetOrCreateGame(_ context.Context, name string) (*db.Game, error) {
-	return &db.Game{Model: gorm.Model{ID: 1}, Name: name}, nil
-}
-
-func (r *recordingMatchRepo) RecordMatch(_ context.Context, _ uint, _ []uint, _ map[uint]int, _ bool) error {
-	return nil
-}
-
-// realRegistry builds the registry from the production catalog, so the test fails if
-// a game stops being registered.
-func realRegistry(t *testing.T) *game.Registry {
-	t.Helper()
-	reg := game.NewRegistry()
-	for _, e := range catalog.All {
-		reg.RegisterModule(e.Module())
-	}
-	return reg
-}
-
-func newPlayer(id uint, name string) *player.Player {
-	return playerFor(&db.User{Model: gorm.Model{ID: id}, Username: name})
-}
-
-// playerFor derives the in-game player from a database user exactly as the SSH
-// session layer does, so IDs line up with what the lobby and engine expect.
-func playerFor(user *db.User) *player.Player {
-	return &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
-}
-
-// awaitGameStart drains lobby events until the engine arrives.
-func awaitGameStart(t *testing.T, ch <-chan lobby.Event) *game.Engine {
-	t.Helper()
-	deadline := time.After(5 * time.Second)
-	for {
-		select {
-		case ev, ok := <-ch:
-			if !ok {
-				t.Fatal("lobby channel closed before the game started")
-			}
-			if ev.Type != lobby.EventGameStarted {
-				continue
-			}
-			engine, ok := ev.Payload.(*game.Engine)
-			require.True(t, ok, "GAME_STARTED payload must carry the engine")
-			return engine
-		case <-deadline:
-			t.Fatal("timed out waiting for the game to start")
-		}
-	}
-}
-
-func chipsInPlay(t *testing.T, engine *game.Engine) uint {
-	t.Helper()
-	var total uint
-	engine.WithState(func(s *game.State) {
-		extra, ok := s.Extra.(*poker.State)
-		require.True(t, ok)
-		total = extra.MainPool
-		for _, c := range extra.PlayerChips {
-			total += c
-		}
-	})
-	return total
-}
-
-// playOutMatch drives every hand of a poker match to its end.
-func playOutMatch(t *testing.T, engine *game.Engine) {
-	t.Helper()
-	for range maxActions * poker.HandsPerMatch {
-		if engine.IsFinished() {
-			return
-		}
-		if !actOnce(engine) {
-			break
-		}
-	}
-	require.True(t, engine.IsFinished(), "the match must reach its end")
-}
-
-// actOnce plays the cheapest legal action for whoever is on turn, dealing the
-// next hand when the table is between hands.
-func actOnce(engine *game.Engine) bool {
-	id := engine.CurrentPlayerID()
-	for _, act := range []game.Action{
-		poker.ActionCheck{}, poker.ActionCall{}, poker.ActionFold{}, poker.ActionNextHand{},
-	} {
-		if err := engine.SubmitAction(id, act); err == nil {
-			return true
-		}
-	}
-	return false
-}
-
-// TestSystem_RankedGameWithMidGameLeave walks the whole player journey: create a
+// TestSystemRankedGameWithMidGameLeave walks the whole player journey: create a
 // lobby, change its settings, fill it over a join code, start a real poker hand,
 // have someone disconnect mid-hand, and finish with the ranked result recorded.
-func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
+func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	t.Parallel()
 
-	repo := newRecordingMatchRepo()
+	repo := newRankedFinalizeRecorder()
 	manager := lobby.NewManager(context.Background(), repo)
 	registry := realRegistry(t)
 
@@ -249,16 +105,17 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 
 	finalized := repo.calls()
 	require.Len(t, finalized, 1, "a ranked hand finalizes exactly once")
-	assert.Len(t, finalized[0], len(all),
+	assert.Equal(t, pokerGame, finalized[0].gameName)
+	assert.Len(t, finalized[0].userIDs, len(all),
 		"every player is ranked, including the one who left mid-hand")
 }
 
 // A lobby must not start with fewer players than the game's own minimum, and must
 // not accept more than its configured maximum.
-func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
+func TestSystemLobbyRespectsGameBounds(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManager(context.Background(), newRecordingMatchRepo())
+	manager := lobby.NewManager(context.Background(), newRankedFinalizeRecorder())
 	registry := realRegistry(t)
 
 	leader := newPlayer(1, "alice")
@@ -280,10 +137,10 @@ func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 }
 
 // The leader leaving hands the lobby to a guest rather than stranding it.
-func TestSystem_LeaderLeavingPromotesGuest(t *testing.T) {
+func TestSystemLeaderLeavingPromotesGuest(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManager(context.Background(), newRecordingMatchRepo())
+	manager := lobby.NewManager(context.Background(), newRankedFinalizeRecorder())
 	leader := newPlayer(1, "alice")
 	guest := newPlayer(2, "bob")
 
