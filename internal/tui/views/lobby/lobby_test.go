@@ -59,8 +59,24 @@ func leaderView(t *testing.T) (*model, *lobby.Lobby, *lobby.Manager) {
 	return m, l, manager
 }
 
+// keyMsg builds the message Bubble Tea would deliver for a keystroke. Named keys
+// need their own Code and carry no Text; building one from key[0] would turn "esc"
+// into the letter 'e'.
+func keyMsg(key string) tea.KeyPressMsg {
+	switch key {
+	case "esc":
+		return tea.KeyPressMsg{Code: tea.KeyEscape}
+	case "enter":
+		return tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "space":
+		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	default:
+		return tea.KeyPressMsg{Code: rune(key[0]), Text: key}
+	}
+}
+
 func press(m *model, key string) (tea.Model, tea.Cmd) {
-	return m.Update(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+	return m.Update(keyMsg(key))
 }
 
 // routeOf runs a returned command and reports the route it navigates to.

@@ -307,3 +307,39 @@ func BenchmarkPlayFullHand(b *testing.B) {
 		})
 	}
 }
+
+// adjustSeatIndex decides where the button and blinds land after someone leaves. It
+// is a pure function and had no direct test, yet getting it wrong either steals a
+// turn or points a marker at a seat that no longer exists.
+func TestAdjustSeatIndex(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		seat    int
+		removed int
+		nAfter  int
+		want    int
+	}{
+		{name: "seat before the leaver is unaffected", seat: 0, removed: 2, nAfter: 3, want: 0},
+		{name: "seat after the leaver shifts down", seat: 2, removed: 1, nAfter: 3, want: 1},
+		{name: "the leaver's own marker steps back", seat: 2, removed: 2, nAfter: 3, want: 1},
+		{name: "seat 0 leaving wraps its marker to the last seat", seat: 0, removed: 0, nAfter: 3, want: 2},
+		{name: "a marker past the end is clamped inside", seat: 5, removed: 4, nAfter: 2, want: 1},
+		{name: "an empty table collapses to zero", seat: 3, removed: 1, nAfter: 0, want: 0},
+		{name: "a negative table size collapses to zero", seat: 1, removed: 0, nAfter: -1, want: 0},
+		{name: "heads-up: the leaver's marker lands on the survivor", seat: 1, removed: 1, nAfter: 1, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := adjustSeatIndex(tt.seat, tt.removed, tt.nAfter)
+			assert.Equal(t, tt.want, got)
+			if tt.nAfter > 0 {
+				assert.GreaterOrEqual(t, got, 0, "a seat index is never negative")
+				assert.Less(t, got, tt.nAfter, "a seat index always addresses a real seat")
+			}
+		})
+	}
+}

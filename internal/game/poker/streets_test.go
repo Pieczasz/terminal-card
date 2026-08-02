@@ -1,7 +1,10 @@
 package poker
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -543,4 +546,111 @@ func TestUnequalAllIns_ShortStackCannotWinSidePot(t *testing.T) {
 	for _, pot := range extra.Pots {
 		assert.NotEmpty(t, pot.Eligible, "a pot with no eligible player would strand chips")
 	}
+}
+
+// sidePotState builds just enough State for buildSidePots/awardPots. Options keep
+// each case's intent visible instead of restating a full literal every time.
+func sidePotState(t testingT, contributed map[string]uint, folded ...string) (*game.State, *State) {
+	t.Helper()
+	players := make([]*player.Player, 0, len(contributed))
+	for id := range contributed {
+		players = append(players, &player.Player{ID: id})
+	}
+	slices.SortFunc(players, func(a, b *player.Player) int { return cmp.Compare(a.ID, b.ID) })
+
+	extra := &State{
+		Folded:           map[string]bool{},
+		PlayersAllIn:     map[string]bool{},
+		PlayerChips:      map[string]uint{},
+		PlayerBets:       map[string]uint{},
+		TotalContributed: maps.Clone(contributed),
+		ActedThisRound:   map[string]bool{},
+	}
+	for _, id := range folded {
+		extra.Folded[id] = true
+	}
+	state := game.NewState(&Rules{}, players, deck.StandardDeck())
+	state.Extra = extra
+	return state, extra
+}
+
+func potTotal(pots []Pot) uint {
+	var total uint
+	for _, p := range pots {
+		total += p.Amount
+	}
+	return total
+}
+
+// Every chip a folded player put in must still reach a pot. When the only players
+// who reached the top level have folded, that layer is dead money and carries into
+// the last live pot rather than vanishing.
+func TestBuildSidePots_DeadMoneyCarriesIntoTheLastPot(t *testing.T) {
+	t.Parallel()
+	// b folded after over-committing; only a can win anything.
+	state, extra := sidePotState(t, map[string]uint{"a": 50, "b": 100}, "b")
+
+	pots := buildSidePots(state, extra)
+
+	require.Len(t, pots, 1, "only the level a reached can be contested")
+	assert.Equal(t, []string{"a"}, pots[0].Eligible)
+	assert.Equal(t, uint(150), pots[0].Amount, "b's dead 50 carries into a's pot")
+	assert.Equal(t, uint(150), potTotal(pots), "no contributed chip may be lost")
+}
+
+// If every contributor folded, no pot layer forms at all and the orphaned chips must
+// still be handed to the one player left standing.
+func TestBuildSidePots_AllContributorsFoldedAwardsTheLoneSurvivor(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t,
+		map[string]uint{"a": 100, "b": 100, "survivor": 0}, "a", "b")
+
+	pots := buildSidePots(state, extra)
+
+	assert.Empty(t, pots, "no contested layer can form")
+	assert.Equal(t, uint(200), extra.PlayerChips["survivor"], "orphaned chips go to the survivor")
+}
+
+// Same shape, but with more than one survivor the orphan is split and the odd chip
+// is handed out rather than dropped.
+func TestBuildSidePots_OrphanSplitsAcrossSurvivorsWithoutLosingTheOddChip(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t,
+		map[string]uint{"folded": 100, "x": 0, "y": 0, "z": 0}, "folded")
+
+	pots := buildSidePots(state, extra)
+
+	assert.Empty(t, pots)
+	total := extra.PlayerChips["x"] + extra.PlayerChips["y"] + extra.PlayerChips["z"]
+	assert.Equal(t, uint(100), total, "100 split three ways must still total 100")
+}
+
+// A contributor who left mid-hand keeps their contribution in the pot but must not
+// remain eligible to win it.
+func TestBuildSidePots_DepartedContributorIsNotEligible(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t, map[string]uint{"stayed": 100, "left": 100})
+
+	// Drop "left" from the seats, exactly as Engine.RemovePlayer does.
+	state.Players = slices.DeleteFunc(state.Players, func(p *player.Player) bool { return p.ID == "left" })
+
+	pots := buildSidePots(state, extra)
+
+	require.Len(t, pots, 1)
+	assert.Equal(t, []string{"stayed"}, pots[0].Eligible, "a departed player cannot win")
+	assert.Equal(t, uint(200), pots[0].Amount, "their chips stay in the pot")
+}
+
+// A three-way chop of a pot that does not divide evenly must distribute every chip.
+func TestAwardPots_OddChipRemainderIsDistributed(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t, map[string]uint{"a": 34, "b": 33, "c": 33})
+	extra.Pots = []Pot{{Amount: 100, Eligible: []string{"a", "b", "c"}}}
+	scores := map[string]int{"a": 500, "b": 500, "c": 500} // dead tie
+
+	awardPots(state, extra, scores)
+
+	total := extra.PlayerChips["a"] + extra.PlayerChips["b"] + extra.PlayerChips["c"]
+	assert.Equal(t, uint(100), total, "100 chopped three ways must still total 100")
+	assert.Zero(t, extra.MainPool)
 }

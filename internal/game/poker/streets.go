@@ -178,13 +178,15 @@ func buildSidePots(state *game.State, extra *State) []Pot {
 		var eligible []string
 		var amount uint
 		for id, contrib := range extra.TotalContributed {
-			if contrib >= lvl {
-				amount += lvl - prev
-				if !isFolded(extra, id) && playerStillSeated(state, id) {
-					eligible = append(eligible, id)
-				}
-			} else if contrib > prev {
-				amount += contrib - prev
+			// A contribution below this level is always below prev too: every
+			// non-zero contribution is itself one of the levels, so by the time the
+			// loop passes it, prev has already reached it. Nothing to collect.
+			if contrib < lvl {
+				continue
+			}
+			amount += lvl - prev
+			if !isFolded(extra, id) && playerStillSeated(state, id) {
+				eligible = append(eligible, id)
 			}
 		}
 		prev = lvl
