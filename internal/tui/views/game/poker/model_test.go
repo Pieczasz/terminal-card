@@ -1,6 +1,8 @@
 package poker
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -136,4 +138,36 @@ func TestSyncState_NilBoundIsInert(t *testing.T) {
 	assert.False(t, m.canFold())
 	assert.False(t, m.canRaise())
 	assert.False(t, m.canAllIn())
+}
+
+// syncState rebuilds every seat from the engine on each broadcast event, so it runs
+// once per player per action. It shares the frame budget (~16ms) with the lipgloss
+// render, so it needs to stay in the microseconds.
+func BenchmarkSyncState(b *testing.B) {
+	for _, seats := range []int{2, 6, 9} {
+		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
+			players := make([]*player.Player, 0, seats)
+			for i := range seats {
+				players = append(players, &player.Player{
+					ID:           strconv.Itoa(i + 1),
+					DatabaseUser: testUser(uint(i+1), fmt.Sprintf("p%d", i+1)),
+				})
+			}
+			engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
+			if err := engine.Start(); err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(engine.Close)
+
+			m, ok := New(router.GlobalContext{User: testUser(1, "p1")}, engine).(*Model)
+			if !ok {
+				b.Fatal("New did not return *Model")
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				m.syncState()
+			}
+		})
+	}
 }

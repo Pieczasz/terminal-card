@@ -1,6 +1,7 @@
 package poker
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -266,4 +267,43 @@ func TestRules_Standings(t *testing.T) {
 		assert.Equal(t, "p2", standings[1].ID)
 		assert.Equal(t, "p1", standings[2].ID)
 	})
+}
+
+// A keypress must turn into an updated table for every player well inside one
+// terminal frame (~16ms). This plays a whole hand - deal, blinds, every betting
+// round, the street machine and the showdown - so a full hand comfortably under a
+// millisecond means no single action can be felt.
+func BenchmarkPlayFullHand(b *testing.B) {
+	for _, seats := range []int{2, 6, 9} {
+		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
+			players := make([]*player.Player, 0, seats)
+			for i := range seats {
+				players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1)})
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+				if err := engine.Start(); err != nil {
+					b.Fatal(err)
+				}
+				for range 200 {
+					if engine.IsFinished() {
+						break
+					}
+					id := engine.CurrentPlayerID()
+					if engine.SubmitAction(id, ActionCheck{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionCall{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionFold{}) != nil {
+						break
+					}
+				}
+				engine.Close()
+			}
+		})
+	}
 }
