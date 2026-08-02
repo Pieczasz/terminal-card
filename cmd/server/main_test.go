@@ -9,7 +9,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/config"
 
-	charmssh "github.com/charmbracelet/ssh"
+	charmssh "charm.land/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

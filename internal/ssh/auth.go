@@ -8,7 +8,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/repository"
 
-	"github.com/charmbracelet/ssh"
+	"charm.land/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
 )
 

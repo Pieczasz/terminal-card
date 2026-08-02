@@ -60,7 +60,7 @@ Lock order when both are involved is manager (`m.mu`) then lobby (`l.mu`) — se
 
 ### SSH server
 
-Middleware in `wish.WithMiddleware` runs **last-first**, so `sessionLifecycle` is listed last to be outermost: charmbracelet/ssh runs handlers in a goroutine with no recover, so an escaped panic would kill the process. `releaseSession` must stay a direct `defer` for `recover()` to work. Auth accepts any public key; identity is the SHA256 fingerprint, first connection registers the username.
+Middleware in `wish.WithMiddleware` runs **last-first**, so `sessionLifecycle` is listed last to be outermost: charm.land/ssh runs handlers in a goroutine with no recover, so an escaped panic would kill the process. `releaseSession` must stay a direct `defer` for `recover()` to work. Auth accepts any public key; identity is the SHA256 fingerprint, first connection registers the username.
 
 The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter.
 
