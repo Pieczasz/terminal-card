@@ -10,7 +10,7 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-const keyHints = "←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
+const keyHints = "<-/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
 
 // suitCellWidth keeps the 2x2 suit picker a rectangle regardless of suit name length.
 const suitCellWidth = 12

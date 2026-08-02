@@ -10,7 +10,7 @@ Terminal Card identifies players by **SSH public key fingerprint**:
 
 - `wish.WithPublicKeyAuth` accepts any public key.
 - The first successful connection with a new fingerprint registers the SSH username (subject to username validation).
-- Later connections reuse the same fingerprint → the same account.
+- Later connections reuse the same fingerprint -> the same account.
 - Fingerprints are stored with a **UNIQUE** constraint.
 
 Implications:
@@ -58,4 +58,4 @@ Do not file public issues for undisclosed vulnerabilities.
 - [ ] Keep the host and container images updated
 - [ ] Prefer `DB_SSLMODE=require` for databases outside the composition network
 - [ ] Only set `ALLOW_INSECURE_DB=true` for trusted internal networks (compose sets this for the internal `db` service)
-- [ ] Smoke-test after deployment: register → create a lobby → play → disconnect mid-game → reconnect → leaderboard
+- [ ] Smoke-test after deployment: register -> create a lobby -> play -> disconnect mid-game -> reconnect -> leaderboard
