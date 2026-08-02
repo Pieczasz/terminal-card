@@ -116,9 +116,8 @@ func TestManager_CodeCollisions(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 
-	// Pre-fill the manager with all possible codes if it were a smaller charset?
-	// The function retries 10 times. Let's just mock a collision by forcing lobbies map to contain a generated code.
-	// Actually testing true exhaustion is hard with 6-char random strings. We will just test generation works.
+	// Exhausting a 36^8 code space to force a collision is not practical, so this only
+	// pins the shape of what generateLobbyCode hands out.
 	code, err := m.generateLobbyCode()
 	require.NoError(t, err)
 	assert.Len(t, code, 8)
@@ -131,19 +130,15 @@ func TestManager_PublicLobbiesCacheAndSorting(t *testing.T) {
 	p1 := mockPlayer("p1", 1)
 	p2 := mockPlayer("p2", 2)
 
-	// Create public lobby
 	_, _ = m.New(p1, WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
 
-	// p2 with high Elo
 	p2.DatabaseUser.Rankings = []db.Ranking{
 		{Game: db.Game{Name: "CrazyEights"}, Elo: 3000},
 	}
 
-	// Cache is hit here.
 	public1 := m.PublicLobbies(p2)
 	assert.Len(t, public1, 1)
 
-	// Second call hits cache
 	public2 := m.PublicLobbies(p2)
 	assert.Equal(t, public1[0].Code(), public2[0].Code())
 }

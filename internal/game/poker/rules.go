@@ -34,9 +34,12 @@ func (r *Rules) InitialDealCount() int {
 	return 2
 }
 
+// minDeckAfterDeal is burn+flop+turn+river plus a two-card margin. Hole cards are
+// already dealt by the time OnGameStart runs.
+const minDeckAfterDeal = 1 + 3 + 1 + 1 + 2
+
 func (r *Rules) OnGameStart(state *game.State) error {
-	// Hole cards (2) already dealt; need burn+flop+turn+river (1+3+1+1 = 6) plus margin.
-	if state.Deck.Size() < 8 {
+	if state.Deck.Size() < minDeckAfterDeal {
 		return errors.New("not enough cards to start the game")
 	}
 
@@ -226,8 +229,6 @@ func adjustSeatIndex(seat, removed, nAfter int) int {
 	}
 	return seat
 }
-
-// --- Actions -----------------------------------------------------------------
 
 type ActionFold struct{}
 

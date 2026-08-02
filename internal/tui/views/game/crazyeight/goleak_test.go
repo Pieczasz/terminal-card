@@ -6,8 +6,8 @@ import (
 	"go.uber.org/goleak"
 )
 
-// These tests subscribe to broadcasters and start listener goroutines; a Close or
-// Unsubscribe regression parks one forever, which no assertion would notice.
+// A Close or Unsubscribe regression parks a listener goroutine, which no assertion
+// in these packages would catch.
 func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m)
 }

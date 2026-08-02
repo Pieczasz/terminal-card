@@ -12,6 +12,9 @@ import (
 
 const keyHints = "←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
 
+// suitCellWidth keeps the 2x2 suit picker a rectangle regardless of suit name length.
+const suitCellWidth = 12
+
 var hintStyle = lg.NewStyle().Foreground(lg.Color("#888888"))
 
 func (m *Model) View() tea.View {
@@ -178,8 +181,7 @@ func (m *Model) renderSuitPicker() string {
 		} else {
 			style = style.BorderForeground(lg.Color("#555555")).Foreground(lg.Color("#AAAAAA"))
 		}
-		// ensure uniform width for grid
-		renderedSuits = append(renderedSuits, style.Width(12).Align(lg.Center).Render(suitName))
+		renderedSuits = append(renderedSuits, style.Width(suitCellWidth).Align(lg.Center).Render(suitName))
 	}
 
 	row1 := lg.JoinHorizontal(lg.Center, renderedSuits[0], renderedSuits[1])

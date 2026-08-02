@@ -105,10 +105,8 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
 		})),
-		// wish runs the LAST middleware first, so this slice is reverse execution
-		// order. Recovery is outermost to wrap the bubbletea program: charmbracelet/ssh
-		// runs the handler in a goroutine with no recover, so an escaped panic would
-		// crash the whole process, and cleanup must run on every disconnect.
+		// wish runs the LAST middleware first, so this slice is in reverse execution
+		// order. sessionLifecycle is listed last to be outermost; see its doc.
 		wish.WithMiddleware(
 			bm.Middleware(sessionModel(deps, tracker)),
 			activeterm.Middleware(),

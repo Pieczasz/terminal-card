@@ -27,9 +27,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case animation.FrameMsg:
 		m.selectionLift, m.selectionVel = m.selectionSpring.Update(m.selectionLift, m.selectionVel, selectionRest)
 		if m.springAtRest() {
-			// Snap to the target and stop the frame loop. Re-arming unconditionally
-			// kept every session re-rendering at 60 FPS forever for an animation
-			// that had already finished moving.
+			// Stop the loop, or every session re-renders at 60 FPS forever for an
+			// animation that has finished moving.
 			m.selectionLift, m.selectionVel = selectionRest, 0
 			m.animating = false
 			return m, nil

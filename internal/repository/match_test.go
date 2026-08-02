@@ -44,14 +44,12 @@ func TestMatchRepository_RecordMatch(t *testing.T) {
 	err = repo.RecordMatch(ctx, game.ID, orderedUserIDs, deltas)
 	require.NoError(t, err)
 
-	// Verify match was created
 	var match db.Match
 	err = gormDB.Preload("Participants").First(&match).Error
 	require.NoError(t, err)
 	assert.Equal(t, game.ID, match.GameID)
 	assert.Len(t, match.Participants, 2)
 
-	// Verify Rankings were updated
 	var updatedR1 db.Ranking
 	gormDB.Where("user_id = ? AND game_id = ?", r1.UserID, r1.GameID).First(&updatedR1)
 	assert.Greater(t, updatedR1.Elo, uint32(elo.DefaultRating))

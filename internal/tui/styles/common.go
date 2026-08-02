@@ -14,16 +14,9 @@ const (
 	maxBoxHeight = 40
 )
 
-// BoxWidth is the outer width of the framed layout: the terminal less a small
-// margin, held at maxBoxWidth once it gets there.
-//
-// It must never shrink as the terminal grows. The previous form switched to a 5/6
-// proportion at exactly 100 columns, and since 5/6 of a width is always less than
-// that width minus four, widening the terminal from 99 to 100 columns *narrowed* the
-// box from 95 to 83.
-//
-// Clamped at zero because Router.Global.Width is 0 until the first WindowSizeMsg, so
-// every session's opening frame would otherwise size its box to -4.
+// BoxWidth is the outer width of the framed layout. It must never shrink as the
+// terminal grows, and must never go negative: Router.Global.Width is 0 until the
+// first WindowSizeMsg, so every session's opening frame renders at zero.
 func BoxWidth(screenWidth int) int {
 	return max(min(screenWidth-4, maxBoxWidth), 0)
 }
@@ -58,8 +51,7 @@ func RenderFigureASCII(text string, maxWidth int) string {
 			return fig
 		}
 	}
-	// Fallback to pure string if even mini is too large
-	return text
+	return text // no font fits; plain text always does
 }
 
 func RenderMainLayout(width, height int, header, content, footer string) string {
@@ -69,11 +61,11 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	innerWidth := boxWidth - 6
 	innerHeight := boxHeight - 4
 
-	// Strip trailing newlines from go-figure which throw off calculations (for centering)
+	// go-figure leaves trailing newlines that inflate the measured height below.
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
-	// Pre-wrap header and footer so their heights are accurately calculated
+	// Wrap before measuring, or lg.Height reports the unwrapped height.
 	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(header)
 	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(footer)
 
@@ -82,8 +74,8 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 
 	hContent := max(innerHeight-hHeader-hFooter, 0)
 
-	// Optical centering: by adding two invisible lines to the bottom of the content block,
-	// lipgloss's math pushes the visible text exactly 1 line UP, which feels more natural to the eye.
+	// Optical centering: two trailing blank lines push the visible text one line up,
+	// which reads as centered where true centering reads as slightly low.
 	content = strings.TrimRight(content, "\r\n") + "\n\n"
 
 	headerArea := lg.Place(innerWidth, hHeader, lg.Center, lg.Top, header)
@@ -99,7 +91,6 @@ func RenderActionFooter(actions []string) string {
 	for _, action := range actions {
 		renderedActions = append(renderedActions, ActionsText.Render(action))
 	}
-	// Use a compact pipe separator
 	return strings.Join(renderedActions, " | ")
 }
 

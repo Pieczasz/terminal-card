@@ -164,10 +164,8 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 
 	switch orientation {
 	case OrientationTop:
-		// Below the deck on top
 		return lg.JoinVertical(lg.Center, cardsView, infoView)
 	case OrientationLeft:
-		// Above the deck on left and right side
 		return lg.JoinVertical(lg.Left, infoView, cardsView)
 	default:
 		return lg.JoinVertical(lg.Right, infoView, cardsView)

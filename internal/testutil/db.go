@@ -22,7 +22,6 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		t.Skip("skipping DB integration test in short mode")
 	}
 
-	// Check if Docker provider can be initialized
 	_, err := testcontainers.ProviderDocker.GetProvider()
 	if err != nil {
 		t.Skipf("skipping test because Docker provider is not available: %v", err)
