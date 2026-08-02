@@ -210,7 +210,6 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 	ch := l.Broadcaster().Subscribe()
 
-	// Start the game
 	err := l.ToggleReady(leader, registry)
 	require.NoError(t, err)
 	err = l.ToggleReady(guest, registry)

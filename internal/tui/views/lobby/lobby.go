@@ -335,19 +335,18 @@ func (m *model) View() tea.View {
 	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer))
 }
 
-// renderForm lays the settings and player columns side by side, falling back to a
-// vertical stack when they would not fit within innerWidth.
+// renderForm lays the settings and player columns side by side, stacking them
+// vertically when they would not fit innerWidth: lipgloss word-wraps the columns
+// rather than shrinking them.
 func (m *model) renderForm(isLeader bool, innerWidth int) string {
 	settingsStack := m.renderSettings(isLeader)
 	playersStack := lg.JoinVertical(lg.Left, m.renderPlayerList(isLeader)...)
 
 	if lg.Width(settingsStack)+lg.Width(playersStack)+4 > innerWidth {
-		// Stack vertically to avoid lipgloss word-wrapping chaos
 		settingsCol := lg.NewStyle().Align(lg.Left).Render(settingsStack)
 		playersCol := lg.NewStyle().Align(lg.Left).MarginTop(2).Render(playersStack)
 		return lg.JoinVertical(lg.Left, settingsCol, playersCol)
 	}
-	// Render side by side with a natural gap, we wrap the form in a centered block to center it as a whole
 	settingsCol := lg.NewStyle().Align(lg.Left).MarginRight(6).Render(settingsStack)
 	playersCol := lg.NewStyle().Align(lg.Left).Render(playersStack)
 	return lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))

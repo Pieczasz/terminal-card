@@ -163,7 +163,6 @@ func TestUserRepository_BestPlayers(t *testing.T) {
 	assert.Equal(t, uint32(1400), best[1].Elo)
 	assert.Equal(t, uint32(1300), best[2].Elo)
 
-	// Test cache
 	bestCached, err := repo.BestPlayers(ctx, 2)
 	assert.NoError(t, err)
 	assert.Len(t, bestCached, 2)

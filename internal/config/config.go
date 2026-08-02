@@ -50,7 +50,6 @@ func (e *intEnvs) get(key string, fallback int) int {
 func resolveEnv() string {
 	env := getEnv("ENV", "development")
 	if env != "production" {
-		// Attempt to load .env file if it exists, and we are not explicitly in production
 		_ = godotenv.Load()
 	}
 	switch env {

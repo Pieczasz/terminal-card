@@ -17,10 +17,13 @@ func Tick() tea.Cmd {
 	})
 }
 
-// DefaultSpring returns a bouncy spring.
+const (
+	springFrequency = 15.0
+	springDamping   = 1.0 // critical: settles without overshooting
+)
+
+// DefaultSpring settles quickly and does not oscillate, so a card lifted by the
+// selection cursor arrives at its target instead of wobbling around it.
 func DefaultSpring() harmonica.Spring {
-	// frequency: higher is faster
-	// damping: 1.0 is no bounce
-	spring := harmonica.NewSpring(harmonica.FPS(FPS), 15.0, 1.0)
-	return spring
+	return harmonica.NewSpring(harmonica.FPS(FPS), springFrequency, springDamping)
 }

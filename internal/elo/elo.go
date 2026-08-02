@@ -18,11 +18,9 @@ const (
 
 // ClampRating bounds a rating to [MinRating, MaxRating].
 //
-// NaN cannot be ordered against the bounds, so min/max would propagate it and
-// ToUint32 would store 0 - below MinRating, breaking this function's contract.
-// A rating that is not a number is treated as unrated, and logged: the only way to
-// get here is already-corrupt arithmetic upstream, and resetting a rating to the
-// default without a trace would launder that into a plausible-looking number.
+// NaN would slip through min/max and reach the rankings table as 0. It only arises
+// from already-corrupt arithmetic upstream, so it is logged rather than quietly
+// reset to a plausible-looking number.
 func ClampRating(rating float64) float64 {
 	if math.IsNaN(rating) {
 		slog.Error("NaN rating clamped to the default", "default", DefaultRating)
@@ -63,10 +61,11 @@ func Calculate(players []Player) map[string]float64 {
 		return newRatings
 	}
 
+	// SME scores each player against their immediate neighbours only: a win over the
+	// one below, a loss to the one above. The two ends have a single comparison.
 	for i, player := range players {
 		var totalDelta float64
 
-		// If not last place, player wins against the player immediately below them.
 		if i < n-1 {
 			opponent := players[i+1]
 			expectedWin := ExpectedScore(player.Rating, opponent.Rating)
@@ -74,7 +73,6 @@ func Calculate(players []Player) map[string]float64 {
 			totalDelta += deltaWin
 		}
 
-		// If not first place, player loses against the player immediately above them.
 		if i > 0 {
 			opponent := players[i-1]
 			expectedLoss := ExpectedScore(player.Rating, opponent.Rating)
