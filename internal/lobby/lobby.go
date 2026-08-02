@@ -571,9 +571,9 @@ func (l *Lobby) finalizeFinishedGame(engine *game.Engine) {
 		return
 	}
 
-	// Registered before the write so shutdown waits for it rather than
-	// closing the database handle mid-statement.
-	l.manager.finalizing.Add(1)
+	if !l.manager.registerFinalizer() {
+		return
+	}
 	defer l.manager.finalizing.Done()
 	ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
 	defer cancel()

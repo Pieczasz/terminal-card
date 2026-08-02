@@ -278,11 +278,33 @@ func TestManager_WaitForFinalizers(t *testing.T) {
 
 	assert.True(t, m.WaitForFinalizers(time.Second), "nothing in flight drains immediately")
 
-	m.finalizing.Add(1)
+	m = NewManager(context.Background(), nil)
+	require.True(t, m.registerFinalizer())
 	assert.False(t, m.WaitForFinalizers(50*time.Millisecond), "an in-flight write blocks the drain")
 
 	m.finalizing.Done()
 	assert.True(t, m.WaitForFinalizers(time.Second), "drains once the write completes")
+}
+
+func TestManager_WaitForFinalizers_StopsNewFinalizers(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	require.True(t, m.registerFinalizer())
+
+	drained := make(chan bool, 1)
+	go func() {
+		drained <- m.WaitForFinalizers(time.Second)
+	}()
+
+	assert.Eventually(t, func() bool {
+		m.finalizerMu.Lock()
+		defer m.finalizerMu.Unlock()
+		return m.finalizersStopped
+	}, time.Second, time.Millisecond)
+	assert.False(t, m.registerFinalizer(), "a finalizer cannot register after shutdown starts")
+
+	m.finalizing.Done()
+	assert.True(t, <-drained, "shutdown waits for the registered finalizer")
 }
 
 // Shutdown may run before a manager was ever built.
