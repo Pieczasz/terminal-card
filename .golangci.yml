@@ -31,6 +31,13 @@ linters:
     - nestif
     - lll
     - prealloc
+    # Test-quality gates. The suite is clean under all five, so any new violation
+    # is a regression rather than pre-existing debt.
+    - testifylint
+    - thelper
+    - paralleltest
+    - tparallel
+    - usetesting
 
   exclusions:
     generated: lax

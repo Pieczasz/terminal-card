@@ -117,18 +117,30 @@ func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
 	return quadRank, tripRank, pairs
 }
 
-// bestFlush returns all ranks of the flush suit (desc), or nil if no flush.
+// bestFlush returns the ranks (desc) of the strongest flush, or nil if there is
+// none.
+//
+// The suits are walked in a fixed order and compared, rather than returning the
+// first qualifying entry of the map: with 7 cards only one suit can ever reach five,
+// but on a larger hand two can, and map iteration order would then make the hand's
+// score differ between runs for identical input.
 func bestFlush(hand []rankedCard) []int {
 	suits := make(map[deck.Suit][]int, 4)
 	for _, c := range hand {
 		suits[c.suit] = append(suits[c.suit], c.rank)
 	}
-	for _, ranks := range suits {
-		if len(ranks) >= 5 {
-			return ranks
+
+	var best []int
+	for _, suit := range []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs, deck.NoSuit} {
+		ranks := suits[suit]
+		if len(ranks) < 5 {
+			continue
+		}
+		if best == nil || slices.Compare(ranks[:5], best[:5]) > 0 {
+			best = ranks
 		}
 	}
-	return nil
+	return best
 }
 
 func allRanks(hand []rankedCard) []int {

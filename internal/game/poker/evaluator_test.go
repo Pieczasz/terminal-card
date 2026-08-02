@@ -430,3 +430,66 @@ func FuzzEvaluateHand(f *testing.F) {
 		}
 	})
 }
+
+// EvaluateHand runs once per player per showdown, over 7 cards, and allocates on
+// every call - it is the hottest function in the rules layer.
+func BenchmarkEvaluateHand(b *testing.B) {
+	sevenCards := []deck.Card{
+		card(deck.Ace, deck.Spades), card(deck.King, deck.Spades),
+		card(deck.Queen, deck.Spades), card(deck.Jack, deck.Spades),
+		card(deck.Ten, deck.Spades), card(deck.Two, deck.Hearts),
+		card(deck.Three, deck.Diamonds),
+	}
+
+	b.Run("straight-flush-7", func(b *testing.B) {
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = EvaluateHand(sevenCards)
+		}
+	})
+
+	b.Run("high-card-7", func(b *testing.B) {
+		highCard := []deck.Card{
+			card(deck.Two, deck.Spades), card(deck.Four, deck.Hearts),
+			card(deck.Six, deck.Diamonds), card(deck.Eight, deck.Clubs),
+			card(deck.Ten, deck.Spades), card(deck.Queen, deck.Hearts),
+			card(deck.Ace, deck.Diamonds),
+		}
+		b.ReportAllocs()
+		for b.Loop() {
+			_ = EvaluateHand(highCard)
+		}
+	})
+}
+
+// FuzzClassifyHand complements FuzzEvaluateHand above, which fixes the input at
+// exactly five valid cards. This one varies the hand size and admits Joker and
+// NoSuit, so it reaches the length-dependent index arithmetic: straightHigh reads
+// unique[i+4], and bestFlush and kickers slice by count.
+func FuzzClassifyHand(f *testing.F) {
+	f.Add([]byte{0, 0, 1, 1, 2, 2, 3})       // pairs
+	f.Add([]byte{0, 12, 11, 10, 9, 8, 7})    // broadway-ish
+	f.Add([]byte{})                          // no cards
+	f.Add([]byte{5})                         // fewer than five cards
+	f.Add([]byte{13, 13, 13, 13, 13, 13, 4}) // jokers and a repeat
+
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		cards := make([]deck.Card, 0, len(raw))
+		for _, b := range raw {
+			cards = append(cards, deck.Card{
+				Rank: deck.Rank(b % 14),     // Ace..Joker
+				Suit: deck.Suit(b / 14 % 5), // Spades..NoSuit
+			})
+		}
+
+		got := EvaluateHand(cards)
+		assert.Equal(t, got, EvaluateHand(cards), "EvaluateHand must be deterministic")
+		assert.Equal(t, got, ClassifyHand(cards).Score(), "Score must agree with EvaluateHand")
+
+		if len(cards) < 5 {
+			assert.Zero(t, got, "fewer than five cards has no hand value")
+		} else {
+			assert.Positive(t, got, "five or more cards always classify to something")
+		}
+	})
+}

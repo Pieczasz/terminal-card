@@ -7,6 +7,7 @@ import (
 )
 
 func TestBuilder_StandardDeck(t *testing.T) {
+	t.Parallel()
 	cards := StandardDeck()
 
 	assert.Len(t, cards, 52, "standard deck should have exactly 52 cards")

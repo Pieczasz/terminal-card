@@ -4,14 +4,16 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPile_Shuffle(t *testing.T) {
+	t.Parallel()
 	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}, {Rank: Queen, Suit: Diamonds}}
 	p := New(cards)
 
 	// Shuffle might not change the order every time, but it should contain the same cards
-	assert.NoError(t, p.Shuffle())
+	require.NoError(t, p.Shuffle())
 
 	got := p.Size()
 	want := 3
@@ -23,6 +25,7 @@ func TestPile_Shuffle(t *testing.T) {
 }
 
 func TestPile_Peek(t *testing.T) {
+	t.Parallel()
 	cards := []Card{{Rank: Ace, Suit: Spades}}
 	p := &Pile{cards: cards}
 
@@ -39,6 +42,7 @@ func TestPile_Peek(t *testing.T) {
 }
 
 func TestPile_Draw(t *testing.T) {
+	t.Parallel()
 	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}}
 	p := &Pile{cards: cards}
 
@@ -55,6 +59,7 @@ func TestPile_Draw(t *testing.T) {
 }
 
 func TestPile_DrawNCards(t *testing.T) {
+	t.Parallel()
 	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: Two, Suit: Spades}, {Rank: Three, Suit: Spades}}
 	p := &Pile{cards: cards}
 
@@ -72,6 +77,7 @@ func TestPile_DrawNCards(t *testing.T) {
 }
 
 func TestPile_AddCard(t *testing.T) {
+	t.Parallel()
 	p := &Pile{}
 	p.AddCard(Card{Rank: Ace, Suit: Spades})
 
@@ -80,6 +86,7 @@ func TestPile_AddCard(t *testing.T) {
 }
 
 func TestPile_AddAllCards(t *testing.T) {
+	t.Parallel()
 	p := &Pile{}
 	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}}
 	p.AddAllCards(cards)

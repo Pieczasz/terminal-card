@@ -12,7 +12,7 @@ func TestRegistry(t *testing.T) {
 	r := NewRegistry()
 
 	_, err := r.Create("NotExists")
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	r.RegisterModule(Module{
 		Name:    "FakeGame",
@@ -25,7 +25,7 @@ func TestRegistry(t *testing.T) {
 	assert.Equal(t, "FakeGame", names[0])
 
 	rules, err := r.Create("FakeGame")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.NotNil(t, rules)
 
 	mod, ok := r.Module("FakeGame")

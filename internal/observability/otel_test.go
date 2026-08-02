@@ -46,6 +46,11 @@ func (mockMetricsService) Export(context.Context, *colmetricpb.ExportMetricsServ
 	return &colmetricpb.ExportMetricsServiceResponse{}, nil
 }
 
+// Deliberately serial: SetupOTel installs process-global providers via
+// otel.SetTracerProvider and global.SetLoggerProvider, so running this alongside
+// anything else that reads or writes those globals would be racy.
+//
+//nolint:paralleltest // mutates process-global OTel providers
 func TestOTel_Integration(t *testing.T) {
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)

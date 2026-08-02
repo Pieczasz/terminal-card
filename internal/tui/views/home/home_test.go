@@ -24,6 +24,7 @@ func TestHome_Update(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run("key_"+tt.key, func(t *testing.T) {
+			t.Parallel()
 			keyMsg := tea.KeyPressMsg{Code: rune(tt.key[0]), Text: tt.key}
 			_, cmd := m.Update(keyMsg)
 

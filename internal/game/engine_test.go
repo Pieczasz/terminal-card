@@ -82,7 +82,7 @@ func TestEngine_Start(t *testing.T) {
 	engine := NewEngine(m, players, deck.StandardDeck())
 
 	err := engine.Start()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	engine.WithState(func(state *State) {
 		assert.Equal(t, Playing, state.Phase)
@@ -115,7 +115,7 @@ func TestEngine_SubmitAction(t *testing.T) {
 	}
 
 	err := engine.SubmitAction(otherPlayerID, MockAction{name: "MockDraw"})
-	assert.ErrorContains(t, err, "wait for your turn")
+	require.ErrorContains(t, err, "wait for your turn")
 
 	validAction := MockAction{name: "MockDraw"}
 	m.On("ValidateAction", mock.Anything, validAction).Return(nil)
@@ -124,7 +124,7 @@ func TestEngine_SubmitAction(t *testing.T) {
 	m.On("CheckWinCondition", mock.Anything).Return(false)
 
 	err = engine.SubmitAction(currentPlayerID, validAction)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, otherPlayerID, engine.CurrentPlayerID())
 

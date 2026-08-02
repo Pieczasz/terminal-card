@@ -173,7 +173,7 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	assert.True(t, l.IsRanked())
 
 	// A guest must not be able to change the lobby's settings.
-	assert.Error(t, l.SetMaxPlayers(guests[0], 9, 2, 9), "only the leader may change settings")
+	require.Error(t, l.SetMaxPlayers(guests[0], 9, 2, 9), "only the leader may change settings")
 
 	// --- fill over the join code -------------------------------------------
 	for _, g := range guests {
@@ -250,7 +250,7 @@ func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 
 	// Readying alone marks the player ready but refuses to start: poker needs 2+.
 	err = l.ToggleReady(leader, registry)
-	assert.ErrorContains(t, err, "at least 2 players")
+	require.ErrorContains(t, err, "at least 2 players")
 	assert.True(t, l.IsReady(leader), "the ready flag still toggles")
 	assert.True(t, l.IsWaiting(), "one ready player cannot start a two-player game")
 
