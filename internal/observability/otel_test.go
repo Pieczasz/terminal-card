@@ -47,11 +47,11 @@ func (mockMetricsService) Export(context.Context, *colmetricpb.ExportMetricsServ
 }
 
 // SetupOTel installs process-global providers (otel.SetTracerProvider,
-// global.SetLoggerProvider). Any future test in this package that also touches
-// those globals must not run in parallel with this one.
+// global.SetLoggerProvider), so this test cannot share the process with a parallel
+// one that also reads or writes them.
+//
+//nolint:paralleltest // mutates process-global OTel providers
 func TestOTel_Integration(t *testing.T) {
-	t.Parallel()
-
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
