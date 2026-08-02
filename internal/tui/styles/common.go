@@ -7,22 +7,29 @@ import (
 	"github.com/common-nighthawk/go-figure"
 )
 
-// BoxWidth is the outer width of the framed layout.
+// Box dimensions stop growing past these so content stays readable on an ultra-wide
+// or very tall terminal instead of stretching across the whole screen.
+const (
+	maxBoxWidth  = 120
+	maxBoxHeight = 40
+)
+
+// BoxWidth is the outer width of the framed layout: the terminal less a small
+// margin, held at maxBoxWidth once it gets there.
 //
-// Clamped at zero: Router.Global.Width is 0 until the first WindowSizeMsg, so every
-// session's opening frame would otherwise size its box to -4.
+// It must never shrink as the terminal grows. The previous form switched to a 5/6
+// proportion at exactly 100 columns, and since 5/6 of a width is always less than
+// that width minus four, widening the terminal from 99 to 100 columns *narrowed* the
+// box from 95 to 83.
+//
+// Clamped at zero because Router.Global.Width is 0 until the first WindowSizeMsg, so
+// every session's opening frame would otherwise size its box to -4.
 func BoxWidth(screenWidth int) int {
-	if screenWidth < 100 {
-		return max(screenWidth-4, 0)
-	}
-	return max(screenWidth*5/6, 0)
+	return max(min(screenWidth-4, maxBoxWidth), 0)
 }
 
 func BoxHeight(screenHeight int) int {
-	if screenHeight < 30 {
-		return max(screenHeight-2, 0)
-	}
-	return max(screenHeight*5/7, 0)
+	return max(min(screenHeight-2, maxBoxHeight), 0)
 }
 
 func InnerWidth(screenWidth int) int {

@@ -44,3 +44,43 @@ func TestClose_AfterEngineClosed(t *testing.T) {
 	m.Close()
 	assert.Zero(t, engine.Broadcaster().Len())
 }
+
+// stepRaise works in uint, so decreasing below the step would wrap to a huge number.
+// The guard is the whole reason the branch exists.
+func TestStepRaise_ClampsWithinTheLegalBandAndNeverWraps(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.raising = true
+
+	// Heads-up with DefaultStack=1000, SB=25, BB=50 the band is [100, 1000].
+	const wantMin, wantMax = uint(100), uint(1000)
+
+	m.raiseAmount = 0
+	m.stepRaise(-1)
+	assert.GreaterOrEqual(t, m.raiseAmount, wantMin, "decreasing from zero must not wrap")
+	assert.LessOrEqual(t, m.raiseAmount, wantMax)
+
+	for range 50 {
+		m.stepRaise(-1)
+		require.GreaterOrEqual(t, m.raiseAmount, wantMin, "repeated decrease stays legal")
+	}
+
+	for range 200 {
+		m.stepRaise(+1)
+		require.LessOrEqual(t, m.raiseAmount, wantMax, "repeated increase never exceeds the stack")
+	}
+	assert.Equal(t, wantMax, m.raiseAmount, "increasing eventually reaches the stack")
+}
+
+// Stepping while the raise prompt is closed must do nothing at all.
+func TestStepRaise_IsANoOpWhenNotRaising(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.raising = false
+	m.raiseAmount = 0
+
+	m.stepRaise(+1)
+	m.stepRaise(-1)
+
+	assert.Zero(t, m.raiseAmount, "no adjustment outside the raise prompt")
+}
