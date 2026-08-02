@@ -3,7 +3,6 @@ package poker
 import (
 	"fmt"
 	"slices"
-	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -97,9 +96,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) Init() tea.Cmd {
-	// A view built while the table is already between hands - a reconnect - still
-	// has to arm the fallback deal, or it waits on a tick that was never scheduled.
-	return tea.Batch(listenForEvents(m.events), m.autoDealTimer())
+	return listenForEvents(m.events)
 }
 
 func (m *Model) syncState() {
@@ -255,24 +252,4 @@ func (m *Model) canDeal() bool {
 func (m *Model) heroBusted() bool {
 	hero := m.heroSeat()
 	return hero != nil && hero.Chips == 0
-}
-
-// autoDealAfter is how long the table waits for the player holding the button to
-// deal before doing it for them. Nothing else can happen between hands, so one
-// player who steps away would otherwise stall everyone until they give up and
-// leave - and leaving mid-match costs them their placing.
-const autoDealAfter = 20 * time.Second
-
-type autoDealMsg struct{ afterHand int }
-
-// autoDealTimer arms the fallback deal, tagged with the hand it belongs to so a
-// tick that outlives its hand is ignored rather than dealing twice.
-func (m *Model) autoDealTimer() tea.Cmd {
-	if !m.canDeal() {
-		return nil
-	}
-	hand := m.handNumber
-	return tea.Tick(autoDealAfter, func(time.Time) tea.Msg {
-		return autoDealMsg{afterHand: hand}
-	})
 }

@@ -154,24 +154,6 @@ func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
 	}
 }
 
-// The fallback deal is tagged with the hand it was armed for; a tick that arrives
-// after that hand is already dealt must not deal a second one.
-func TestAutoDeal_IgnoresATickFromAnEarlierHand(t *testing.T) {
-	t.Parallel()
-	engine, m := startedTable(t)
-	t.Cleanup(engine.Close)
-
-	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
-	m.syncState()
-	require.True(t, m.handDone)
-
-	_, cmd := m.autoDeal(autoDealMsg{afterHand: m.handNumber - 1})
-
-	assert.Nil(t, cmd)
-	assert.True(t, m.handDone, "a stale tick deals nothing")
-	assert.NoError(t, m.lastErr)
-}
-
 // esc on the between-hands screen leaves the whole match, so the screen has to say
 // so: it otherwise looks exactly like the end-of-game screen where esc was free.
 func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
