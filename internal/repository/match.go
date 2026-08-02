@@ -27,12 +27,12 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 }
 
 func (q *gormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
-	return getOrCreateGame(q.db.WithContext(ctx), name)
+	return getOrCreateGameTx(q.db.WithContext(ctx), name)
 }
 
-// getOrCreateGame resolves a game by its unique name, race-safe via
+// getOrCreateGameTx resolves a game by its unique name, race-safe via
 // ON CONFLICT DO NOTHING plus a read-back when another transaction won the insert.
-func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
+func getOrCreateGameTx(tx *gorm.DB, name string) (*db.Game, error) {
 	game := db.Game{Name: name}
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "name"}},
@@ -75,7 +75,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 	defer span.End()
 
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGame(tx, gameName)
+		game, err := getOrCreateGameTx(tx, gameName)
 		if err != nil {
 			return err
 		}
