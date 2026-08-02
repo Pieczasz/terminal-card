@@ -12,6 +12,7 @@ import (
 // that releases the engine subscription. If it regresses, the Len assertion fails
 // and the parked listener below never returns, so the test times out.
 func TestClose_ReleasesEngineSubscription(t *testing.T) {
+	t.Parallel()
 	engine, m := startedTable(t)
 	broadcaster := engine.Broadcaster()
 
@@ -36,6 +37,7 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 
 // The router owns teardown, so a view swap must release the outgoing view too.
 func TestClose_AfterEngineClosed(t *testing.T) {
+	t.Parallel()
 	engine, m := startedTable(t)
 	engine.Close()
 
