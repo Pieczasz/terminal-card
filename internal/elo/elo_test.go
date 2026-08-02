@@ -11,6 +11,8 @@ import (
 
 func TestClampRating(t *testing.T) {
 	t.Parallel()
+	// NaN is unorderable, so min/max would pass it through to the rankings table.
+	assert.InDelta(t, DefaultRating, ClampRating(math.NaN()), 1e-9, "NaN is treated as unrated")
 	assert.InDelta(t, MinRating, ClampRating(-50), 1e-9)
 	assert.InDelta(t, MinRating, ClampRating(0), 1e-9)
 	assert.InDelta(t, MaxRating, ClampRating(9000), 1e-9)

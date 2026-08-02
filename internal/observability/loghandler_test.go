@@ -133,12 +133,18 @@ func TestFanoutHandler_WithAttrsAndGroupApplyToEverySink(t *testing.T) {
 	}
 }
 
+// discardHandler is the benchmark's sink. captureHandler retains every record, so
+// using it here would measure an ever-growing slice instead of fanout dispatch.
+type discardHandler struct{}
+
+func (discardHandler) Enabled(context.Context, slog.Level) bool  { return true }
+func (discardHandler) Handle(context.Context, slog.Record) error { return nil }
+func (h discardHandler) WithAttrs([]slog.Attr) slog.Handler      { return h }
+func (h discardHandler) WithGroup(string) slog.Handler           { return h }
+
 // Handle runs on every log line the process emits, cloning the record per sink.
 func BenchmarkFanoutHandler_Handle(b *testing.B) {
-	handler := NewFanoutHandler(
-		&captureHandler{level: slog.LevelInfo},
-		&captureHandler{level: slog.LevelInfo},
-	)
+	handler := NewFanoutHandler(discardHandler{}, discardHandler{})
 	record := newRecord(slog.LevelInfo, "player joined lobby")
 	record.AddAttrs(slog.String("player", "alice"), slog.Int("seat", 3))
 	ctx := context.Background()

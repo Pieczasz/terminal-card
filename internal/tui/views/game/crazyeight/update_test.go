@@ -113,23 +113,27 @@ func TestAnimation_StopsWhenTheSpringSettles(t *testing.T) {
 		animating:       true,
 	}
 
+	// settled must be tracked explicitly: `for frames = range budget` leaves frames at
+	// budget-1 whether the loop broke early or ran out, so comparing it to the budget
+	// proves nothing.
+	const budget = 600
 	var frames int
+	var settled bool
 	var cmd tea.Cmd = func() tea.Msg { return animation.FrameMsg(time.Now()) }
-	for frames = range 600 {
-		if cmd == nil {
-			break
-		}
+	for frames = range budget {
 		msg := cmd()
 		if _, isFrame := msg.(animation.FrameMsg); !isFrame {
 			break
 		}
-		_, cmd = m.Update(msg)
+		if _, cmd = m.Update(msg); cmd == nil {
+			settled = true
+			break
+		}
 	}
 
-	require.Nil(t, cmd, "the loop must stop once the spring is at rest")
+	require.True(t, settled, "the loop must stop on its own before the %d-frame budget", budget)
 	assert.False(t, m.animating, "the model records that it stopped")
 	assert.InDelta(t, selectionRest, m.selectionLift, selectionEpsilon, "it settles at the target")
-	assert.Less(t, frames, 600, "it settled rather than running out the budget")
 	t.Logf("settled after %d frames (~%dms at 60 FPS)", frames, frames*1000/animation.FPS)
 }
 

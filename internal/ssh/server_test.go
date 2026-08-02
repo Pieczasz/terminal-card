@@ -29,6 +29,9 @@ func listenLocal(t *testing.T) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
+	// Registered here rather than at the call site: a require.NoError between the
+	// bind and the server's own teardown would otherwise strand the socket.
+	t.Cleanup(func() { _ = l.Close() })
 	return l
 }
 
