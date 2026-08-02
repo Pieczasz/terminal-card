@@ -39,10 +39,6 @@ func AvailableContentHeight(screenHeight int, header, footer string) int {
 	return max(innerHeight-lg.Height(header)-lg.Height(footer), 0)
 }
 
-func AvailableContentWidth(screenWidth int) int {
-	return max(BoxWidth(screenWidth)-6, 0)
-}
-
 func RenderFigureASCII(text string, maxWidth int) string {
 	fonts := []string{"slant", "small", "mini"}
 	for _, font := range fonts {
@@ -58,7 +54,7 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	boxWidth := BoxWidth(width)
 	boxHeight := BoxHeight(height)
 
-	innerWidth := max(boxWidth-6, 0)
+	innerWidth := InnerWidth(width)
 	innerHeight := max(boxHeight-4, 0)
 
 	// go-figure leaves trailing newlines that inflate the measured height below.
