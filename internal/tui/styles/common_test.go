@@ -21,7 +21,6 @@ func TestSizing_NeverNegative(t *testing.T) {
 			assert.GreaterOrEqual(t, styles.BoxWidth(size), 0, "BoxWidth")
 			assert.GreaterOrEqual(t, styles.BoxHeight(size), 0, "BoxHeight")
 			assert.GreaterOrEqual(t, styles.InnerWidth(size), 0, "InnerWidth")
-			assert.GreaterOrEqual(t, styles.AvailableContentWidth(size), 0, "AvailableContentWidth")
 			assert.GreaterOrEqual(t, styles.AvailableContentHeight(size, "hdr", "ftr"), 0, "AvailableContentHeight")
 		})
 	}
@@ -50,8 +49,6 @@ func TestSizing_IsMonotonic(t *testing.T) {
 			"BoxHeight shrank going from %d to %d rows", size-1, size)
 		assert.GreaterOrEqual(t, styles.InnerWidth(size), styles.InnerWidth(size-1),
 			"InnerWidth shrank going from %d to %d columns", size-1, size)
-		assert.GreaterOrEqual(t, styles.AvailableContentWidth(size), styles.AvailableContentWidth(size-1),
-			"AvailableContentWidth shrank going from %d to %d columns", size-1, size)
 	}
 }
 

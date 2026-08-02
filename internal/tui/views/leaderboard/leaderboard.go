@@ -85,7 +85,7 @@ func (m model) View() tea.View {
 		content = m.renderEmpty()
 	} else {
 		contentHeight := styles.AvailableContentHeight(m.global.Height, titleText, footer)
-		contentWidth := styles.AvailableContentWidth(m.global.Width)
+		contentWidth := styles.InnerWidth(m.global.Width)
 		content = m.renderRankings(contentWidth, contentHeight)
 	}
 
