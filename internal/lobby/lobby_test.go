@@ -57,11 +57,6 @@ func (m *MockMatchRepo) GetOrCreateGame(ctx context.Context, name string) (*db.G
 	return args.Get(0).(*db.Game), args.Error(1)
 }
 
-func (m *MockMatchRepo) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
-	args := m.Called(ctx, gameID, orderedUserIDs)
-	return args.Get(0).(map[uint]int), args.Error(1)
-}
-
 func (m *MockMatchRepo) RecordMatch(
 	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
 ) error {

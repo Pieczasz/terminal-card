@@ -26,9 +26,8 @@ import (
 	"golang.org/x/net/netutil"
 )
 
-// finalizeDrainTimeout bounds how long shutdown waits for in-flight ranked match
-// writes before closing the database handle.
-const finalizeDrainTimeout = 10 * time.Second
+// finalizeDrainTimeout matches the per-finalizer deadline.
+const finalizeDrainTimeout = 15 * time.Second
 
 func main() {
 	if err := run(); err != nil {
@@ -91,13 +90,13 @@ func run() (err error) {
 	matchRepo := repository.NewMatchRepository(database)
 	lobbyManager := lobby.NewManager(ctx, matchRepo)
 
-	// Registered after the sqlDB.Close defer above, so LIFO drains in-flight ranked
-	// finalizes before the handle they write through is closed. The app context is
-	// canceled later still (run's first defer), so a finalize in progress keeps its
-	// own deadline rather than being cut off here.
+	// Registered after the sqlDB.Close defer above, so LIFO stops new match writes
+	// and drains registered ones before the handle they write through is closed.
 	defer func() {
 		if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-			slog.Warn("timed out draining ranked match finalizers", "timeout", finalizeDrainTimeout)
+			slog.Warn("match finalizers exceeded their deadline; waiting for exit",
+				"timeout", finalizeDrainTimeout)
+			lobbyManager.WaitForFinalizers(0)
 		}
 	}()
 
