@@ -10,9 +10,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
-	charmssh "github.com/charmbracelet/ssh"
+	charmssh "charm.land/ssh"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type MockSession struct {
@@ -111,14 +112,12 @@ func TestLoadOrRegisterUser_PassesThroughActionableSentinels(t *testing.T) {
 			repo.On("RegisterUserWithKey", mock.Anything, "user", "fp").Return(nil, nil, sentinel)
 
 			_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "user", "fp")
-			assert.ErrorIs(t, err, sentinel)
+			require.ErrorIs(t, err, sentinel)
 			assert.NotErrorIs(t, err, ssh.ErrRegistrationFailed)
 		})
 	}
 }
 
-// A sentinel arrives wrapped in practice (RegisterUserWithKey adds the validation
-// reason), so the cause has to survive the hop out of LoadOrRegisterUser.
 func TestLoadOrRegisterUser_PreservesWrappedCause(t *testing.T) {
 	t.Parallel()
 	repo := new(MockUserRepository)
@@ -127,6 +126,6 @@ func TestLoadOrRegisterUser_PreservesWrappedCause(t *testing.T) {
 	repo.On("RegisterUserWithKey", mock.Anything, "bad", "fp").Return(nil, nil, cause)
 
 	_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "bad", "fp")
-	assert.ErrorIs(t, err, repository.ErrInvalidUsername)
+	require.ErrorIs(t, err, repository.ErrInvalidUsername)
 	assert.ErrorContains(t, err, "must be 3-16 characters")
 }

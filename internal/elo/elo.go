@@ -1,6 +1,7 @@
 package elo
 
 import (
+	"log/slog"
 	"math"
 )
 
@@ -17,10 +18,13 @@ const (
 
 // ClampRating bounds a rating to [MinRating, MaxRating].
 func ClampRating(rating float64) float64 {
+	if math.IsNaN(rating) {
+		slog.Error("NaN rating clamped to the default", "default", DefaultRating)
+		return DefaultRating
+	}
 	return min(max(rating, MinRating), MaxRating)
 }
 
-// ToUint32 converts a rating to a stored Elo value after clamping and rounding.
 func ToUint32(rating float64) uint32 {
 	return uint32(math.Round(ClampRating(rating)))
 }
@@ -30,15 +34,8 @@ type Player struct {
 	Rating float64
 }
 
-// ExpectedScore calculates the expected probability of player A winning against player B.
-// Returns a value between 0.0 and 1.0.
 func ExpectedScore(ratingA, ratingB float64) float64 {
 	return 1.0 / (1.0 + math.Pow(10.0, (ratingB-ratingA)/400.0))
-}
-
-// UpdateRating calculates the new rating for a player given their actual score and expected score.
-func UpdateRating(rating, expectedScore, actualScore float64) float64 {
-	return ClampRating(rating + KFactor*(actualScore-expectedScore))
 }
 
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
@@ -57,10 +54,11 @@ func Calculate(players []Player) map[string]float64 {
 		return newRatings
 	}
 
+	// SME scores each player against their immediate neighbors only: a win over the
+	// one below, a loss to the one above. The two ends have a single comparison.
 	for i, player := range players {
 		var totalDelta float64
 
-		// If not last place, player wins against the player immediately below them.
 		if i < n-1 {
 			opponent := players[i+1]
 			expectedWin := ExpectedScore(player.Rating, opponent.Rating)
@@ -68,7 +66,6 @@ func Calculate(players []Player) map[string]float64 {
 			totalDelta += deltaWin
 		}
 
-		// If not first place, player loses against the player immediately above them.
 		if i > 0 {
 			opponent := players[i-1]
 			expectedLoss := ExpectedScore(player.Rating, opponent.Rating)

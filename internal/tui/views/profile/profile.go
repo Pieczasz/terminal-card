@@ -65,11 +65,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("database error while loading user profile", "error", msg.err)
 		}
 	case tea.KeyPressMsg:
-		if route, ok := views.GlobalRoute(msg.String()); ok {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }
-		}
-		if key := msg.String(); key == "esc" || key == "q" {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+		if cmd, ok := views.NavigateOn(msg.String()); ok {
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -133,10 +130,19 @@ func (m model) historyRows(maxItems int) []string {
 		if i >= maxItems {
 			return append(rows, "... and more")
 		}
-		rows = append(rows, fmt.Sprintf("%s: %s (Elo change: %s)",
-			h.Match.Game.Name, placementLabel(h.Placement), eloDeltaLabel(h.EloDelta)))
+		rows = append(rows, fmt.Sprintf("%s: %s (%s)",
+			h.Match.Game.Name, placementLabel(h.Placement), resultLabel(h)))
 	}
 	return rows
+}
+
+// resultLabel says what the match was worth: a rating swing for a ranked game,
+// and plainly "casual" for one that was never going to move Elo.
+func resultLabel(h db.MatchParticipant) string {
+	if !h.Match.Ranked {
+		return lg.NewStyle().Foreground(lg.Color("250")).Render("casual game")
+	}
+	return "Elo change: " + eloDeltaLabel(h.EloDelta)
 }
 
 func eloDeltaLabel(delta int) string {

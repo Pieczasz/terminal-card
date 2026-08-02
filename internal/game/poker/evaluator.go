@@ -61,6 +61,9 @@ type rankedCard struct {
 	suit deck.Suit
 }
 
+// rankValue maps deck.Joker onto 14, making it indistinguishable from an ace. That is
+// unreachable today (StandardDeck stops at King), and dealing jokers would mean
+// teaching wildness to rankCounts, straightHigh and bestFlush too.
 func rankValue(r deck.Rank) int {
 	if r == deck.Ace {
 		return 14
@@ -117,18 +120,28 @@ func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
 	return quadRank, tripRank, pairs
 }
 
-// bestFlush returns all ranks of the flush suit (desc), or nil if no flush.
+// bestFlush returns the ranks (desc) of the strongest flush, or nil if there is none.
+//
+// Suits are walked in a fixed order rather than taken from map iteration: on a hand
+// large enough for two suits to reach five, ranging the map would score identical
+// input differently between runs. NoSuit is absent because it marks a joker.
 func bestFlush(hand []rankedCard) []int {
 	suits := make(map[deck.Suit][]int, 4)
 	for _, c := range hand {
 		suits[c.suit] = append(suits[c.suit], c.rank)
 	}
-	for _, ranks := range suits {
-		if len(ranks) >= 5 {
-			return ranks
+
+	var best []int
+	for _, suit := range []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs} {
+		ranks := suits[suit]
+		if len(ranks) < 5 {
+			continue
+		}
+		if best == nil || slices.Compare(ranks[:5], best[:5]) > 0 {
+			best = ranks
 		}
 	}
-	return nil
+	return best
 }
 
 func allRanks(hand []rankedCard) []int {

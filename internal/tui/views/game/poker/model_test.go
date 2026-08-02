@@ -1,6 +1,8 @@
 package poker
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -60,27 +62,22 @@ func TestSyncState_BuildsSeatsFromEngine(t *testing.T) {
 	}
 }
 
-// Seat flags drive the whole table render, so pin the ones a split could scramble.
+// Seat flags drive the whole table render. Assert what a player can observe - who
+// paid which blind, and that the markers are unique - rather than re-stating the
+// assignment in syncState, which no change to the code could ever contradict.
 func TestSyncState_SeatFlagsMatchBlinds(t *testing.T) {
 	t.Parallel()
-	engine, m := startedTable(t)
+	_, m := startedTable(t)
 
 	var sb, bb, dealer, turns int
-	engine.WithState(func(state *game.State) {
-		extra, ok := state.Extra.(*logic.State)
-		require.True(t, ok)
-		for i, s := range m.seats {
-			assert.Equal(t, i == extra.SBIndex, s.IsSB)
-			assert.Equal(t, i == extra.BBIndex, s.IsBB)
-			assert.Equal(t, i == extra.DealerIndex, s.IsDealer)
-		}
-	})
 	for _, s := range m.seats {
 		if s.IsSB {
 			sb++
+			assert.Equal(t, logic.DefaultSmallBlind, s.Bet, "the small-blind seat posted the small blind")
 		}
 		if s.IsBB {
 			bb++
+			assert.Equal(t, logic.DefaultBigBlind, s.Bet, "the big-blind seat posted the big blind")
 		}
 		if s.IsDealer {
 			dealer++
@@ -89,10 +86,18 @@ func TestSyncState_SeatFlagsMatchBlinds(t *testing.T) {
 			turns++
 		}
 	}
-	assert.Equal(t, 1, sb)
-	assert.Equal(t, 1, bb)
-	assert.Equal(t, 1, dealer)
+
+	assert.Equal(t, 1, sb, "exactly one small blind")
+	assert.Equal(t, 1, bb, "exactly one big blind")
+	assert.Equal(t, 1, dealer, "exactly one dealer button")
 	assert.Equal(t, 1, turns, "exactly one seat is on turn mid-hand")
+
+	// Heads-up, the button posts the small blind.
+	for _, s := range m.seats {
+		if s.IsDealer {
+			assert.True(t, s.IsSB, "heads-up: the dealer is the small blind")
+		}
+	}
 }
 
 func TestSyncState_ChipsAndBetsSumToStacks(t *testing.T) {
@@ -110,15 +115,15 @@ func TestClampRaise_BoundsToLegalRange(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
 
-	minTo := m.currentBet + m.minRaise
-	maxTo := m.streetBetMax()
-	require.Positive(t, maxTo)
+	// Hardcoded rather than recomputed from m: deriving the expectation from
+	// currentBet+minRaise and streetBetMax would restate clampRaise's own body, and
+	// swapping its min and max would still pass. Heads-up with DefaultStack=1000,
+	// SB=25 and BB=50 the legal band is exactly [100, 1000].
+	const wantMin, wantMax = uint(100), uint(1000)
 
-	assert.Equal(t, minTo, m.clampRaise(0), "below the minimum raises up to it")
-	assert.Equal(t, maxTo, m.clampRaise(maxTo+1_000), "above the stack clamps down to it")
-	if minTo < maxTo {
-		assert.Equal(t, minTo+1, m.clampRaise(minTo+1), "in-range amounts pass through")
-	}
+	assert.Equal(t, wantMin, m.clampRaise(0), "below the minimum raises up to it")
+	assert.Equal(t, wantMax, m.clampRaise(50_000), "above the stack clamps down to it")
+	assert.Equal(t, uint(500), m.clampRaise(500), "an in-range amount passes through")
 }
 
 func TestSyncState_NilBoundIsInert(t *testing.T) {
@@ -131,4 +136,36 @@ func TestSyncState_NilBoundIsInert(t *testing.T) {
 	assert.False(t, m.canFold())
 	assert.False(t, m.canRaise())
 	assert.False(t, m.canAllIn())
+}
+
+// syncState rebuilds every seat from the engine on each broadcast event, so it runs
+// once per player per action. It shares the frame budget (~16ms) with the lipgloss
+// render, so it needs to stay in the microseconds.
+func BenchmarkSyncState(b *testing.B) {
+	for _, seats := range []int{2, 6, 9} {
+		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
+			players := make([]*player.Player, 0, seats)
+			for i := range seats {
+				players = append(players, &player.Player{
+					ID:           strconv.Itoa(i + 1),
+					DatabaseUser: testUser(uint(i+1), fmt.Sprintf("p%d", i+1)),
+				})
+			}
+			engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
+			if err := engine.Start(); err != nil {
+				b.Fatal(err)
+			}
+			b.Cleanup(engine.Close)
+
+			m, ok := New(router.GlobalContext{User: testUser(1, "p1")}, engine).(*Model)
+			if !ok {
+				b.Fatal("New did not return *Model")
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				m.syncState()
+			}
+		})
+	}
 }

@@ -1,6 +1,8 @@
 package ratelimit_test
 
 import (
+	"fmt"
+	"strconv"
 	"testing"
 	"time"
 
@@ -86,4 +88,22 @@ func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 	require.True(t, limiter.Allow("b"))
 	require.False(t, limiter.Allow("c"), "new key should be rejected when at capacity")
 	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
+}
+
+func BenchmarkAllow(b *testing.B) {
+	for _, keys := range []int{1, 64, 10_000} {
+		b.Run(fmt.Sprintf("keys=%d", keys), func(b *testing.B) {
+			l := ratelimit.NewSlidingWindowLimiter(1_000_000, time.Minute)
+			ids := make([]string, keys)
+			for i := range keys {
+				ids[i] = strconv.Itoa(i)
+				l.Allow(ids[i])
+			}
+
+			b.ReportAllocs()
+			for i := 0; b.Loop(); i++ {
+				l.Allow(ids[i%keys])
+			}
+		})
+	}
 }

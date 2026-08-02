@@ -4,15 +4,33 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 )
 
-const keyHints = "←/h: left | ->/k: right | enter: play/confirm | d: draw | esc: leave/cancel"
+const keyHints = "<-/h: left | ->/l: right | enter: play/confirm | d: draw | esc: leave/cancel"
 
 var hintStyle = lg.NewStyle().Foreground(lg.Color("#888888"))
+
+// suitLabels are the picker cells, in grid order. suitPickerOrder in update.go
+// maps a cursor position back to the suit and must stay in the same order.
+var suitLabels = []string{"♠ Spades", "♥︎ Hearts", "♦ Diamonds", "♣ Clubs"}
+
+// suitCellWidth keeps the 2x2 picker a rectangle whatever the suit name length.
+// lipgloss counts the border and padding inside Width, so the widest label needs
+// four extra columns - without them "♦ Diamonds" wraps under its own glyph.
+var suitCellWidth = widestLabel(suitLabels) + 4
+
+func widestLabel(labels []string) int {
+	widest := 0
+	for _, l := range labels {
+		widest = max(widest, lg.Width(l))
+	}
+	return widest
+}
 
 func (m *Model) View() tea.View {
 	if m.baseState.Phase != game.Playing {
@@ -168,18 +186,15 @@ func (m *Model) renderSuitPicker() string {
 		return ""
 	}
 
-	suits := []string{"♠ Spades", "♥︎ Hearts", "♦ Diamonds", "♣ Clubs"}
-	var renderedSuits []string
-
-	for i, suitName := range suits {
+	renderedSuits := make([]string, 0, len(suitLabels))
+	for i, suitName := range suitLabels {
 		style := lg.NewStyle().Padding(0, 1).Border(lg.RoundedBorder())
 		if i == m.suitCursor {
-			style = style.BorderForeground(lg.Color("205")).Foreground(lg.Color("205")).Bold(true)
+			style = style.BorderForeground(styles.Gold).Foreground(styles.Gold).Bold(true)
 		} else {
 			style = style.BorderForeground(lg.Color("#555555")).Foreground(lg.Color("#AAAAAA"))
 		}
-		// ensure uniform width for grid
-		renderedSuits = append(renderedSuits, style.Width(12).Align(lg.Center).Render(suitName))
+		renderedSuits = append(renderedSuits, style.Width(suitCellWidth).Align(lg.Center).Render(suitName))
 	}
 
 	row1 := lg.JoinHorizontal(lg.Center, renderedSuits[0], renderedSuits[1])
@@ -188,11 +203,11 @@ func (m *Model) renderSuitPicker() string {
 
 	return lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("205")).
+		BorderForeground(styles.Gold).
 		Padding(1, 2).
 		Render(
 			lg.JoinVertical(lg.Center,
-				lg.NewStyle().Bold(true).Foreground(lg.Color("205")).Render("Pick a suit:"),
+				lg.NewStyle().Bold(true).Foreground(styles.Gold).Render("Pick a suit:"),
 				"",
 				pickerBox,
 			),

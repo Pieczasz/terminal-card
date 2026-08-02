@@ -3,7 +3,6 @@ package config
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -51,7 +50,6 @@ func (e *intEnvs) get(key string, fallback int) int {
 func resolveEnv() string {
 	env := getEnv("ENV", "development")
 	if env != "production" {
-		// Attempt to load .env file if it exists, and we are not explicitly in production
 		_ = godotenv.Load()
 	}
 	switch env {
@@ -153,20 +151,6 @@ func (c *Config) DSN() string {
 		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort, c.DBSSLMode)
 }
 
-// MigrateDSN returns a postgres URL suitable for golang-migrate.
-func (c *Config) MigrateDSN() string {
-	u := &url.URL{
-		Scheme: "postgres",
-		User:   url.UserPassword(c.DBUser, c.DBPassword),
-		Host:   fmt.Sprintf("%s:%d", c.DBHost, c.DBPort),
-		Path:   "/" + c.DBName,
-	}
-	q := u.Query()
-	q.Set("sslmode", c.DBSSLMode)
-	u.RawQuery = q.Encode()
-	return u.String()
-}
-
 func detectVersion() string {
 	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
@@ -174,8 +158,12 @@ func detectVersion() string {
 	return "0.1.0"
 }
 
+// getEnv returns the environment value for key, falling back when it is unset or
+// empty. An empty value must not win: a blank SSH_KEY_PATH or DB_HOST in a .env or
+// compose file would otherwise silently defeat the default. This matches
+// getEnvAsInt, which already treats "" as absent.
 func getEnv(key string, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists {
+	if value, exists := os.LookupEnv(key); exists && value != "" {
 		return value
 	}
 	return fallback

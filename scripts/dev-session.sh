@@ -17,9 +17,9 @@ SESSION="${TC_SESSION:-terminal-card}"
 LAYOUT="${TC_LAYOUT:-windows}"
 
 PLAYERS=(
-	"pieczasz:$HOME/.ssh/id_localhost_1"
-	"secouser:$HOME/.ssh/id_ed25519"
-	"asdf:$HOME/.ssh/id_ed25519_second_user"
+	"one:$HOME/.ssh/id_localhost_1"
+	"two:$HOME/.ssh/id_ed25519"
+	"three:$HOME/.ssh/id_ed25519_second_user"
 )
 
 command -v tmux >/dev/null || {
@@ -80,8 +80,9 @@ if [ "$LAYOUT" = panes ]; then
 	tmux select-layout -t "$SESSION" tiled
 fi
 
-if [ -n "${TMUX:-}" ]; then
-	tmux switch-client -t "$SESSION"
-else
-	tmux attach -t "$SESSION"
+# A stale $TMUX from a dead server makes switch-client fail with "no current
+# client"; the shell is outside tmux in that case, so attaching is correct.
+if [ -n "${TMUX:-}" ] && tmux switch-client -t "$SESSION" 2>/dev/null; then
+	exit 0
 fi
+tmux attach -t "$SESSION"

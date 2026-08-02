@@ -22,15 +22,17 @@ linters:
     - rowserrcheck
     - sqlclosecheck
     - wrapcheck
-    # Size and shape gates. Thresholds sit just above the worst function that
-    # survived review, so they block regressions without failing on today's code.
-    # Tighten them when the outliers below get split, not before.
     - cyclop
     - funlen
     - gocognit
     - nestif
     - lll
     - prealloc
+    - testifylint
+    - thelper
+    - paralleltest
+    - tparallel
+    - usetesting
 
   exclusions:
     generated: lax
@@ -64,17 +66,13 @@ linters:
       # lobby view handleKey is 21: a flat key dispatch, branchy but not complex.
       max-complexity: 21
     funlen:
-      # game.Engine.RemovePlayer is 71 lines; cmd/server run is 53 statements.
       lines: 75
       statements: 55
     gocognit:
       min-complexity: 30
     nestif:
-      # poker buildSidePots orphan-chip handling is 8.
       min-complexity: 9
     lll:
-      # A handful of repository method signatures sit at 121-134; wrapping those
-      # reads worse than leaving them.
       line-length: 140
 
 issues:

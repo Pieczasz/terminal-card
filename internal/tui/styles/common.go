@@ -7,22 +7,26 @@ import (
 	"github.com/common-nighthawk/go-figure"
 )
 
+// Box dimensions stop growing past these so content stays readable on an ultra-wide
+// or very tall terminal instead of stretching across the whole screen.
+const (
+	maxBoxWidth  = 120
+	maxBoxHeight = 40
+)
+
+// BoxWidth is the outer width of the framed layout. It must never shrink as the
+// terminal grows, and must never go negative: Router.Global.Width is 0 until the
+// first WindowSizeMsg, so every session's opening frame renders at zero.
 func BoxWidth(screenWidth int) int {
-	if screenWidth < 100 {
-		return screenWidth - 4
-	}
-	return screenWidth * 5 / 6
+	return max(min(screenWidth-4, maxBoxWidth), 0)
 }
 
 func BoxHeight(screenHeight int) int {
-	if screenHeight < 30 {
-		return screenHeight - 2
-	}
-	return screenHeight * 5 / 7
+	return max(min(screenHeight-2, maxBoxHeight), 0)
 }
 
 func InnerWidth(screenWidth int) int {
-	return BoxWidth(screenWidth) - 6
+	return max(BoxWidth(screenWidth)-6, 0)
 }
 
 func AvailableContentHeight(screenHeight int, header, footer string) int {
@@ -32,11 +36,7 @@ func AvailableContentHeight(screenHeight int, header, footer string) int {
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
-	return innerHeight - lg.Height(header) - lg.Height(footer)
-}
-
-func AvailableContentWidth(screenWidth int) int {
-	return BoxWidth(screenWidth) - 6
+	return max(innerHeight-lg.Height(header)-lg.Height(footer), 0)
 }
 
 func RenderFigureASCII(text string, maxWidth int) string {
@@ -47,22 +47,21 @@ func RenderFigureASCII(text string, maxWidth int) string {
 			return fig
 		}
 	}
-	// Fallback to pure string if even mini is too large
-	return text
+	return text // no font fits; plain text always does
 }
 
 func RenderMainLayout(width, height int, header, content, footer string) string {
 	boxWidth := BoxWidth(width)
 	boxHeight := BoxHeight(height)
 
-	innerWidth := boxWidth - 6
-	innerHeight := boxHeight - 4
+	innerWidth := InnerWidth(width)
+	innerHeight := max(boxHeight-4, 0)
 
-	// Strip trailing newlines from go-figure which throw off calculations (for centering)
+	// go-figure leaves trailing newlines that inflate the measured height below.
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
-	// Pre-wrap header and footer so their heights are accurately calculated
+	// Wrap before measuring, or lg.Height reports the unwrapped height.
 	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(header)
 	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(footer)
 
@@ -71,8 +70,8 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 
 	hContent := max(innerHeight-hHeader-hFooter, 0)
 
-	// Optical centering: by adding two invisible lines to the bottom of the content block,
-	// lipgloss's math pushes the visible text exactly 1 line UP, which feels more natural to the eye.
+	// Optical centering: two trailing blank lines push the visible text one line up,
+	// which reads as centered where true centering reads as slightly low.
 	content = strings.TrimRight(content, "\r\n") + "\n\n"
 
 	headerArea := lg.Place(innerWidth, hHeader, lg.Center, lg.Top, header)
@@ -88,11 +87,14 @@ func RenderActionFooter(actions []string) string {
 	for _, action := range actions {
 		renderedActions = append(renderedActions, ActionsText.Render(action))
 	}
-	// Use a compact pipe separator
 	return strings.Join(renderedActions, " | ")
 }
 
 var GlobalActions = []string{"n - New Game", "f - Join Game", "p - Profile", "t - Leaderboard", "ctrl+c - Quit"}
+
+// Gold highlights the thing the player is meant to look at: the lobby leader,
+// the selected suit, a poker chip stack.
+var Gold = lg.Color("#FFD700")
 
 var (
 	Box = lg.NewStyle().
@@ -125,7 +127,7 @@ var (
 				Foreground(lg.Color("205"))
 
 	HostTag = lg.NewStyle().
-		Foreground(lg.Color("#FFD700")).
+		Foreground(Gold).
 		Bold(true)
 
 	GuestTag = lg.NewStyle().

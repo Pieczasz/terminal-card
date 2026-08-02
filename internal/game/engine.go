@@ -96,14 +96,27 @@ func (e *Engine) Standings() []*player.Player {
 	return e.standingsLocked()
 }
 
-// standingsLocked returns rules standings followed by LeftPlayers (the most
-// recent leave-last place). Caller must hold e.mu and e.state.mu.
+// standingsLocked returns rules standings followed by any LeftPlayers the rules
+// did not place themselves (the most recent leave taking the higher spot). Rules
+// that can rank a departed player on what they actually did - poker ranks them on
+// the chips they walked out with - place them, and are not second-guessed here.
+// Caller must hold e.mu and e.state.mu.
 func (e *Engine) standingsLocked() []*player.Player {
 	standings := e.state.Rules.Standings(e.state)
+
+	placed := make(map[string]bool, len(standings))
+	for _, p := range standings {
+		if p != nil {
+			placed[p.ID] = true
+		}
+	}
+
 	out := make([]*player.Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
 	for _, p := range slices.Backward(e.state.LeftPlayers) {
-		out = append(out, p)
+		if p != nil && !placed[p.ID] {
+			out = append(out, p)
+		}
 	}
 	return out
 }
@@ -233,7 +246,10 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	e.state.Rules.ApplyAction(e.state, action)
 
 	if err := e.state.Rules.AfterAction(e.state, action); err != nil {
-		e.state.Phase = Finished
+		// The game is over either way, so it ends the same way a win does: without
+		// the broadcast every other client sits on a frame that will never update,
+		// and the lobby never records the match.
+		e.finishGameLocked(currentPlayer)
 		return fmt.Errorf("post-action rules failed: %w", err)
 	}
 
@@ -244,17 +260,7 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	})
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.state.Phase = Finished
-		standings := e.state.Rules.Standings(e.state)
-		if len(standings) > 0 {
-			e.state.Winner = standings[0]
-		} else {
-			e.state.Winner = currentPlayer
-		}
-		e.broadcaster.Broadcast(Event{
-			Type:     EventGameEnded,
-			PlayerID: e.state.Winner.ID,
-		})
+		e.finishGameLocked(currentPlayer)
 		return nil
 	}
 
@@ -265,6 +271,32 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	})
 
 	return nil
+}
+
+// finishGameLocked settles the winner from the rules standings and announces the
+// end of the game. fallback names the winner when the rules rank nobody. Caller
+// must hold e.mu and e.state.mu.
+func (e *Engine) finishGameLocked(fallback *player.Player) {
+	e.state.Phase = Finished
+
+	standings := e.state.Rules.Standings(e.state)
+	switch {
+	case len(standings) > 0:
+		e.state.Winner = standings[0]
+	case fallback != nil:
+		e.state.Winner = fallback
+	case len(e.state.Players) > 0:
+		e.state.Winner = e.state.Players[0]
+	}
+
+	winnerID := ""
+	if e.state.Winner != nil {
+		winnerID = e.state.Winner.ID
+	}
+	e.broadcaster.Broadcast(Event{
+		Type:     EventGameEnded,
+		PlayerID: winnerID,
+	})
 }
 
 func (e *Engine) IsFinished() bool {
@@ -314,21 +346,7 @@ func (e *Engine) RemovePlayer(playerID string) {
 	}
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.state.Phase = Finished
-		standings := e.state.Rules.Standings(e.state)
-		if len(standings) > 0 {
-			e.state.Winner = standings[0]
-		} else if len(e.state.Players) > 0 {
-			e.state.Winner = e.state.Players[0]
-		}
-		winnerID := ""
-		if e.state.Winner != nil {
-			winnerID = e.state.Winner.ID
-		}
-		e.broadcaster.Broadcast(Event{
-			Type:     EventGameEnded,
-			PlayerID: winnerID,
-		})
+		e.finishGameLocked(nil)
 		return
 	}
 

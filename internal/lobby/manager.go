@@ -37,16 +37,15 @@ type Manager struct {
 	matchRepo           db.MatchRepository
 	appCtx              context.Context
 	joinLimiter         *ratelimit.SlidingWindowLimiter
-	// finalizing counts ranked match writes currently in flight, so shutdown can
-	// wait for them instead of closing the database underneath one.
-	finalizing sync.WaitGroup
+	// finalizerMu makes accepting a finished-match write and stopping new writes
+	// atomic with respect to shutdown. WaitGroup alone permits Add after Wait
+	// observes zero.
+	finalizerMu       sync.Mutex
+	finalizersStopped bool
+	finalizing        sync.WaitGroup
 }
 
-func NewManager(matchRepo db.MatchRepository) *Manager {
-	return NewManagerWithContext(context.Background(), matchRepo)
-}
-
-func NewManagerWithContext(ctx context.Context, matchRepo db.MatchRepository) *Manager {
+func NewManager(ctx context.Context, matchRepo db.MatchRepository) *Manager {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -257,21 +256,37 @@ func (m *Manager) shutdownCtx() context.Context {
 	return m.appCtx
 }
 
-// WaitForFinalizers blocks until every ranked match write in flight has finished,
-// or timeout elapses. Reports whether they all drained.
-//
-// This closes the window where shutdown could close the database while a finalize
-// was mid-write; it cannot close it entirely, since a game ending in the instant
-// between the wait starting and the write registering is still missed.
+// registerFinalizer accepts a finished-match write unless shutdown has started.
+func (m *Manager) registerFinalizer() bool {
+	m.finalizerMu.Lock()
+	defer m.finalizerMu.Unlock()
+	if m.finalizersStopped {
+		return false
+	}
+	m.finalizing.Add(1)
+	return true
+}
+
+// WaitForFinalizers stops accepting finished-match writes, then blocks until all
+// previously registered writes finish or timeout elapses. A non-positive timeout
+// waits indefinitely.
 func (m *Manager) WaitForFinalizers(timeout time.Duration) bool {
 	if m == nil {
 		return true
 	}
+	m.finalizerMu.Lock()
+	m.finalizersStopped = true
+	m.finalizerMu.Unlock()
+
 	drained := make(chan struct{})
 	go func() {
 		m.finalizing.Wait()
 		close(drained)
 	}()
+	if timeout <= 0 {
+		<-drained
+		return true
+	}
 	select {
 	case <-drained:
 		return true

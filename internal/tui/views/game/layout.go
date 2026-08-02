@@ -16,6 +16,12 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
+// Card face colours, shared by every card renderer in this package.
+var (
+	cardColor = lg.Color("#EEEEEE")
+	textColor = lg.Color("#AAAAAA")
+)
+
 func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disableSelection bool) string {
 	renderedCards := make([]string, 0, len(hand))
 	for i, c := range hand {
@@ -63,9 +69,6 @@ func renderTopCards(count int) string {
 		return ""
 	}
 
-	cardColor := lg.Color("#EEEEEE")
-	textColor := lg.Color("#AAAAAA")
-
 	botLine := lg.NewStyle().Foreground(cardColor).Render("╰" + strings.Repeat("┴", count-1) + "───────╯")
 
 	edge := lg.NewStyle().Foreground(cardColor).Render("│" + strings.Repeat("│", count-1))
@@ -95,9 +98,6 @@ func renderLeftCards(count int) string {
 		return ""
 	}
 
-	cardColor := lg.Color("#EEEEEE")
-	textColor := lg.Color("#AAAAAA")
-
 	topEdge := lg.NewStyle().Foreground(cardColor).Render("─────╮")
 	midEdge := lg.NewStyle().Foreground(cardColor).Render("─────┤")
 	botEdge := lg.NewStyle().Foreground(cardColor).Render("─────╯")
@@ -110,9 +110,6 @@ func renderRightCards(count int) string {
 	if count <= 0 {
 		return ""
 	}
-
-	cardColor := lg.Color("#EEEEEE")
-	textColor := lg.Color("#AAAAAA")
 
 	topEdge := lg.NewStyle().Foreground(cardColor).Render("╭─────")
 	midEdge := lg.NewStyle().Foreground(cardColor).Render("├─────")
@@ -151,7 +148,7 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
 	}
 	nameView := nameStyle.Render(o.Username)
-	cardsCountView := lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render(fmt.Sprintf("[%d cards]", o.HandSize))
+	cardsCountView := lg.NewStyle().Foreground(textColor).Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	infoView := lg.JoinVertical(lg.Center, nameView, cardsCountView)
 
@@ -167,10 +164,8 @@ func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orien
 
 	switch orientation {
 	case OrientationTop:
-		// Below the deck on top
 		return lg.JoinVertical(lg.Center, cardsView, infoView)
 	case OrientationLeft:
-		// Above the deck on left and right side
 		return lg.JoinVertical(lg.Left, infoView, cardsView)
 	default:
 		return lg.JoinVertical(lg.Right, infoView, cardsView)
@@ -183,7 +178,7 @@ func RenderOpponentMinimal(o game.PlayerSnapshot, isCurrentTurn bool) string {
 		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
 	}
 	nameView := nameStyle.Render(o.Username)
-	cardsCountView := lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render(fmt.Sprintf("[%d cards]", o.HandSize))
+	cardsCountView := lg.NewStyle().Foreground(textColor).Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }

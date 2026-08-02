@@ -1,6 +1,7 @@
 package poker
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -58,7 +59,7 @@ func TestRules_Metadata(t *testing.T) {
 	rules := &Rules{}
 	assert.Equal(t, 2, rules.MinPlayers())
 	assert.Equal(t, 9, rules.MaxPlayers())
-	assert.Equal(t, 2, rules.InitialDealCount())
+	assert.Equal(t, 0, rules.InitialDealCount(), "poker deals its own hole cards, once per hand")
 }
 
 func TestRules_ValidateAction(t *testing.T) {
@@ -266,4 +267,82 @@ func TestRules_Standings(t *testing.T) {
 		assert.Equal(t, "p2", standings[1].ID)
 		assert.Equal(t, "p1", standings[2].ID)
 	})
+}
+
+// A keypress must turn into an updated table for every player well inside one
+// terminal frame (~16ms). This plays a whole match - deal, blinds, every betting
+// round, the street machine, the showdown and the re-deal between hands - so a
+// full match comfortably under a millisecond means no single action can be felt.
+func BenchmarkPlayFullMatch(b *testing.B) {
+	for _, seats := range []int{2, 6, 9} {
+		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
+			players := make([]*player.Player, 0, seats)
+			for i := range seats {
+				players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1)})
+			}
+
+			b.ReportAllocs()
+			for b.Loop() {
+				engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+				if err := engine.Start(); err != nil {
+					b.Fatal(err)
+				}
+				for range 200 * HandsPerMatch {
+					if engine.IsFinished() {
+						break
+					}
+					id := engine.CurrentPlayerID()
+					if engine.SubmitAction(id, ActionCheck{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionCall{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionNextHand{}) == nil {
+						continue
+					}
+					if engine.SubmitAction(id, ActionFold{}) != nil {
+						break
+					}
+				}
+				engine.Close()
+			}
+		})
+	}
+}
+
+// adjustSeatIndex decides where the button and blinds land after someone leaves. It
+// is a pure function and had no direct test, yet getting it wrong either steals a
+// turn or points a marker at a seat that no longer exists.
+func TestAdjustSeatIndex(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		seat    int
+		removed int
+		nAfter  int
+		want    int
+	}{
+		{name: "seat before the leaver is unaffected", seat: 0, removed: 2, nAfter: 3, want: 0},
+		{name: "seat after the leaver shifts down", seat: 2, removed: 1, nAfter: 3, want: 1},
+		{name: "the leaver's own marker steps back", seat: 2, removed: 2, nAfter: 3, want: 1},
+		{name: "seat 0 leaving wraps its marker to the last seat", seat: 0, removed: 0, nAfter: 3, want: 2},
+		{name: "a marker past the end is clamped inside", seat: 5, removed: 4, nAfter: 2, want: 1},
+		{name: "an empty table collapses to zero", seat: 3, removed: 1, nAfter: 0, want: 0},
+		{name: "a negative table size collapses to zero", seat: 1, removed: 0, nAfter: -1, want: 0},
+		{name: "heads-up: the leaver's marker lands on the survivor", seat: 1, removed: 1, nAfter: 1, want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := adjustSeatIndex(tt.seat, tt.removed, tt.nAfter)
+			assert.Equal(t, tt.want, got)
+			if tt.nAfter > 0 {
+				assert.GreaterOrEqual(t, got, 0, "a seat index is never negative")
+				assert.Less(t, got, tt.nAfter, "a seat index always addresses a real seat")
+			}
+		})
+	}
 }
