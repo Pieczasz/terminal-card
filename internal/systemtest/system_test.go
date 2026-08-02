@@ -33,16 +33,41 @@ const (
 
 // recordingMatchRepo captures what the ranked-finalize path would persist, so the
 // no-database tier can still assert the full game-over flow.
+//
+// The finalize happens on the lobby's watcher goroutine, so the recorder signals
+// each call on a channel. Tests wait for that signal rather than sleeping or
+// polling, which keeps them deterministic regardless of scheduling.
 type recordingMatchRepo struct {
 	mu        sync.Mutex
 	finalized [][]uint
+	signal    chan struct{}
+}
+
+func newRecordingMatchRepo() *recordingMatchRepo {
+	return &recordingMatchRepo{signal: make(chan struct{}, 8)}
 }
 
 func (r *recordingMatchRepo) FinalizeRankedMatch(_ context.Context, _ string, orderedUserIDs []uint) error {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.finalized = append(r.finalized, append([]uint(nil), orderedUserIDs...))
+	r.mu.Unlock()
+
+	select {
+	case r.signal <- struct{}{}:
+	default: // no test is waiting; never block the game
+	}
 	return nil
+}
+
+// awaitFinalize blocks until the ranked write has run, failing the test rather than
+// hanging if it never does.
+func (r *recordingMatchRepo) awaitFinalize(t *testing.T) {
+	t.Helper()
+	select {
+	case <-r.signal:
+	case <-time.After(10 * time.Second):
+		t.Fatal("ranked finalize never ran")
+	}
 }
 
 func (r *recordingMatchRepo) calls() [][]uint {
@@ -148,7 +173,7 @@ func actOnce(engine *game.Engine) bool {
 func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	t.Parallel()
 
-	repo := &recordingMatchRepo{}
+	repo := newRecordingMatchRepo()
 	manager := lobby.NewManager(context.Background(), repo)
 	registry := realRegistry(t)
 
@@ -222,14 +247,14 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 	assert.NotEmpty(t, standings, "a finished hand ranks its players")
 	assert.Contains(t, standings, leaver.ID, "a player who left still places")
 
-	// The finalize runs on the lobby's watcher goroutine once it sees the
-	// game-ended event, so poll rather than using WaitForFinalizers - that only
-	// waits for writes already in flight, not for one that has yet to start.
-	require.Eventually(t, func() bool { return len(repo.calls()) == 1 },
-		5*time.Second, 20*time.Millisecond, "a ranked hand must finalize exactly once")
+	// Wait for the recorder's signal instead of polling: the write is done when the
+	// repository says so, with no timing assumption.
+	repo.awaitFinalize(t)
 	require.True(t, manager.WaitForFinalizers(5*time.Second), "ranked writes should drain")
 
-	assert.Len(t, repo.calls()[0], len(all),
+	finalized := repo.calls()
+	require.Len(t, finalized, 1, "a ranked hand finalizes exactly once")
+	assert.Len(t, finalized[0], len(all),
 		"every player is ranked, including the one who left mid-hand")
 }
 
@@ -238,7 +263,7 @@ func TestSystem_RankedGameWithMidGameLeave(t *testing.T) {
 func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManager(context.Background(), &recordingMatchRepo{})
+	manager := lobby.NewManager(context.Background(), newRecordingMatchRepo())
 	registry := realRegistry(t)
 
 	leader := newPlayer(1, "alice")
@@ -263,7 +288,7 @@ func TestSystem_LobbyRespectsGameBounds(t *testing.T) {
 func TestSystem_LeaderLeavingPromotesGuest(t *testing.T) {
 	t.Parallel()
 
-	manager := lobby.NewManager(context.Background(), &recordingMatchRepo{})
+	manager := lobby.NewManager(context.Background(), newRecordingMatchRepo())
 	leader := newPlayer(1, "alice")
 	guest := newPlayer(2, "bob")
 

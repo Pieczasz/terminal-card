@@ -18,6 +18,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// signallingMatchRepo wraps the real repository and announces each completed ranked
+// write, so the test waits on the write itself instead of polling the database.
+// The embedded interface supplies every other method unchanged.
+type signallingMatchRepo struct {
+	db.MatchRepository
+	signal chan struct{}
+}
+
+func newSignallingMatchRepo(inner db.MatchRepository) *signallingMatchRepo {
+	return &signallingMatchRepo{MatchRepository: inner, signal: make(chan struct{}, 8)}
+}
+
+func (s *signallingMatchRepo) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
+	err := s.MatchRepository.FinalizeRankedMatch(ctx, gameName, orderedUserIDs)
+	select {
+	case s.signal <- struct{}{}:
+	default:
+	}
+	return err
+}
+
+func (s *signallingMatchRepo) awaitFinalize(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.signal:
+	case <-time.After(30 * time.Second):
+		t.Fatal("ranked finalize never ran")
+	}
+}
+
 // TestSystem_RankedResultReachesLeaderboardAndProfile closes the loop the unit
 // tiers cannot: a real ranked hand is played through the lobby and engine against a
 // live Postgres, and the result has to show up in the two screens players read -
@@ -28,7 +58,7 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(gormDB)
-	matchRepo := repository.NewMatchRepository(gormDB)
+	matchRepo := newSignallingMatchRepo(repository.NewMatchRepository(gormDB))
 	manager := lobby.NewManager(ctx, matchRepo)
 	registry := realRegistry(t)
 
@@ -70,13 +100,8 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	}
 	require.True(t, handComplete(t, engine) || engine.IsFinished(), "the hand must finish")
 
-	// The finalize runs on the lobby's watcher goroutine once it observes the
-	// game-ended event, so poll for the row. WaitForFinalizers only covers writes
-	// already in flight and returns immediately for one that has yet to start.
-	require.Eventually(t, func() bool {
-		history, err := userRepo.UserMatchHistory(ctx, leader.DatabaseUser.ID, 10)
-		return err == nil && len(history) == 1
-	}, 30*time.Second, 100*time.Millisecond, "the ranked match must be recorded")
+	// Wait for the write itself rather than polling the database.
+	matchRepo.awaitFinalize(t)
 	require.True(t, manager.WaitForFinalizers(30*time.Second), "ranked write must drain")
 
 	best, err := userRepo.BestPlayers(ctx, 10)
