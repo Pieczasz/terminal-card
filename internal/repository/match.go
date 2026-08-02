@@ -65,13 +65,15 @@ func (q *gormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, o
 	return deltas, nil
 }
 
-func (q *gormMatchRepository) RecordMatch(ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
+func (q *gormMatchRepository) RecordMatch(
+	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
+) error {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return q.recordMatchTx(tx, gameID, orderedUserIDs, eloDeltas)
+		return q.recordMatchTx(tx, gameID, orderedUserIDs, eloDeltas, ranked)
 	}); err != nil {
 		return fmt.Errorf("failed to record match transaction: %w", err)
 	}
@@ -99,7 +101,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 		if err != nil {
 			return err
 		}
-		return q.recordMatchTx(tx, game.ID, orderedUserIDs, deltas)
+		return q.recordMatchTx(tx, game.ID, orderedUserIDs, deltas, true)
 	}); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("finalize ranked match: %w", err)
@@ -152,8 +154,10 @@ func (q *gormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, ordered
 	return deltas, nil
 }
 
-func (q *gormMatchRepository) recordMatchTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
-	match, err := q.recordNewMatch(tx, gameID)
+func (q *gormMatchRepository) recordMatchTx(
+	tx *gorm.DB, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
+) error {
+	match, err := q.recordNewMatch(tx, gameID, ranked)
 	if err != nil {
 		return err
 	}
@@ -202,8 +206,8 @@ func (q *gormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap
 	return elo.Calculate(players)
 }
 
-func (q *gormMatchRepository) recordNewMatch(tx *gorm.DB, gameID uint) (*db.Match, error) {
-	match := db.Match{GameID: gameID}
+func (q *gormMatchRepository) recordNewMatch(tx *gorm.DB, gameID uint, ranked bool) (*db.Match, error) {
+	match := db.Match{GameID: gameID, Ranked: ranked}
 	if err := tx.Create(&match).Error; err != nil {
 		return nil, fmt.Errorf("create match: %w", err)
 	}

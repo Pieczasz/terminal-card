@@ -62,8 +62,10 @@ func (m *MockMatchRepo) UpdateRankings(ctx context.Context, gameID uint, ordered
 	return args.Get(0).(map[uint]int), args.Error(1)
 }
 
-func (m *MockMatchRepo) RecordMatch(ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int) error {
-	return m.Called(ctx, gameID, orderedUserIDs, eloDeltas).Error(0)
+func (m *MockMatchRepo) RecordMatch(
+	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
+) error {
+	return m.Called(ctx, gameID, orderedUserIDs, eloDeltas, ranked).Error(0)
 }
 
 func (m *MockMatchRepo) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
@@ -234,6 +236,54 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 
 	l.Broadcaster().Unsubscribe(ch)
 	mockRepo.AssertExpectations(t)
+}
+
+// A casual game is still a game the players want to find in their history, so it
+// is recorded; only the Elo write is reserved for ranked lobbies.
+func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
+	t.Parallel()
+	mockRepo := new(MockMatchRepo)
+	m := NewManager(context.Background(), mockRepo)
+	leader := mockPlayer("leader", 1)
+	guest := mockPlayer("guest", 2)
+
+	cardGame := &db.Game{Name: "MockGame"}
+	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(false))
+	require.NoError(t, err)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	registry := game.NewRegistry()
+	mockRules := new(MockRules)
+	mockRules.On("MinPlayers").Return(2)
+	mockRules.On("MaxPlayers").Return(4)
+	mockRules.On("InitialDeck").Return(deck.StandardDeck())
+	mockRules.On("InitialDealCount").Return(5)
+	mockRules.On("OnGameStart", mock.Anything).Return(nil)
+	mockRules.On("CheckWinCondition", mock.Anything).Return(true)
+	mockRules.On("Standings", mock.Anything).Return([]*player.Player{leader, guest})
+	registerGame(registry, "MockGame", mockRules)
+
+	done := make(chan struct{})
+	mockRepo.On("GetOrCreateGame", mock.Anything, "MockGame").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
+	mockRepo.On("RecordMatch", mock.Anything, uint(7), []uint{1, 2}, map[uint]int(nil), false).
+		Run(func(mock.Arguments) { close(done) }).
+		Return(nil)
+
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+
+	engine := l.activeEngine
+	require.NotNil(t, engine)
+	engine.Broadcaster().Broadcast(game.Event{Type: game.EventGameEnded})
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for the casual match to be recorded")
+	}
+
+	mockRepo.AssertExpectations(t)
+	mockRepo.AssertNotCalled(t, "FinalizeRankedMatch", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestLobby_ToggleReady_EdgeCases(t *testing.T) {

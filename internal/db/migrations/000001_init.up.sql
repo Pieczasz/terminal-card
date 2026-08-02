@@ -48,7 +48,10 @@ CREATE TABLE matches (
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ,
     deleted_at TIMESTAMPTZ,
-    game_id BIGINT REFERENCES games(id) ON DELETE CASCADE
+    game_id BIGINT REFERENCES games(id) ON DELETE CASCADE,
+    -- Casual matches are recorded for history but never move Elo, and a ranked
+    -- match can legitimately swing zero, so the two cannot be told apart by delta.
+    ranked BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX idx_matches_deleted_at ON matches(deleted_at);
 

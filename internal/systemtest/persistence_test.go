@@ -89,16 +89,8 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	}
 	engine := awaitGameStart(t, events)
 
-	// Everyone shoves so the hand reaches showdown without needing a full strategy.
-	for range maxActions {
-		if engine.IsFinished() || handComplete(t, engine) {
-			break
-		}
-		if !actOnce(engine) {
-			break
-		}
-	}
-	require.True(t, handComplete(t, engine) || engine.IsFinished(), "the hand must finish")
+	// Check/call every hand of the match through to the end.
+	playOutMatch(t, engine)
 
 	// Wait for the write itself rather than polling the database.
 	matchRepo.awaitFinalize(t)
@@ -126,17 +118,20 @@ func TestSystem_RankedResultReachesLeaderboardAndProfile(t *testing.T) {
 		require.Len(t, history, 1, "%s should have exactly one recorded match", profile.Username)
 		assert.Positive(t, history[0].Placement, "placement is 1-based")
 		assert.Equal(t, pokerGame, history[0].Match.Game.Name)
+		assert.True(t, history[0].Match.Ranked, "history must remember this was a rated game")
 	}
 }
 
-// A casual lobby must write nothing: no match history, no Elo movement.
-func TestSystem_CasualGameWritesNothing(t *testing.T) {
+// A casual lobby records the result in match history but must not touch Elo:
+// players still want to see what they played, ratings stay for ranked lobbies.
+func TestSystem_CasualGameRecordsHistoryWithoutElo(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t,
 		&db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{})
 
 	ctx := context.Background()
 	userRepo := repository.NewUserRepository(gormDB)
-	manager := lobby.NewManager(ctx, repository.NewMatchRepository(gormDB))
+	matchRepo := repository.NewMatchRepository(gormDB)
+	manager := lobby.NewManager(ctx, matchRepo)
 	registry := realRegistry(t)
 
 	players := make([]*player.Player, 0, 2)
@@ -161,23 +156,26 @@ func TestSystem_CasualGameWritesNothing(t *testing.T) {
 	}
 	engine := awaitGameStart(t, events)
 
-	for range maxActions {
-		if engine.IsFinished() || handComplete(t, engine) {
-			break
-		}
-		if !actOnce(engine) {
-			break
-		}
-	}
-	// WaitForFinalizers cannot be used here: a casual game never reaches
-	// finalizing.Add, so the counter is zero and it returns immediately - the
-	// assertion would run before the watcher had even seen the game end. Assert the
-	// absence holds over time instead.
+	playOutMatch(t, engine)
+
+	// The write lands on the lobby's watcher goroutine, so wait for the history row
+	// to appear rather than assuming it is already there.
 	for _, p := range players {
 		userID := p.DatabaseUser.ID
-		require.Never(t, func() bool {
+		require.Eventually(t, func() bool {
 			history, err := userRepo.UserMatchHistory(ctx, userID, 10)
-			return err == nil && len(history) > 0
-		}, 2*time.Second, 100*time.Millisecond, "a casual game must not be recorded")
+			return err == nil && len(history) == 1
+		}, 10*time.Second, 100*time.Millisecond, "a casual game belongs in match history")
+
+		history, err := userRepo.UserMatchHistory(ctx, userID, 10)
+		require.NoError(t, err)
+		assert.Positive(t, history[0].Placement, "placement is 1-based")
+		assert.Equal(t, pokerGame, history[0].Match.Game.Name)
+		assert.False(t, history[0].Match.Ranked, "the profile shows this row as a casual game")
+		assert.Zero(t, history[0].EloDelta, "a casual result must not move Elo")
+
+		profile, err := userRepo.UserProfile(ctx, userID)
+		require.NoError(t, err)
+		assert.Empty(t, profile.Rankings, "a casual game must not create a ranking row")
 	}
 }

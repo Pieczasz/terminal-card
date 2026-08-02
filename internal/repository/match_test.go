@@ -41,13 +41,14 @@ func TestMatchRepository_RecordMatch(t *testing.T) {
 	deltas, err := repo.UpdateRankings(ctx, game.ID, orderedUserIDs)
 	require.NoError(t, err)
 
-	err = repo.RecordMatch(ctx, game.ID, orderedUserIDs, deltas)
+	err = repo.RecordMatch(ctx, game.ID, orderedUserIDs, deltas, true)
 	require.NoError(t, err)
 
 	var match db.Match
 	err = gormDB.Preload("Participants").First(&match).Error
 	require.NoError(t, err)
 	assert.Equal(t, game.ID, match.GameID)
+	assert.True(t, match.Ranked, "a match recorded with Elo deltas is a ranked one")
 	assert.Len(t, match.Participants, 2)
 
 	var updatedR1 db.Ranking
@@ -111,7 +112,7 @@ func TestMatchRepository_RecordMatch_TransactionError(t *testing.T) {
 	_, err := repo.UpdateRankings(ctx, 1, []uint{})
 	assert.NoError(t, err) // Should return nil for empty user IDs
 
-	err = repo.RecordMatch(ctx, 1, []uint{}, map[uint]int{})
+	err = repo.RecordMatch(ctx, 1, []uint{}, map[uint]int{}, true)
 	assert.NoError(t, err) // Should return nil for empty user IDs
 
 	// UpdateRankings with non-existent users should not fail inherently in fetching, but calculateNewElos will handle them as DefaultRating.
@@ -119,6 +120,6 @@ func TestMatchRepository_RecordMatch_TransactionError(t *testing.T) {
 	_, err = repo.UpdateRankings(ctx, 1, orderedUserIDs)
 	assert.Error(t, err) // Foreign key constraint violation on Ranking
 
-	err = repo.RecordMatch(ctx, 1, orderedUserIDs, map[uint]int{9999: 10, 9998: -10})
+	err = repo.RecordMatch(ctx, 1, orderedUserIDs, map[uint]int{9999: 10, 9998: -10}, true)
 	assert.Error(t, err) // Foreign key constraint violation on Match / MatchParticipant
 }
