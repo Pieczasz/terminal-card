@@ -94,7 +94,7 @@ func (m *Model) handOverHint() string {
 	case m.heroBusted():
 		next = "out of chips - watching until the match ends"
 	case m.canDeal():
-		next = fmt.Sprintf("enter: deal hand %d (deals itself after %s)", m.handNumber+1, autoDealAfter)
+		next = fmt.Sprintf("enter: deal hand %d", m.handNumber+1)
 	case m.baseState.CurrentPlayer != "":
 		next = "waiting for " + m.baseState.CurrentPlayer + " to deal hand " + strconv.Itoa(m.handNumber+1)
 	default:

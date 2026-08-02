@@ -20,20 +20,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case gameMsg:
 		m.lastErr = nil
 		m.syncState()
-		return m, tea.Batch(listenForEvents(m.events), m.autoDealTimer())
-	case autoDealMsg:
-		return m.autoDeal(msg)
+		return m, listenForEvents(m.events)
 	}
 	return m, nil
-}
-
-// autoDeal deals for a player who did not press enter in time. The hand tag stops
-// a tick left over from an already-dealt hand from dealing a second one.
-func (m *Model) autoDeal(msg autoDealMsg) (tea.Model, tea.Cmd) {
-	if msg.afterHand != m.handNumber || !m.canDeal() {
-		return m, nil
-	}
-	return m.submit(logic.ActionNextHand{})
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
