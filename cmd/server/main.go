@@ -92,13 +92,7 @@ func run() (err error) {
 
 	// Registered after the sqlDB.Close defer above, so LIFO stops new match writes
 	// and drains registered ones before the handle they write through is closed.
-	defer func() {
-		if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-			slog.Warn("match finalizers exceeded their deadline; waiting for exit",
-				"timeout", finalizeDrainTimeout)
-			lobbyManager.WaitForFinalizers(0)
-		}
-	}()
+	defer waitForFinalizers(lobbyManager)
 
 	gameRegistry := game.NewRegistry()
 	for _, e := range catalog.All {
@@ -118,6 +112,14 @@ func run() (err error) {
 	}
 
 	return serve(ctx, cfg, server)
+}
+
+func waitForFinalizers(lobbyManager *lobby.Manager) {
+	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
+		slog.Warn("match finalizers exceeded their deadline; waiting for exit",
+			"timeout", finalizeDrainTimeout)
+		lobbyManager.WaitForFinalizers(0)
+	}
 }
 
 // sshServer is the part of the wish server that serve drives. It exists as a test
