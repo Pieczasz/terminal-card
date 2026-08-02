@@ -19,8 +19,7 @@ var (
 	ErrUsernameTaken        = errors.New("username already taken, please choose another via ssh config")
 	ErrKeyAlreadyRegistered = errors.New("public key already registered")
 	ErrInvalidUsername      = errors.New("invalid username")
-	// ErrUserNotFound lets callers distinguish a missing record from a DB failure.
-	ErrUserNotFound = errors.New("user not found")
+	ErrUserNotFound         = errors.New("user not found")
 )
 
 // pgUniqueViolationCode is the Postgres SQLSTATE for a unique constraint violation.

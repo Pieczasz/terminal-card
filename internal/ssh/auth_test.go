@@ -118,8 +118,6 @@ func TestLoadOrRegisterUser_PassesThroughActionableSentinels(t *testing.T) {
 	}
 }
 
-// A sentinel arrives wrapped in practice (RegisterUserWithKey adds the validation
-// reason), so the cause has to survive the hop out of LoadOrRegisterUser.
 func TestLoadOrRegisterUser_PreservesWrappedCause(t *testing.T) {
 	t.Parallel()
 	repo := new(MockUserRepository)

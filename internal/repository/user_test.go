@@ -20,9 +20,6 @@ func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
 	repo := NewUserRepository(database)
 
-	// Each subtest seeds whatever it needs and uses its own identifiers. Previously
-	// "username already taken" relied on the subtest above it having run, so it
-	// failed when executed on its own.
 	t.Run("successful registration", func(t *testing.T) {
 		t.Parallel()
 		user, key, err := repo.RegisterUserWithKey(context.Background(), "reg_ok", "fp_reg_ok")

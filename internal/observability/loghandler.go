@@ -13,7 +13,7 @@ type fanoutHandler struct {
 	handlers []slog.Handler
 }
 
-// NewFanoutHandler returns a slog.Handler that writes to all of handlers.
+// NewFanoutHandler returns a slog.Handler that writes to all handlers.
 func NewFanoutHandler(handlers ...slog.Handler) slog.Handler {
 	return fanoutHandler{handlers: handlers}
 }
