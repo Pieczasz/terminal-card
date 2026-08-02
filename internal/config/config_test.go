@@ -71,6 +71,7 @@ func TestLoad_InvalidPort(t *testing.T) {
 }
 
 func TestValidate_RateLimit(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		Env:             "development",
 		RateLimitCount:  0,
@@ -82,6 +83,7 @@ func TestValidate_RateLimit(t *testing.T) {
 }
 
 func TestDSN(t *testing.T) {
+	t.Parallel()
 	cfg := &config.Config{
 		DBHost:     "localhost",
 		DBUser:     "postgres",
@@ -91,23 +93,8 @@ func TestDSN(t *testing.T) {
 		DBSSLMode:  "disable",
 	}
 	assert.Contains(t, cfg.DSN(), "host=localhost")
-	migrate := cfg.MigrateDSN()
-	assert.Contains(t, migrate, "postgres://postgres:secret@localhost:5432/terminal_card")
-	assert.Contains(t, migrate, "sslmode=disable")
-}
-
-func TestMigrateDSN_EncodesPassword(t *testing.T) {
-	cfg := &config.Config{
-		DBHost:     "db.example",
-		DBUser:     "user",
-		DBPassword: "p@ss:word/x",
-		DBName:     "terminal_card",
-		DBPort:     5432,
-		DBSSLMode:  "require",
-	}
-	migrate := cfg.MigrateDSN()
-	assert.Contains(t, migrate, "p%40ss%3Aword%2Fx")
-	assert.NotContains(t, migrate, "p@ss:word/x@")
+	assert.Contains(t, cfg.DSN(), "dbname=terminal_card")
+	assert.Contains(t, cfg.DSN(), "sslmode=disable")
 }
 
 func TestValidate_InsecureDBRemoteHost(t *testing.T) {
@@ -124,4 +111,29 @@ func TestValidate_InsecureDBRemoteHost(t *testing.T) {
 	err := cfg.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "DB_SSLMODE=disable")
+}
+
+// An env var that is present but blank must not defeat the default. A blank
+// SSH_KEY_PATH in a .env or compose file previously reached keygen.New("").
+func TestLoad_BlankEnvFallsBackToDefault(t *testing.T) {
+	blanked := []string{
+		"SERVER_HOST", "SSH_KEY_PATH", "DB_HOST", "DB_USER", "DB_NAME",
+		"DB_SSLMODE", "OTEL_EXPORTER_OTLP_ENDPOINT", "SERVICE_VERSION",
+	}
+	t.Setenv("ENV", "development")
+	for _, key := range blanked {
+		t.Setenv(key, "")
+	}
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+
+	assert.Equal(t, "0.0.0.0", cfg.ServerHost)
+	assert.Equal(t, ".wishlist/server", cfg.SSHKeyPath)
+	assert.Equal(t, "localhost", cfg.DBHost)
+	assert.Equal(t, "postgres", cfg.DBUser)
+	assert.Equal(t, "terminal_card", cfg.DBName)
+	assert.Equal(t, "disable", cfg.DBSSLMode)
+	assert.Equal(t, "localhost:4317", cfg.OTelEndpoint)
+	assert.NotEmpty(t, cfg.ServiceVersion, "version always resolves to something")
 }

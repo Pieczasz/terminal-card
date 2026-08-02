@@ -62,11 +62,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("database error while fetching leaderboard", "error", msg.err)
 		}
 	case tea.KeyPressMsg:
-		if route, ok := views.GlobalRoute(msg.String()); ok {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }
-		}
-		if key := msg.String(); key == "esc" || key == "q" {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+		if cmd, ok := views.NavigateOn(msg.String()); ok {
+			return m, cmd
 		}
 	}
 	return m, nil
@@ -88,7 +85,7 @@ func (m model) View() tea.View {
 		content = m.renderEmpty()
 	} else {
 		contentHeight := styles.AvailableContentHeight(m.global.Height, titleText, footer)
-		contentWidth := styles.AvailableContentWidth(m.global.Width)
+		contentWidth := styles.InnerWidth(m.global.Width)
 		content = m.renderRankings(contentWidth, contentHeight)
 	}
 

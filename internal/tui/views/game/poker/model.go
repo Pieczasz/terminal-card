@@ -49,6 +49,9 @@ type Model struct {
 	minRaise   uint
 	myChips    uint
 	handDone   bool
+	matchDone  bool
+	handNumber int
+	handsTotal int
 	winnerName string
 	lastErr    error
 
@@ -108,6 +111,9 @@ func (m *Model) syncState() {
 	m.minRaise = 0
 	m.myChips = 0
 	m.handDone = false
+	m.matchDone = m.baseState.Phase == game.Finished
+	m.handNumber = 0
+	m.handsTotal = 0
 	m.winnerName = m.baseState.Winner
 
 	if m.bound == nil || m.bound.Engine() == nil {
@@ -128,7 +134,12 @@ func (m *Model) syncState() {
 		m.toCall = logic.ToCall(extra, heroID)
 		m.myChips = extra.PlayerChips[heroID]
 		m.handDone = extra.HandComplete || state.Phase == game.Finished
-		if len(extra.Winners) > 0 {
+		m.matchDone = extra.MatchComplete || state.Phase == game.Finished
+		m.handNumber = extra.HandNumber
+		m.handsTotal = extra.HandsTotal
+		// Winners holds whoever took the last pot; the match itself is won by the
+		// biggest stack, which is the winner the engine settles on.
+		if len(extra.Winners) > 0 && !m.matchDone {
 			m.winnerName = extra.Winners[0].Username()
 		}
 
@@ -141,11 +152,13 @@ func (m *Model) syncState() {
 	}
 }
 
-// buildSeats snapshots every seat for rendering. Hole cards are copied out only for
-// the hero, or for anyone still live once the hand is revealed - everyone else gets
-// a hand size and nothing more. Caller must hold the state lock.
+// buildSeats snapshots every seat for rendering. Hole cards are copied out only
+// for the hero, or for anyone still live once the hand is shown down - everyone
+// else gets a hand size and nothing more. A pot that nobody contested is won
+// face-down: with hands left to play, showing those cards would hand the table a
+// free read. Caller must hold the state lock.
 func buildSeats(state *game.State, extra *logic.State, heroID string) []Seat {
-	reveal := extra.HandComplete || extra.Phase == logic.Showdown || state.Phase == game.Finished
+	reveal := extra.ReachedShowdown || state.Phase == game.Finished
 
 	seats := make([]Seat, 0, len(state.Players))
 	for i, p := range state.Players {
@@ -225,4 +238,18 @@ func (m *Model) canAllIn() bool {
 
 func (m *Model) canFold() bool {
 	return m.baseState.MyTurn && !m.handDone
+}
+
+// canDeal reports whether the hero is the one holding the button between hands,
+// and so the one who deals the next one.
+func (m *Model) canDeal() bool {
+	return m.handDone && !m.matchDone && m.baseState.MyTurn
+}
+
+// heroBusted reports whether the hero has lost their stack. They keep their seat
+// so the remaining players' pots and standings stay intact, but they cannot act
+// or deal for the rest of the match.
+func (m *Model) heroBusted() bool {
+	hero := m.heroSeat()
+	return hero != nil && hero.Chips == 0
 }

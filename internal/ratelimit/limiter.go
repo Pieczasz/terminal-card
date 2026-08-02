@@ -94,7 +94,6 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 	}
 }
 
-// Size returns the number of tracked IP keys (for tests and metrics).
 func (s *SlidingWindowLimiter) Size() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

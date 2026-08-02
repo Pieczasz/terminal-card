@@ -6,7 +6,6 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
-	"fmt"
 	"net"
 	"testing"
 	"time"
@@ -23,17 +22,17 @@ import (
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-func getFreePort() (int, error) {
-	addr, err := net.ResolveTCPAddr("tcp", "localhost:0")
-	if err != nil {
-		return 0, err
-	}
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		return 0, err
-	}
-	defer l.Close()
-	return l.Addr().(*net.TCPAddr).Port, nil
+// listenLocal binds an ephemeral port and keeps the listener. Returning only the
+// port number and closing the listener is a race: these tests run in parallel, so
+// the kernel can hand the same port to another test before the server re-binds it.
+func listenLocal(t *testing.T) net.Listener {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	// Registered here rather than at the call site: a require.NoError between the
+	// bind and the server's own teardown would otherwise strand the socket.
+	t.Cleanup(func() { _ = l.Close() })
+	return l
 }
 
 func generateSigner(t *testing.T) cryptossh.Signer {
@@ -57,19 +56,21 @@ func setupTestEnvironment(t *testing.T) testEnv {
 	userRepo := repository.NewUserRepository(gormDB)
 	matchRepo := repository.NewMatchRepository(gormDB)
 
-	port, err := getFreePort()
-	require.NoError(t, err)
+	listener := listenLocal(t)
+	addr := listener.Addr().String()
 
 	deps := ServerDependencies{
 		Config: &config.Config{
-			ServerPort:      port,
+			// The port is informational here; the server is handed the listener
+			// below rather than binding this itself.
+			ServerPort:      listener.Addr().(*net.TCPAddr).Port,
 			SSHKeyPath:      t.TempDir() + "/id_ed25519",
 			RateLimitCount:  5,
 			RateLimitWindow: time.Second,
 		},
 		UserRepository:  userRepo,
 		MatchRepository: matchRepo,
-		LobbyManager:    lobby.NewManager(matchRepo),
+		LobbyManager:    lobby.NewManager(context.Background(), matchRepo),
 		GameRegistry:    game.NewRegistry(),
 	}
 
@@ -77,10 +78,9 @@ func setupTestEnvironment(t *testing.T) testEnv {
 	require.NoError(t, err)
 
 	go func() {
-		_ = server.ListenAndServe()
+		_ = server.Serve(listener)
 	}()
 
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
 	require.Eventually(t, func() bool {
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err != nil {

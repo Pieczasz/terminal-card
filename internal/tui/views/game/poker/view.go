@@ -25,7 +25,7 @@ var (
 )
 
 func (m *Model) View() tea.View {
-	if m.baseState.Phase == game.Finished || (m.handDone && len(m.board) > 0) {
+	if m.handDone || m.matchDone {
 		return tea.NewView(m.renderHandOver())
 	}
 	if m.baseState.Phase != game.Playing {
@@ -50,28 +50,57 @@ func (m *Model) View() tea.View {
 func (m *Model) renderHandOver() string {
 	compact := m.global.Height < 30
 	board := m.renderBoard(compact)
-	title := accentStyle.Render("HAND COMPLETE")
-	winner := accentStyle.Render(m.winnerName + " wins")
-	hint := dimStyle.Render("esc / enter -> lobby")
+
+	title := accentStyle.Render(fmt.Sprintf("HAND %d/%d COMPLETE", m.handNumber, m.handsTotal))
+	winner := accentStyle.Render(m.winnerName + " wins the hand")
+	if m.matchDone {
+		title = accentStyle.Render("MATCH COMPLETE")
+		winner = accentStyle.Render(m.winnerName + " wins")
+	}
 
 	seatLines := make([]string, 0, len(m.seats))
 	for _, s := range m.seats {
-		line := fmt.Sprintf("%s  %d", s.Name, s.Chips)
+		// Chip glyphs carry their own colour, so they are joined in rather than
+		// rendered through metaStyle.
+		line := metaStyle.Render(fmt.Sprintf("%-12s %6d  ", s.Name, s.Chips)) + renderChipStack(s.Chips)
 		if s.Folded {
-			line += "  folded"
+			line += metaStyle.Render("  folded")
 		}
 		if len(s.Hole) == 2 {
 			line += "  " + renderMiniCard(s.Hole[0]) + renderMiniCard(s.Hole[1])
 		}
-		seatLines = append(seatLines, metaStyle.Render(line))
+		seatLines = append(seatLines, line)
 	}
 
 	content := lg.JoinVertical(lg.Center,
 		title, winner, "", board, "",
 		lg.JoinVertical(lg.Left, seatLines...),
-		"", hint,
+		"", dimStyle.Render(m.handOverHint()),
 	)
 	return lg.Place(m.global.Width, m.global.Height, lg.Center, lg.Center, content)
+}
+
+// handOverHint spells out that esc leaves the whole match. The screen looks like
+// the end of a game, but with hands still to play esc forfeits the stack the
+// player just spent them building.
+func (m *Model) handOverHint() string {
+	if m.matchDone {
+		return "esc / enter -> lobby"
+	}
+	leave := "esc: leave the match, forfeiting your chips"
+
+	var next string
+	switch {
+	case m.heroBusted():
+		next = "out of chips - watching until the match ends"
+	case m.canDeal():
+		next = fmt.Sprintf("enter: deal hand %d", m.handNumber+1)
+	case m.baseState.CurrentPlayer != "":
+		next = "waiting for " + m.baseState.CurrentPlayer + " to deal hand " + strconv.Itoa(m.handNumber+1)
+	default:
+		next = "waiting for the next hand"
+	}
+	return next + "   |   " + leave
 }
 
 type seatZones struct {
@@ -185,14 +214,10 @@ func (m *Model) renderCenter(compact bool) string {
 	if m.sidePots > 1 {
 		potLine += metaStyle.Render(fmt.Sprintf("  (%d pots)", m.sidePots))
 	}
-	street := accentStyle.Render(m.street)
-	betLine := metaStyle.Render(fmt.Sprintf("bet %d · to call %d", m.currentBet, m.toCall))
+	street := accentStyle.Render(fmt.Sprintf("%s | hand %d/%d", m.street, m.handNumber, m.handsTotal))
+	betLine := metaStyle.Render(fmt.Sprintf("bet %d | to call %d", m.currentBet, m.toCall))
 
-	lines := []string{board, "", potLine, street, betLine}
-	if m.handDone {
-		lines = append(lines, "", accentStyle.Render("HAND COMPLETE - "+m.winnerName+" wins"))
-	}
-	return lg.JoinVertical(lg.Center, lines...)
+	return lg.JoinVertical(lg.Center, board, "", potLine, renderChipStack(m.pot), street, betLine)
 }
 
 func (m *Model) renderBoard(compact bool) string {
@@ -249,7 +274,7 @@ func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientatio
 
 	stack := metaStyle.Render(strconv.FormatUint(uint64(s.Chips), 10))
 	if s.Bet > 0 {
-		stack = lg.JoinHorizontal(lg.Center, stack, metaStyle.Render(fmt.Sprintf(" · bet %d", s.Bet)))
+		stack = lg.JoinHorizontal(lg.Center, stack, metaStyle.Render(fmt.Sprintf(" | bet %d", s.Bet)))
 	}
 	if s.AllIn && !s.Folded {
 		stack = lg.JoinHorizontal(lg.Center, stack, " ", accentStyle.Render("ALL-IN"))
@@ -259,8 +284,13 @@ func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientatio
 	}
 
 	cards := m.renderSeatCards(s, compact, orientation)
+	rows := []string{cards, name, stack}
+	if !compact {
+		// A short terminal needs the row for cards more than for decoration.
+		rows = append(rows, renderChipStack(s.Chips))
+	}
 	pad := lg.NewStyle().Padding(0, 1)
-	return pad.Render(lg.JoinVertical(lg.Center, cards, name, stack))
+	return pad.Render(lg.JoinVertical(lg.Center, rows...))
 }
 
 func seatBadges(s Seat) string {
@@ -316,7 +346,7 @@ func (m *Model) renderHero(compact bool) string {
 
 func (m *Model) renderActionBar() string {
 	if m.raising {
-		return accentStyle.Render(fmt.Sprintf("RAISE TO %d  [[/h] down  []/l] up  enter confirm  esc cancel]", m.raiseAmount))
+		return m.renderRaisePrompt()
 	}
 	var opts []string
 	if m.canFold() {
@@ -340,7 +370,20 @@ func (m *Model) renderActionBar() string {
 		}
 		return metaStyle.Render("waiting…")
 	}
-	return accentStyle.Render(strings.Join(opts, " · "))
+	return accentStyle.Render(strings.Join(opts, " | "))
+}
+
+// renderRaisePrompt shows the raise being built: the running total, the chips that
+// can be pushed onto it, and how far it can still go.
+func (m *Model) renderRaisePrompt() string {
+	total := accentStyle.Render(fmt.Sprintf("RAISE TO %d", m.raiseAmount))
+	bounds := metaStyle.Render(fmt.Sprintf("(min %d, all-in %d)", m.currentBet+m.minRaise, m.streetBetMax()))
+	keys := dimStyle.Render("[/] fine  |  enter confirm  |  esc cancel")
+	return lg.JoinVertical(lg.Center,
+		lg.JoinHorizontal(lg.Center, total, "  ", bounds),
+		renderChipRack(),
+		keys,
+	)
 }
 
 func rankShort(r deck.Rank) string {

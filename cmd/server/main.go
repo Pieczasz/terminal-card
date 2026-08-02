@@ -20,30 +20,24 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
-	charmssh "github.com/charmbracelet/ssh"
+	charmssh "charm.land/ssh"
 	"github.com/pires/go-proxyproto"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"golang.org/x/net/netutil"
 )
 
-// finalizeDrainTimeout bounds how long shutdown waits for in-flight ranked match
-// writes before closing the database handle.
-const finalizeDrainTimeout = 10 * time.Second
+// finalizeDrainTimeout matches the per-finalizer deadline.
+const finalizeDrainTimeout = 15 * time.Second
 
 func main() {
 	if err := run(); err != nil {
-		// run reports the cause itself, while the telemetry pipeline is still up.
 		os.Exit(1)
 	}
 }
 
-// run holds the whole server lifecycle so that every failure path unwinds through
-// the deferred cleanups. Calling os.Exit here would skip them and drop buffered
-// telemetry along with the database handle.
 func run() (err error) {
 	cfg, err := config.Load()
 	if err != nil {
-		// Before OTel exists there is nowhere to report this but stderr.
 		slog.Error("failed to load configuration", "error", err)
 		return fmt.Errorf("load configuration: %w", err)
 	}
@@ -94,17 +88,11 @@ func run() (err error) {
 
 	userRepo := repository.NewUserRepository(database)
 	matchRepo := repository.NewMatchRepository(database)
-	lobbyManager := lobby.NewManagerWithContext(ctx, matchRepo)
+	lobbyManager := lobby.NewManager(ctx, matchRepo)
 
-	// Registered after the sqlDB.Close defer above, so LIFO drains in-flight ranked
-	// finalizes before the handle they write through is closed. The app context is
-	// cancelled later still (run's first defer), so a finalize in progress keeps its
-	// own deadline rather than being cut off here.
-	defer func() {
-		if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-			slog.Warn("timed out draining ranked match finalizers", "timeout", finalizeDrainTimeout)
-		}
-	}()
+	// Registered after the sqlDB.Close defer above, so LIFO stops new match writes
+	// and drains registered ones before the handle they write through is closed.
+	defer waitForFinalizers(lobbyManager)
 
 	gameRegistry := game.NewRegistry()
 	for _, e := range catalog.All {
@@ -124,6 +112,14 @@ func run() (err error) {
 	}
 
 	return serve(ctx, cfg, server)
+}
+
+func waitForFinalizers(lobbyManager *lobby.Manager) {
+	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
+		slog.Warn("match finalizers exceeded their deadline; waiting for exit",
+			"timeout", finalizeDrainTimeout)
+		lobbyManager.WaitForFinalizers(0)
+	}
 }
 
 // sshServer is the part of the wish server that serve drives. It exists as a test
@@ -146,16 +142,25 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+	defer func() {
+		// Serve closes the listener on its own way out, so a second close is
+		// expected and only the unexpected kind is worth reporting.
+		if err := proxyListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.Warn("failed to close listener", "error", err)
+		}
+	}()
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	// Without Stop the handler outlives serve. That is invisible in production (the
+	// process is exiting) but in a test binary it swallows Ctrl-C for good.
+	defer signal.Stop(done)
 
 	slog.Info("starting ssh server",
 		"address", addr,
 		"max_connections", cfg.MaxConnections,
 		"version", cfg.ServiceVersion,
 	)
-	// Buffered so the goroutine never blocks once we stop reading after a signal.
 	serveErr := make(chan error, 1)
 	go func() {
 		err := server.Serve(proxyListener)
@@ -168,9 +173,6 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 
 	select {
 	case err := <-serveErr:
-		// The accept loop ended before any shutdown signal, so the process must not
-		// keep running with a listener nobody serves - it would pass a TCP health
-		// check while every login hangs.
 		if err != nil {
 			return fmt.Errorf("ssh accept loop failed: %w", err)
 		}

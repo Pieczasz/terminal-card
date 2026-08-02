@@ -35,6 +35,22 @@ func GlobalRoute(key string) (string, bool) {
 	return route, ok
 }
 
+// NavigateOn resolves the navigation keys every full-screen view shares: the global
+// shortcuts, plus esc/q meaning "back to home". It reports whether it handled the
+// key, so callers can fall through to their own bindings.
+//
+// Views where esc means something else (the lobby, where it opens the leave
+// confirmation) handle GlobalRoute directly instead.
+func NavigateOn(key string) (tea.Cmd, bool) {
+	if route, ok := GlobalRoute(key); ok {
+		return func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }, true
+	}
+	if key == "esc" || key == "q" {
+		return func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }, true
+	}
+	return nil, false
+}
+
 func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:

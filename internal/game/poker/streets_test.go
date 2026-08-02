@@ -1,7 +1,10 @@
 package poker
 
 import (
+	"cmp"
 	"fmt"
+	"maps"
+	"slices"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -10,21 +13,25 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
-func startHeadsUp(t *testing.T) (*game.Engine, *Rules) {
-	t.Helper()
-	rules := &Rules{}
-	players := []*player.Player{
-		{ID: "p1"},
-		{ID: "p2"},
-	}
-	engine := game.NewEngine(rules, players, deck.StandardDeck())
-	require.NoError(t, engine.Start())
-	return engine, rules
+// testingT is the slice of *testing.T and *rapid.T these helpers need. Threading
+// rapid's own T into them is what lets a property failure be reported to rapid,
+// which then shrinks the counterexample; reporting to the parent *testing.T instead
+// aborts the property goroutine and loses the seed.
+type testingT interface {
+	require.TestingT
+	Helper()
 }
 
-func extraOf(t *testing.T, e *game.Engine) *State {
+func startHeadsUp(t testingT) (*game.Engine, *Rules) {
+	t.Helper()
+	// Rules is stateless, so the caller's handle need not be the engine's own.
+	return startTable(t, 2), &Rules{}
+}
+
+func extraOf(t testingT, e *game.Engine) *State {
 	t.Helper()
 	var extra *State
 	e.WithState(func(s *game.State) {
@@ -58,10 +65,19 @@ func TestBetting_FoldWinsHand(t *testing.T) {
 	}
 
 	require.NoError(t, engine.SubmitAction(actor, ActionFold{}))
-	assert.True(t, engine.IsFinished())
 	extra := extraOf(t, engine)
+	assert.True(t, extra.HandComplete)
+	assert.False(t, engine.IsFinished(), "one hand does not end a match")
 	assert.Equal(t, uint(0), extra.MainPool)
 	assert.Greater(t, extra.PlayerChips[other], DefaultStack)
+
+	// The pot is settled, so the only thing left to do is deal the next hand.
+	dealer := engine.CurrentPlayerID()
+	require.NoError(t, engine.SubmitAction(dealer, ActionNextHand{}))
+	extra = extraOf(t, engine)
+	assert.False(t, extra.HandComplete)
+	assert.Equal(t, 2, extra.HandNumber)
+	assert.Equal(t, PreFlop, extra.Phase)
 }
 
 func TestBetting_CheckThroughFlop(t *testing.T) {
@@ -368,27 +384,289 @@ func TestSmoke_PassiveHands(t *testing.T) {
 			}
 			engine := game.NewEngine(rules, players, deck.StandardDeck())
 			require.NoError(t, engine.Start())
-			for i := 0; i < 100 && !engine.IsFinished(); i++ {
+			// Every hand of a passive match: check it down, then deal the next one.
+			for i := 0; i < 100*HandsPerMatch && !engine.IsFinished(); i++ {
 				extra := extraOf(t, engine)
 				id := engine.CurrentPlayerID()
-				toCall := ToCall(extra, id)
 				var err error
-				if toCall == 0 {
+				switch {
+				case extra.HandComplete:
+					err = engine.SubmitAction(id, ActionNextHand{})
+				case ToCall(extra, id) == 0:
 					err = engine.SubmitAction(id, ActionCheck{})
-				} else {
+				default:
 					err = engine.SubmitAction(id, ActionCall{})
 				}
 				require.NoError(t, err)
 			}
 			assert.True(t, engine.IsFinished())
 			extra := extraOf(t, engine)
+			assert.Equal(t, HandsPerMatch, extra.HandNumber, "a passive match runs the full distance")
 			assert.Len(t, extra.Table, 5)
 			var total uint
 			for _, p := range players {
 				total += extra.PlayerChips[p.ID]
 			}
-			// Departed none; chip conservation.
+			// Departed none; chip conservation across every hand of the match.
 			assert.Equal(t, DefaultStack*uint(n), total)
 		})
 	}
+}
+
+// chipsInPlay is the invariant every betting path must preserve: chips only ever
+// move between a player's stack and the pool, so the two together are constant for
+// the whole hand. A pot that pays out more or less than it collected shows up here.
+func chipsInPlay(extra *State) uint {
+	total := extra.MainPool
+	for _, c := range extra.PlayerChips {
+		total += c
+	}
+	return total
+}
+
+func startTable(t testingT, n int) *game.Engine {
+	t.Helper()
+	players := make([]*player.Player, 0, n)
+	for i := range n {
+		players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1)})
+	}
+	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	return engine
+}
+
+// candidateActions is every action worth attempting, cheapest first. Illegal ones
+// are rejected by the engine, so the driver can just try the next.
+func candidateActions(raiseTo uint) []game.Action {
+	return []game.Action{
+		ActionCheck{},
+		ActionCall{},
+		ActionRaiseTo{Amount: raiseTo},
+		ActionAllIn{},
+		ActionFold{},
+	}
+}
+
+func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
+	t.Parallel()
+
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.IntRange(2, 6).Draw(rt, "players")
+		engine := startTable(rt, n)
+		defer engine.Close()
+		want := uint(n) * DefaultStack
+
+		require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "blinds must not create or destroy chips")
+
+		for step := range 200 {
+			if engine.IsFinished() {
+				break
+			}
+			extra := extraOf(rt, engine)
+			if extra.HandComplete {
+				break
+			}
+
+			// Bias toward a legal raise size so the raise path is actually exercised.
+			raiseTo := extra.CurrentBet + extra.MinRaise +
+				uint(rapid.IntRange(0, 200).Draw(rt, fmt.Sprintf("raise%d", step)))
+			order := rapid.IntRange(0, 4).Draw(rt, fmt.Sprintf("pick%d", step))
+
+			actions := candidateActions(raiseTo)
+			id := engine.CurrentPlayerID()
+			acted := false
+			for i := range actions {
+				act := actions[(order+i)%len(actions)]
+				if err := engine.SubmitAction(id, act); err == nil {
+					acted = true
+					break
+				}
+			}
+			if !acted {
+				break // no legal action for the player on turn
+			}
+
+			require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)),
+				"chips changed after step %d (%d players)", step, n)
+		}
+
+		// However the hand ended, every chip must be back in a stack.
+		final := extraOf(rt, engine)
+		if final.HandComplete {
+			require.Zero(rt, final.MainPool, "a completed hand must leave nothing in the pool")
+			var stacks uint
+			for _, c := range final.PlayerChips {
+				stacks += c
+			}
+			require.Equal(rt, want, stacks, "payouts must return exactly the chips collected")
+		}
+	})
+}
+
+// Everyone all-in before the flop: no betting can continue, so the board has to run
+// out to the river and pay out. runOutBoard had no direct coverage.
+func TestAllInPreflop_RunsOutBoardAndPays(t *testing.T) {
+	t.Parallel()
+	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
+	want := 3 * DefaultStack
+
+	for range 10 {
+		if engine.IsFinished() || extraOf(t, engine).HandComplete {
+			break
+		}
+		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), ActionAllIn{}))
+	}
+
+	extra := extraOf(t, engine)
+	require.True(t, extra.HandComplete, "all-in table must resolve without further action")
+	assert.Equal(t, Showdown, extra.Phase)
+	assert.Len(t, extra.Table, 5, "board runs out to the river when nobody can act")
+	assert.NotEmpty(t, extra.Winners)
+
+	var stacks uint
+	for _, c := range extra.PlayerChips {
+		stacks += c
+	}
+	assert.Equal(t, want, stacks)
+	assert.Zero(t, extra.MainPool)
+}
+
+// Three unequal stacks all-in build a main pot plus side pots; the short stack can
+// only win the layer it paid for.
+func TestUnequalAllIns_ShortStackCannotWinSidePot(t *testing.T) {
+	t.Parallel()
+	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra, ok := s.Extra.(*State)
+		require.True(t, ok)
+		extra.PlayerChips[s.Players[0].ID] = 100
+		extra.PlayerChips[s.Players[1].ID] = 500
+		extra.PlayerChips[s.Players[2].ID] = 900
+	})
+	before := chipsInPlay(extraOf(t, engine))
+
+	for range 10 {
+		if engine.IsFinished() || extraOf(t, engine).HandComplete {
+			break
+		}
+		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), ActionAllIn{}))
+	}
+
+	extra := extraOf(t, engine)
+	require.True(t, extra.HandComplete)
+	assert.Equal(t, before, chipsInPlay(extra), "side-pot split must conserve chips")
+
+	for _, pot := range extra.Pots {
+		assert.NotEmpty(t, pot.Eligible, "a pot with no eligible player would strand chips")
+	}
+}
+
+// sidePotState builds just enough State for buildSidePots/awardPots. Options keep
+// each case's intent visible instead of restating a full literal every time.
+func sidePotState(t testingT, contributed map[string]uint, folded ...string) (*game.State, *State) {
+	t.Helper()
+	players := make([]*player.Player, 0, len(contributed))
+	for id := range contributed {
+		players = append(players, &player.Player{ID: id})
+	}
+	slices.SortFunc(players, func(a, b *player.Player) int { return cmp.Compare(a.ID, b.ID) })
+
+	extra := &State{
+		Folded:           map[string]bool{},
+		PlayersAllIn:     map[string]bool{},
+		PlayerChips:      map[string]uint{},
+		PlayerBets:       map[string]uint{},
+		TotalContributed: maps.Clone(contributed),
+		ActedThisRound:   map[string]bool{},
+	}
+	for _, id := range folded {
+		extra.Folded[id] = true
+	}
+	state := game.NewState(&Rules{}, players, deck.StandardDeck())
+	state.Extra = extra
+	return state, extra
+}
+
+func potTotal(pots []Pot) uint {
+	var total uint
+	for _, p := range pots {
+		total += p.Amount
+	}
+	return total
+}
+
+// Every chip a folded player put in must still reach a pot. When the only players
+// who reached the top level have folded, that layer is dead money and carries into
+// the last live pot rather than vanishing.
+func TestBuildSidePots_DeadMoneyCarriesIntoTheLastPot(t *testing.T) {
+	t.Parallel()
+	// b folded after over-committing; only a can win anything.
+	state, extra := sidePotState(t, map[string]uint{"a": 50, "b": 100}, "b")
+
+	pots := buildSidePots(state, extra)
+
+	require.Len(t, pots, 1, "only the level a reached can be contested")
+	assert.Equal(t, []string{"a"}, pots[0].Eligible)
+	assert.Equal(t, uint(150), pots[0].Amount, "b's dead 50 carries into a's pot")
+	assert.Equal(t, uint(150), potTotal(pots), "no contributed chip may be lost")
+}
+
+// If every contributor folded, no pot layer forms at all and the orphaned chips must
+// still be handed to the one player left standing.
+func TestBuildSidePots_AllContributorsFoldedAwardsTheLoneSurvivor(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t,
+		map[string]uint{"a": 100, "b": 100, "survivor": 0}, "a", "b")
+
+	pots := buildSidePots(state, extra)
+
+	assert.Empty(t, pots, "no contested layer can form")
+	assert.Equal(t, uint(200), extra.PlayerChips["survivor"], "orphaned chips go to the survivor")
+}
+
+// Same shape, but with more than one survivor the orphan is split and the odd chip
+// is handed out rather than dropped.
+func TestBuildSidePots_OrphanSplitsAcrossSurvivorsWithoutLosingTheOddChip(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t,
+		map[string]uint{"folded": 100, "x": 0, "y": 0, "z": 0}, "folded")
+
+	pots := buildSidePots(state, extra)
+
+	assert.Empty(t, pots)
+	total := extra.PlayerChips["x"] + extra.PlayerChips["y"] + extra.PlayerChips["z"]
+	assert.Equal(t, uint(100), total, "100 split three ways must still total 100")
+}
+
+// A contributor who left mid-hand keeps their contribution in the pot but must not
+// remain eligible to win it.
+func TestBuildSidePots_DepartedContributorIsNotEligible(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t, map[string]uint{"stayed": 100, "left": 100})
+
+	// Drop "left" from the seats, exactly as Engine.RemovePlayer does.
+	state.Players = slices.DeleteFunc(state.Players, func(p *player.Player) bool { return p.ID == "left" })
+
+	pots := buildSidePots(state, extra)
+
+	require.Len(t, pots, 1)
+	assert.Equal(t, []string{"stayed"}, pots[0].Eligible, "a departed player cannot win")
+	assert.Equal(t, uint(200), pots[0].Amount, "their chips stay in the pot")
+}
+
+// A three-way chop of a pot that does not divide evenly must distribute every chip.
+func TestAwardPots_OddChipRemainderIsDistributed(t *testing.T) {
+	t.Parallel()
+	state, extra := sidePotState(t, map[string]uint{"a": 34, "b": 33, "c": 33})
+	extra.Pots = []Pot{{Amount: 100, Eligible: []string{"a", "b", "c"}}}
+	scores := map[string]int{"a": 500, "b": 500, "c": 500} // dead tie
+
+	awardPots(state, extra, scores)
+
+	total := extra.PlayerChips["a"] + extra.PlayerChips["b"] + extra.PlayerChips["c"]
+	assert.Equal(t, uint(100), total, "100 chopped three ways must still total 100")
+	assert.Zero(t, extra.MainPool)
 }

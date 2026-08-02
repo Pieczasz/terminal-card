@@ -537,41 +537,69 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 
 func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engine) {
 	for event := range ch {
-		if event.Type != game.EventGameEnded {
-			continue
+		if event.Type == game.EventGameEnded {
+			l.finalizeFinishedGame(engine)
+			return
 		}
+	}
+}
 
-		standings := engine.Standings()
-		userIDs := make([]uint, 0, len(standings))
-		for _, p := range standings {
-			if p == nil || p.DatabaseUser == nil {
-				slog.Error("standing player missing database user; skipping ranked finalize")
-				return
-			}
-			userIDs = append(userIDs, p.DatabaseUser.ID)
+// finalizeFinishedGame persists the result of a game that just ended. It is its
+// own function so the finalizing counter and the write context are released by
+// defer: leaking either would leave shutdown waiting on a write that is over.
+func (l *Lobby) finalizeFinishedGame(engine *game.Engine) {
+	standings := engine.Standings()
+	userIDs := make([]uint, 0, len(standings))
+	for _, p := range standings {
+		if p == nil || p.DatabaseUser == nil {
+			slog.Error("standing player missing database user; skipping ranked finalize")
+			return
 		}
+		userIDs = append(userIDs, p.DatabaseUser.ID)
+	}
 
-		l.mu.RLock()
-		isRanked := l.options.isRanked
-		gameName := ""
-		if l.options.cardGame != nil {
-			gameName = l.options.cardGame.Name
-		}
-		parentCtx := l.manager.shutdownCtx()
-		l.mu.RUnlock()
+	l.mu.RLock()
+	isRanked := l.options.isRanked
+	gameName := ""
+	if l.options.cardGame != nil {
+		gameName = l.options.cardGame.Name
+	}
+	parentCtx := l.manager.shutdownCtx()
+	l.mu.RUnlock()
 
-		if isRanked && gameName != "" && l.manager != nil && l.manager.matchRepo != nil {
-			// Registered before the write so shutdown waits for it rather than
-			// closing the database handle mid-statement.
-			l.manager.finalizing.Add(1)
-			ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
-			err := l.manager.matchRepo.FinalizeRankedMatch(ctx, gameName, userIDs)
-			cancel()
-			l.manager.finalizing.Done()
-			if err != nil {
-				slog.Error("failed to finalize ranked match", "error", err, "game", gameName)
-			}
-		}
+	if gameName == "" || l.manager == nil || l.manager.matchRepo == nil {
 		return
 	}
+
+	if !l.manager.registerFinalizer() {
+		return
+	}
+	defer l.manager.finalizing.Done()
+	ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
+	defer cancel()
+
+	if err := l.recordFinishedMatch(ctx, gameName, userIDs, isRanked); err != nil {
+		slog.Error("failed to record finished match", "error", err, "game", gameName, "ranked", isRanked)
+	}
+}
+
+// recordFinishedMatch writes match history for every finished game. Only a ranked
+// lobby also moves Elo; a casual one still belongs in the players' history.
+func (l *Lobby) recordFinishedMatch(ctx context.Context, gameName string, userIDs []uint, isRanked bool) error {
+	repo := l.manager.matchRepo
+	if isRanked {
+		if err := repo.FinalizeRankedMatch(ctx, gameName, userIDs); err != nil {
+			return fmt.Errorf("finalize ranked match: %w", err)
+		}
+		return nil
+	}
+	g, err := repo.GetOrCreateGame(ctx, gameName)
+	if err != nil {
+		return fmt.Errorf("resolve game: %w", err)
+	}
+	// No Elo deltas: a casual result is history only, it must not move ratings.
+	if err := repo.RecordMatch(ctx, g.ID, userIDs, nil, false); err != nil {
+		return fmt.Errorf("record casual match: %w", err)
+	}
+	return nil
 }

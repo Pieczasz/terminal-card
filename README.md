@@ -30,7 +30,7 @@ docker compose up -d --build
 
 Migrations run automatically via the `migrate` service before the backend starts. SSH host keys persist in the `ssh-keys` volume.
 
-Connect (nginx proxies port 22 → the backend):
+Connect (nginx proxies port 22 -> the backend):
 
 ```bash
 ssh -p 22 yourname@localhost
@@ -40,7 +40,7 @@ The first connection with a given public key registers that username. Key finger
 
 ### Observability
 
-The LGTM stack (Alloy → Loki/Tempo/Prometheus + Grafana) starts by default with `docker compose up`. Grafana is bound to `127.0.0.1:3000` with anonymous admin - reach it via an SSH tunnel (`ssh -L 3000:localhost:3000 your-host`) and keep ports 3000/9090/3200/3100 off the public interface. The monitoring services carry `mem_limit`s so they can't OOM the host.
+The LGTM stack (Alloy -> Loki/Tempo/Prometheus + Grafana) starts by default with `docker compose up`. Grafana is bound to `127.0.0.1:3000` with anonymous admin - reach it via an SSH tunnel (`ssh -L 3000:localhost:3000 your-host`) and keep ports 3000/9090/3200/3100 off the public interface. The monitoring services carry `mem_limit`s so they can't OOM the host.
 
 ## Self-hosting (Hetzner / AWS VM)
 
@@ -51,7 +51,7 @@ The LGTM stack (Alloy → Loki/Tempo/Prometheus + Grafana) starts by default wit
 5. `docker compose up -d --build`.
 6. Connect: `ssh yourname@your-host` (or `-p <mapped-port>`).
 7. Optional: cron backups - install `zstd`, then schedule `./scripts/backup.sh` (see script header). Protect the `backups/` directory.
-8. Smoke-test: register with a new key → create a lobby → play Crazy Eights and Poker → disconnect mid-hand → reconnect → check profile/leaderboard.
+8. Smoke-test: register with a new key -> create a lobby -> play Crazy Eights and Poker -> disconnect mid-hand -> reconnect -> check profile/leaderboard.
 
 Notes:
 

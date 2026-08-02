@@ -7,6 +7,7 @@ import (
 type Match struct {
 	gorm.Model
 	GameID       uint
+	Ranked       bool
 	Game         Game               `gorm:"foreignKey:GameID"`
 	Participants []MatchParticipant `gorm:"foreignKey:MatchID"`
 }

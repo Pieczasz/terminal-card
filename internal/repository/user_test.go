@@ -6,11 +6,13 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestUserRepository_RegisterUserWithKey(t *testing.T) {
@@ -19,26 +21,36 @@ func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 	repo := NewUserRepository(database)
 
 	t.Run("successful registration", func(t *testing.T) {
-		user, key, err := repo.RegisterUserWithKey(context.Background(), "player_one", "fingerprint_1")
-		assert.NoError(t, err)
-		assert.NotNil(t, user)
-		assert.Equal(t, "player_one", user.Username)
-		assert.Equal(t, "fingerprint_1", key.Fingerprint)
+		t.Parallel()
+		user, key, err := repo.RegisterUserWithKey(context.Background(), "reg_ok", "fp_reg_ok")
+		require.NoError(t, err)
+		require.NotNil(t, user)
+		assert.Equal(t, "reg_ok", user.Username)
+		assert.Equal(t, "fp_reg_ok", key.Fingerprint)
 	})
 
 	t.Run("username already taken", func(t *testing.T) {
-		_, _, err := repo.RegisterUserWithKey(context.Background(), "player_one", "fingerprint_2")
-		assert.ErrorContains(t, err, "username already taken")
+		t.Parallel()
+		_, _, err := repo.RegisterUserWithKey(context.Background(), "dup_name", "fp_name_1")
+		require.NoError(t, err, "seed the name first")
+
+		_, _, err = repo.RegisterUserWithKey(context.Background(), "dup_name", "fp_name_2")
+		require.ErrorContains(t, err, "username already taken")
 	})
 
 	t.Run("invalid username length", func(t *testing.T) {
-		_, _, err := repo.RegisterUserWithKey(context.Background(), "this_username_is_way_too_long", "fingerprint_3")
-		assert.ErrorContains(t, err, "username cannot exceed 16 characters")
+		t.Parallel()
+		_, _, err := repo.RegisterUserWithKey(context.Background(), "this_username_is_way_too_long", "fp_too_long")
+		require.ErrorContains(t, err, "username cannot exceed 16 characters")
 	})
 
 	t.Run("duplicate fingerprint", func(t *testing.T) {
-		_, _, err := repo.RegisterUserWithKey(context.Background(), "player_dup", "fingerprint_1")
-		assert.ErrorContains(t, err, "public key already registered")
+		t.Parallel()
+		_, _, err := repo.RegisterUserWithKey(context.Background(), "fp_owner", "fp_shared")
+		require.NoError(t, err, "seed the fingerprint first")
+
+		_, _, err = repo.RegisterUserWithKey(context.Background(), "fp_thief", "fp_shared")
+		require.ErrorContains(t, err, "public key already registered")
 	})
 }
 
@@ -105,18 +117,25 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	repo := NewUserRepository(database)
 
 	user, key, err := repo.RegisterUserWithKey(context.Background(), "player_three", "fingerprint_xyz")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	initialSeenAt := user.LastSeenAt
-	initialUsedAt := key.LastUsedAt
+	// Backdate both timestamps. Asserting only "After or Equal" would pass even if
+	// UpdateUserActivity did nothing at all, since Equal covers the no-op.
+	stale := time.Now().Add(-24 * time.Hour).UTC()
+	require.NoError(t, database.Model(&db.User{}).Where("id = ?", user.ID).
+		Update("last_seen_at", stale).Error)
+	require.NoError(t, database.Model(&db.PublicKey{}).Where("id = ?", key.ID).
+		Update("last_used_at", stale).Error)
 
 	repo.UpdateUserActivity(context.Background(), user, key)
 
 	updatedUser, updatedKey, err := repo.LoadUserByFingerprint(context.Background(), "fingerprint_xyz")
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
-	assert.True(t, updatedUser.LastSeenAt.After(initialSeenAt) || updatedUser.LastSeenAt.Equal(initialSeenAt))
-	assert.True(t, updatedKey.LastUsedAt.After(initialUsedAt) || updatedKey.LastUsedAt.Equal(initialUsedAt))
+	assert.True(t, updatedUser.LastSeenAt.After(stale),
+		"last_seen_at must move forward: got %v, seeded %v", updatedUser.LastSeenAt, stale)
+	assert.True(t, updatedKey.LastUsedAt.After(stale),
+		"last_used_at must move forward: got %v, seeded %v", updatedKey.LastUsedAt, stale)
 }
 
 func TestUserRepository_BestPlayers(t *testing.T) {
@@ -141,7 +160,6 @@ func TestUserRepository_BestPlayers(t *testing.T) {
 	assert.Equal(t, uint32(1400), best[1].Elo)
 	assert.Equal(t, uint32(1300), best[2].Elo)
 
-	// Test cache
 	bestCached, err := repo.BestPlayers(ctx, 2)
 	assert.NoError(t, err)
 	assert.Len(t, bestCached, 2)

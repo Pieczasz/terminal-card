@@ -1,6 +1,7 @@
 package broadcaster
 
 import (
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -256,4 +257,40 @@ func TestBroadcaster_MaxSubscribers(t *testing.T) {
 	default:
 	}
 	_ = ch2
+}
+
+// Broadcast is on the per-event fan-out path: every engine action reaches every
+// subscribed player, so its cost scales with table size.
+func BenchmarkBroadcast(b *testing.B) {
+	for _, subs := range []int{1, 4, 9} {
+		b.Run(fmt.Sprintf("subscribers=%d", subs), func(b *testing.B) {
+			bc := New[int](subs + 8)
+			defer bc.Close()
+
+			// Drain in the background so Broadcast measures fan-out, not queue-full
+			// drop handling.
+			done := make(chan struct{})
+			var wg sync.WaitGroup
+			for range subs {
+				ch := bc.Subscribe()
+				wg.Go(func() {
+					for {
+						select {
+						case <-ch:
+						case <-done:
+							return
+						}
+					}
+				})
+			}
+
+			b.ReportAllocs()
+			for i := 0; b.Loop(); i++ {
+				bc.Broadcast(i)
+			}
+			b.StopTimer()
+			close(done)
+			wg.Wait()
+		})
+	}
 }

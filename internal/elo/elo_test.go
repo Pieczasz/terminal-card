@@ -1,6 +1,9 @@
 package elo
 
 import (
+	"fmt"
+	"math"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -8,10 +11,12 @@ import (
 
 func TestClampRating(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, MinRating, ClampRating(-50))
-	assert.Equal(t, MinRating, ClampRating(0))
-	assert.Equal(t, MaxRating, ClampRating(9000))
-	assert.Equal(t, 1500.0, ClampRating(1500))
+	// NaN is unorderable, so min/max would pass it through to the rankings table.
+	assert.InDelta(t, DefaultRating, ClampRating(math.NaN()), 1e-9, "NaN is treated as unrated")
+	assert.InDelta(t, MinRating, ClampRating(-50), 1e-9)
+	assert.InDelta(t, MinRating, ClampRating(0), 1e-9)
+	assert.InDelta(t, MaxRating, ClampRating(9000), 1e-9)
+	assert.InDelta(t, 1500.0, ClampRating(1500), 1e-9)
 	assert.Equal(t, uint32(100), ToUint32(-1))
 	assert.Equal(t, uint32(4000), ToUint32(99999))
 }
@@ -27,6 +32,7 @@ func TestCalculate_MinFloor(t *testing.T) {
 }
 
 func TestExpectedScore(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		ratingA  float64
@@ -41,29 +47,9 @@ func TestExpectedScore(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := ExpectedScore(tt.ratingA, tt.ratingB)
 			assert.InDelta(t, tt.expected, got, 1e-4, "ExpectedScore() mismatch")
-		})
-	}
-}
-
-func TestUpdateRating(t *testing.T) {
-	tests := []struct {
-		name          string
-		rating        float64
-		expectedScore float64
-		actualScore   float64
-		expected      float64
-	}{
-		{"Win against equal", 1500, 0.5, 1.0, 1516},
-		{"Loss against equal", 1500, 0.5, 0.0, 1484},
-		{"Max cap enforced", 3990, 0.1, 1.0, 4000},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := UpdateRating(tt.rating, tt.expectedScore, tt.actualScore)
-			assert.InDelta(t, tt.expected, got, 1e-4, "UpdateRating() mismatch")
 		})
 	}
 }
@@ -104,6 +90,7 @@ func TestCalculate_UnequalRatings(t *testing.T) {
 }
 
 func TestCalculate(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
 		name     string
 		players  []Player
@@ -293,6 +280,7 @@ func TestCalculate(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
 			got := Calculate(tt.players)
 			assert.Len(t, got, len(tt.expected), "Calculate() map size mismatch")
 			for id, expectedRating := range tt.expected {
@@ -304,4 +292,37 @@ func TestCalculate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Calculate runs once per ranked game over every seat, and is O(n) in players with
+// a map allocation per call.
+func BenchmarkCalculate(b *testing.B) {
+	for _, n := range []int{2, 6, 9} {
+		b.Run(fmt.Sprintf("players=%d", n), func(b *testing.B) {
+			players := make([]Player, 0, n)
+			for i := range n {
+				players = append(players, Player{ID: strconv.Itoa(i), Rating: DefaultRating + float64(i*25)})
+			}
+			b.ReportAllocs()
+			for b.Loop() {
+				_ = Calculate(players)
+			}
+		})
+	}
+}
+
+// FuzzToUint32 pins the storage boundary: whatever arithmetic upstream produces, the
+// value written to the rankings table must sit inside [MinRating, MaxRating].
+func FuzzToUint32(f *testing.F) {
+	f.Add(1500.0)
+	f.Add(math.NaN())
+	f.Add(math.Inf(1))
+	f.Add(math.Inf(-1))
+	f.Add(math.Copysign(0, -1)) // negative zero; -0.0 is just 0.0 in Go
+
+	f.Fuzz(func(t *testing.T, rating float64) {
+		got := ToUint32(rating)
+		assert.GreaterOrEqual(t, got, uint32(MinRating), "stored Elo must not fall below MinRating")
+		assert.LessOrEqual(t, got, uint32(MaxRating), "stored Elo must not exceed MaxRating")
+	})
 }

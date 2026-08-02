@@ -4,7 +4,6 @@
 .gocache
 .env
 .idea/
-rules/
 coverage.out
 bin/
 # Local DB backups

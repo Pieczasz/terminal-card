@@ -22,7 +22,6 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		t.Skip("skipping DB integration test in short mode")
 	}
 
-	// Check if Docker provider can be initialized
 	_, err := testcontainers.ProviderDocker.GetProvider()
 	if err != nil {
 		t.Skipf("skipping test because Docker provider is not available: %v", err)
@@ -53,7 +52,7 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 
 	t.Cleanup(func() {
 		if err := postgresContainer.Terminate(ctx); err != nil {
-			t.Fatalf("failed to terminate container: %v", err)
+			t.Errorf("failed to terminate container: %v", err)
 		}
 	})
 
@@ -68,6 +67,19 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 	if err != nil {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
+
+	// Close the pool before the container goes away. Without this each test leaks
+	// sql.DB's connection-opener and cleaner goroutines for the rest of the run.
+	t.Cleanup(func() {
+		sqlDB, err := gormDB.DB()
+		if err != nil {
+			t.Errorf("failed to reach the sql.DB for teardown: %v", err)
+			return
+		}
+		if err := sqlDB.Close(); err != nil {
+			t.Errorf("failed to close the database pool: %v", err)
+		}
+	})
 
 	if len(models) > 0 {
 		err = gormDB.AutoMigrate(models...)

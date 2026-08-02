@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -58,7 +59,7 @@ func TestConcurrent_JoinUpToCapacity(t *testing.T) {
 	)
 	freeSlots := maxPlayers - 1 // leader already occupies one slot
 
-	m := NewManager(nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame(&db.Game{Name: "TestGame"}))
@@ -132,7 +133,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	const players = 8 // leader + 7 guests
 
-	m := NewManager(nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame(&db.Game{Name: "TestGame"}))
@@ -166,7 +167,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	// Lobby must be gone from the manager entirely.
 	_, err = m.FindLobbyByCode(l.Code())
-	assert.ErrorContains(t, err, "lobby not found", "empty lobby must be removed")
+	require.ErrorContains(t, err, "lobby not found", "empty lobby must be removed")
 
 	// No ghost membership: the manager's playerLobby map is the authoritative
 	// membership index, and no player may still resolve to a lobby through it.
@@ -189,7 +190,7 @@ func TestConcurrent_JoinRacingLastLeave(t *testing.T) {
 
 	runWithTimeout(t, 30*time.Second, func() {
 		for i := range iterations {
-			m := NewManager(nil)
+			m := NewManager(context.Background(), nil)
 			unlimitedJoins(m)
 
 			leader := mockPlayer(fmt.Sprintf("leader-%d", i), uint(2*i+1))
@@ -251,7 +252,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 		perGoTurns = 40
 	)
 
-	m := NewManager(nil)
+	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame(&db.Game{Name: "NeverStarts"}))

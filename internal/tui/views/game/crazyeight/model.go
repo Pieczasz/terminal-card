@@ -32,6 +32,9 @@ type Model struct {
 	selectionSpring harmonica.Spring
 	selectionLift   float64
 	selectionVel    float64
+	// animating is true while the frame loop is running. It stops the loop from
+	// being started twice, which would double the frame rate.
+	animating bool
 }
 
 func listenForEvents(ch <-chan game.Event) tea.Cmd {
@@ -90,6 +93,7 @@ func (m *Model) syncState() {
 }
 
 func (m *Model) Init() tea.Cmd {
+	m.animating = true
 	return tea.Batch(
 		listenForEvents(m.events),
 		animation.Tick(),
