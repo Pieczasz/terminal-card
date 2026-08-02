@@ -16,7 +16,7 @@ import (
 )
 
 func TestMatchRepository_RecordMatch(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
+	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.PublicKey{})
 
 	// Seed data
 	game := &db.Game{Name: "Crazy Eights"}
@@ -27,37 +27,21 @@ func TestMatchRepository_RecordMatch(t *testing.T) {
 	require.NoError(t, gormDB.Create(u1).Error)
 	require.NoError(t, gormDB.Create(u2).Error)
 
-	r1 := &db.Ranking{UserID: u1.ID, GameID: game.ID, Elo: uint32(elo.DefaultRating)}
-	r2 := &db.Ranking{UserID: u2.ID, GameID: game.ID, Elo: uint32(elo.DefaultRating)}
-	require.NoError(t, gormDB.Create(r1).Error)
-	require.NoError(t, gormDB.Create(r2).Error)
-
 	repo := repository.NewMatchRepository(gormDB)
 
 	ctx := context.Background()
 
 	orderedUserIDs := []uint{u1.ID, u2.ID}
 
-	deltas, err := repo.UpdateRankings(ctx, game.ID, orderedUserIDs)
-	require.NoError(t, err)
-
-	err = repo.RecordMatch(ctx, game.ID, orderedUserIDs, deltas, true)
+	err := repo.RecordMatch(ctx, game.ID, orderedUserIDs, nil, false)
 	require.NoError(t, err)
 
 	var match db.Match
 	err = gormDB.Preload("Participants").First(&match).Error
 	require.NoError(t, err)
 	assert.Equal(t, game.ID, match.GameID)
-	assert.True(t, match.Ranked, "a match recorded with Elo deltas is a ranked one")
+	assert.False(t, match.Ranked, "a casual match is recorded without changing Elo")
 	assert.Len(t, match.Participants, 2)
-
-	var updatedR1 db.Ranking
-	gormDB.Where("user_id = ? AND game_id = ?", r1.UserID, r1.GameID).First(&updatedR1)
-	assert.Greater(t, updatedR1.Elo, uint32(elo.DefaultRating))
-
-	var updatedR2 db.Ranking
-	gormDB.Where("user_id = ? AND game_id = ?", r2.UserID, r2.GameID).First(&updatedR2)
-	assert.Less(t, updatedR2.Elo, uint32(elo.DefaultRating))
 }
 
 func TestMatchRepository_FinalizeRankedMatch(t *testing.T) {
@@ -101,25 +85,16 @@ func TestMatchRepository_GetOrCreateGame(t *testing.T) {
 }
 
 func TestMatchRepository_RecordMatch_TransactionError(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
+	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.PublicKey{})
 	repo := repository.NewMatchRepository(gormDB)
 
 	ctx := context.Background()
 
-	// Invalid users
 	orderedUserIDs := []uint{9999, 9998}
 
-	_, err := repo.UpdateRankings(ctx, 1, []uint{})
-	assert.NoError(t, err) // Should return nil for empty user IDs
+	err := repo.RecordMatch(ctx, 1, []uint{}, nil, false)
+	assert.NoError(t, err)
 
-	err = repo.RecordMatch(ctx, 1, []uint{}, map[uint]int{}, true)
-	assert.NoError(t, err) // Should return nil for empty user IDs
-
-	// UpdateRankings with non-existent users should not fail inherently in fetching, but calculateNewElos will handle them as DefaultRating.
-	// However, the transaction should fail when creating Ranking if the foreign key (user_id) constraint is violated.
-	_, err = repo.UpdateRankings(ctx, 1, orderedUserIDs)
-	assert.Error(t, err) // Foreign key constraint violation on Ranking
-
-	err = repo.RecordMatch(ctx, 1, orderedUserIDs, map[uint]int{9999: 10, 9998: -10}, true)
-	assert.Error(t, err) // Foreign key constraint violation on Match / MatchParticipant
+	err = repo.RecordMatch(ctx, 1, orderedUserIDs, nil, false)
+	assert.Error(t, err)
 }

@@ -48,23 +48,6 @@ func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
 	return &game, nil
 }
 
-func (q *gormMatchRepository) UpdateRankings(ctx context.Context, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
-	if len(orderedUserIDs) == 0 {
-		return map[uint]int{}, nil
-	}
-
-	var deltas map[uint]int
-	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		var err error
-		deltas, err = q.updateRankingsTx(tx, gameID, orderedUserIDs)
-		return err
-	}); err != nil {
-		return nil, fmt.Errorf("failed to update rankings transaction: %w", err)
-	}
-
-	return deltas, nil
-}
-
 func (q *gormMatchRepository) RecordMatch(
 	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
 ) error {

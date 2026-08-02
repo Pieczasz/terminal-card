@@ -80,10 +80,6 @@ func (r *recordingMatchRepo) GetOrCreateGame(_ context.Context, name string) (*d
 	return &db.Game{Model: gorm.Model{ID: 1}, Name: name}, nil
 }
 
-func (r *recordingMatchRepo) UpdateRankings(_ context.Context, _ uint, _ []uint) (map[uint]int, error) {
-	return map[uint]int{}, nil
-}
-
 func (r *recordingMatchRepo) RecordMatch(_ context.Context, _ uint, _ []uint, _ map[uint]int, _ bool) error {
 	return nil
 }
