@@ -1,0 +1,56 @@
+---
+/*
+ * A framed panel, mirroring styles.Box in the TUI (rounded border, padded).
+ *
+ * The frame is a CSS border with the title notched into it, not box-drawing
+ * characters. Two earlier attempts failed: repeating ─ and │ needs a string long
+ * enough for the widest viewport and desyncs from the corners as the font changes,
+ * and mixing corner glyphs with CSS rails misaligns because a box-drawing glyph's
+ * advance width is not 1ch in every font. lipgloss's RoundedBorder renders as a 1px
+ * rounded rectangle anyway, so this is the more faithful reproduction.
+ */
+interface Props {
+  title?: string;
+  meta?: string;
+  tone?: "default" | "gold" | "cyan" | "quiet";
+  /** Tailwind padding utilities for the body, e.g. "p-panel" or "py-bay px-panel". */
+  pad?: string;
+  class?: string;
+  id?: string;
+}
+
+const {
+  title,
+  meta,
+  tone = "default",
+  pad = "p-panel",
+  class: className,
+  id,
+} = Astro.props;
+
+const titleTone = {
+  default: "text-muted",
+  gold: "text-accent",
+  cyan: "text-cyan",
+  quiet: "text-dim",
+}[tone];
+---
+
+<div class:list={["group relative pt-px", className]} {id}>
+  {
+    title && (
+      <p class="absolute top-0 left-[2.5ch] z-10 max-w-[calc(100%-6ch)] -translate-y-1/2 overflow-hidden bg-bg px-cell text-[0.82rem] leading-none tracking-[0.08em] text-ellipsis whitespace-nowrap">
+        <span class:list={["font-bold", titleTone]}>{title}</span>
+        {meta && <span class="text-dim"> · {meta}</span>}
+      </p>
+    )
+  }
+  <div
+    class:list={[
+      "rounded-sm border border-frame transition-colors duration-150 group-hover:border-frame-lit group-focus-within:border-frame-lit",
+      pad,
+    ]}
+  >
+    <slot />
+  </div>
+</div>

@@ -1,0 +1,41 @@
+---
+import SshCommand from "../components/SshCommand.astro";
+import TerminalWindow from "../components/TerminalWindow.astro";
+import Base from "../layouts/Base.astro";
+---
+
+<Base title="404 — tty.cards" description="That page does not exist." path="/404/">
+  <section class="shell pt-[clamp(6ch,10vw,14ch)]" data-hero>
+    <TerminalWindow title="404" tone="quiet" pad="px-panel py-[5ch]">
+      <div class="flex flex-col items-center gap-gap text-center">
+        {/* Pure ASCII, not box-drawing: every glyph here has the same advance in
+            any font, so the boxes cannot split apart. */}
+        <pre
+          class="m-0 font-mono text-[clamp(0.7rem,2vw,0.95rem)] leading-tight whitespace-pre text-accent"
+          aria-hidden="true">+---+  +---+  +---+
+| 4 |  | 0 |  | 4 |
++---+  +---+  +---+</pre>
+        <p class="-mt-gutter text-[1.1rem] tracking-[0.5ch] text-suit-dark" aria-hidden="true">
+          ♠ ♦ ♣
+        </p>
+
+        <p class="text-muted">
+          No such route. The card you were looking for is not in this deck.
+        </p>
+
+        <div class="flex gap-panel text-[0.95rem]">
+          <a href="/" class="text-accent transition-colors hover:text-heading"
+            >← home</a
+          >
+          <a href="/blog/" class="text-accent transition-colors hover:text-heading"
+            >blog</a
+          >
+        </div>
+
+        <div class="flex w-full justify-center border-t border-frame pt-panel">
+          <SshCommand />
+        </div>
+      </div>
+    </TerminalWindow>
+  </section>
+</Base>

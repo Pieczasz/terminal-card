@@ -1,0 +1,56 @@
+---
+/*
+ * A fanned hand, matching components.RenderCard in the TUI.
+ *
+ * Each card is a bordered box rather than four lines of box-drawing glyphs. The
+ * ASCII version split apart in practice: ╭───╮ is five glyph advances, but the row
+ * beneath it was │ + a 3ch span + │, and a box-drawing glyph's advance is not 1ch
+ * unless a true monospace font actually loaded.
+ *
+ * The resting rotation is emitted per card as data-rot so scripts/motion.ts can
+ * spring each card to it from the deck position. The same value is set inline as a
+ * fallback, so a hand still looks fanned if the motion bundle never runs.
+ */
+interface Card {
+  rank: string;
+  suit: "♠" | "♥" | "♦" | "♣";
+}
+
+interface Props {
+  cards: Card[];
+  class?: string;
+}
+
+const { cards, class: className } = Astro.props;
+const isRed = (s: string) => s === "♥" || s === "♦";
+const rot = (i: number) => i * 3 - 3;
+---
+
+<div
+  class:list={["flex shrink-0 items-start py-[0.5ch]", className]}
+  data-deal
+  role="img"
+  aria-label={cards.map((c) => `${c.rank} of ${c.suit}`).join(", ")}
+>
+  {
+    cards.map((c, i) => (
+      <div
+        data-rot={rot(i)}
+        style={`transform: rotate(${rot(i)}deg)`}
+        class="-ml-[1.4ch] flex aspect-5/7 w-[6ch] origin-bottom flex-col justify-between rounded-[3px] border border-face bg-bg p-[0.6ch] text-[0.95rem] leading-tight text-face transition-transform duration-200 first:ml-0"
+      >
+        <span class="font-bold">{c.rank}</span>
+        {/* Bottom-left, not bottom-right: the next card in the fan overlaps the
+            right edge and would hide a suit placed there. */}
+        <span
+          class:list={[
+            "self-start text-[1.05rem]",
+            isRed(c.suit) ? "text-suit-red" : "text-suit-dark",
+          ]}
+        >
+          {c.suit}
+        </span>
+      </div>
+    ))
+  }
+</div>

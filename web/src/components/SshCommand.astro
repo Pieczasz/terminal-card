@@ -1,0 +1,78 @@
+---
+/*
+ * The one action the whole site exists to produce. Renders as selectable text so it
+ * can be copied by hand with no JS; the button is an enhancement.
+ */
+interface Props {
+  cmd?: string;
+  size?: "hero" | "inline";
+  class?: string;
+}
+
+const {
+  cmd = "ssh tty.cards",
+  size = "inline",
+  class: className,
+} = Astro.props;
+
+const lineSize =
+  size === "hero"
+    ? "text-[clamp(1.5rem,6.4vw,4.2rem)] leading-[1.1] font-bold tracking-[-0.02em]"
+    : "text-[1.05rem]";
+---
+
+<div
+  class:list={[
+    "flex flex-wrap items-baseline gap-x-gutter gap-y-cell",
+    className,
+  ]}
+>
+  <code class:list={["inline-flex items-baseline font-mono", lineSize]}>
+    <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
+      class="whitespace-nowrap">{cmd}</span
+    ><span
+      class="ml-[0.2ch] animate-blink text-accent motion-reduce:animate-none"
+      aria-hidden="true">▊</span
+    >
+  </code>
+
+  <button
+    type="button"
+    data-cmd={cmd}
+    data-copy
+    class="cursor-pointer border border-frame-lit px-gutter py-[0.6ch] font-mono text-[0.85rem] whitespace-nowrap text-dim transition-colors hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent data-[state=done]:border-accent"
+  >
+    <span class="in-data-[state=done]:hidden">[ copy ]</span>
+    <span class="hidden text-accent in-data-[state=done]:inline" aria-hidden="true"
+      >[ copied ]</span
+    >
+  </button>
+</div>
+
+<script>
+  // Delegated once per page, so any number of SshCommand instances share it.
+  document.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement)?.closest?.("[data-copy]");
+    if (!(btn instanceof HTMLElement)) return;
+
+    try {
+      await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
+    } catch {
+      // Firefox without permission, or any non-secure context. Select the command
+      // so ⌘C still works — better than a button that silently does nothing.
+      const cmd = btn.parentElement?.querySelector("code span:nth-child(2)");
+      if (cmd) {
+        const r = document.createRange();
+        r.selectNodeContents(cmd);
+        getSelection()?.removeAllRanges();
+        getSelection()?.addRange(r);
+      }
+      return;
+    }
+
+    btn.dataset.state = "done";
+    setTimeout(() => {
+      delete btn.dataset.state;
+    }, 1600);
+  });
+</script>

@@ -1,0 +1,161 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Omit on the home page; set to the route path elsewhere, e.g. "/blog/". */
+  path?: string;
+  /** Emitted only on the home page, where the claim is about the product itself. */
+  appSchema?: boolean;
+}
+
+const { title, description, path = "/", appSchema = false } = Astro.props;
+
+const site = Astro.site ?? new URL("https://tty.cards");
+const canonical = new URL(path, site).href;
+const ogImage = new URL("/og.png", site).href;
+
+const nav = [
+  { href: "/#games", label: "games" },
+  { href: "/#ranked", label: "ranked" },
+  { href: "/blog/", label: "blog" },
+  { href: "https://github.com/Pieczasz/terminal-card", label: "source" },
+];
+
+const schema = appSchema
+  ? {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      name: "tty.cards",
+      applicationCategory: "GameApplication",
+      operatingSystem: "Any (SSH client)",
+      description,
+      url: site.href,
+      license: "https://opensource.org/licenses/MIT",
+      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    }
+  : null;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="canonical" href={canonical} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:image" content={ogImage} />
+    <meta property="og:site_name" content="tty.cards" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <meta name="theme-color" content="#0b0b0b" />
+    <link rel="sitemap" href="/sitemap-index.xml" />
+
+    {
+      schema && (
+        <script
+          is:inline
+          type="application/ld+json"
+          set:html={JSON.stringify(schema)}
+        />
+      )
+    }
+
+    <!-- Pages inject per-route <head> tags here (e.g. BlogPosting JSON-LD).
+         Without this named slot, slot="head" content is dropped silently. -->
+    <slot name="head" />
+  </head>
+
+  <body>
+    <div class="scanlines motion-reduce:animate-none" aria-hidden="true"></div>
+
+    <a
+      href="#main"
+      class="absolute -left-[9999px] top-0 z-100 border border-accent bg-bg px-gutter py-cell focus:left-gutter focus:top-gutter"
+      >skip to content</a
+    >
+
+    <header
+      class="sticky top-0 z-50 border-b border-frame bg-bg/90 backdrop-blur-sm"
+    >
+      <div
+        class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-[1.6ch]"
+      >
+        <a href="/" class="inline-flex items-baseline gap-cell font-bold text-fg">
+          <span class="text-accent" aria-hidden="true">♠</span>
+          <span>tty.cards</span>
+        </a>
+        <nav aria-label="Primary">
+          <ul class="flex flex-wrap gap-x-panel gap-y-cell text-[0.9rem]">
+            {
+              nav.map((l) => (
+                <li>
+                  <a
+                    href={l.href}
+                    class="text-dim transition-colors hover:text-accent focus-visible:text-accent"
+                  >
+                    {l.label}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <slot />
+    </main>
+
+    <footer class="mt-[12ch] border-t border-frame text-[0.85rem]">
+      <div
+        class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-panel"
+      >
+        <p class="text-dim">
+          <span class="text-accent">tty.cards</span> — cards over ssh. MIT licensed.
+        </p>
+        <ul class="flex flex-wrap gap-x-panel gap-y-cell">
+          {
+            [
+              { href: "/blog/", label: "blog" },
+              {
+                href: "https://github.com/Pieczasz/terminal-card",
+                label: "github",
+              },
+              {
+                href: "https://github.com/Pieczasz/terminal-card#self-hosting",
+                label: "self-host",
+              },
+            ].map((l) => (
+              <li>
+                <a
+                  href={l.href}
+                  class="text-dim transition-colors hover:text-accent focus-visible:text-accent"
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </footer>
+
+    <script>
+      import "../scripts/motion.ts";
+    </script>
+  </body>
+</html>
