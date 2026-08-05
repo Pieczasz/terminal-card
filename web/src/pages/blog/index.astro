@@ -8,13 +8,38 @@ const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
 );
 
 const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, ".");
+
+const base = Astro.site ?? new URL("https://tty.cards");
+
+// A Blog node lets the index be understood as a feed of the posts below it, rather
+// than as an unrelated page that happens to contain links.
+const schema = {
+  "@context": "https://schema.org",
+  "@type": "Blog",
+  name: "tty.cards - engineering notes",
+  url: new URL("/blog/", base).href,
+  inLanguage: "en",
+  blogPost: posts.map((p) => ({
+    "@type": "BlogPosting",
+    headline: p.data.title,
+    description: p.data.description,
+    datePublished: p.data.date.toISOString(),
+    url: new URL(`/blog/${p.id}/`, base).href,
+  })),
+};
 ---
 
 <Base
-  title="blog — tty.cards"
+  title="blog - tty.cards"
   description="Engineering notes from building tty.cards: an SSH server for multiplayer card games written in Go, with a Bubble Tea TUI and Elo ranking."
   path="/blog/"
 >
+  <script
+    is:inline
+    type="application/ld+json"
+    set:html={JSON.stringify(schema)}
+    slot="head"
+  />
   <section class="shell pt-[clamp(5ch,7vw,10ch)]" data-hero>
     <p class="text-[0.8rem] tracking-[0.18em] text-dim uppercase">
       engineering notes

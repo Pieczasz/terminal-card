@@ -4,7 +4,12 @@ import TerminalWindow from "../components/TerminalWindow.astro";
 import Base from "../layouts/Base.astro";
 ---
 
-<Base title="404 — tty.cards" description="That page does not exist." path="/404/">
+<Base
+  title="404 - tty.cards"
+  description="That page does not exist."
+  path="/404/"
+  noindex
+>
   <section class="shell pt-[clamp(6ch,10vw,14ch)]" data-hero>
     <TerminalWindow title="404" tone="quiet" pad="px-panel py-[5ch]">
       <div class="flex flex-col items-center gap-gap text-center">

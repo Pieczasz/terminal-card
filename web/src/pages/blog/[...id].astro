@@ -17,20 +17,53 @@ interface Props {
 const { post } = Astro.props as Props;
 const { Content } = await render(post);
 
+const url = new URL(`/blog/${post.id}/`, Astro.site ?? "https://tty.cards")
+  .href;
+
 const schema = {
   "@context": "https://schema.org",
   "@type": "BlogPosting",
   headline: post.data.title,
   description: post.data.description,
   datePublished: post.data.date.toISOString(),
+  // Google treats a BlogPosting without dateModified as never updated. Until posts
+  // carry an explicit updated date, published is the honest answer.
+  dateModified: post.data.date.toISOString(),
   author: { "@type": "Person", name: "Pieczasz" },
+  publisher: { "@type": "Organization", name: "tty.cards" },
+  image: new URL("/og.png", Astro.site ?? "https://tty.cards").href,
+  url,
+  mainEntityOfPage: { "@type": "WebPage", "@id": url },
+  inLanguage: "en",
+};
+
+// Breadcrumbs give the result a "tty.cards > blog > post" trail instead of a raw URL.
+const crumbs = {
+  "@context": "https://schema.org",
+  "@type": "BreadcrumbList",
+  itemListElement: [
+    {
+      "@type": "ListItem",
+      position: 1,
+      name: "Home",
+      item: (Astro.site ?? new URL("https://tty.cards")).href,
+    },
+    {
+      "@type": "ListItem",
+      position: 2,
+      name: "Blog",
+      item: new URL("/blog/", Astro.site ?? "https://tty.cards").href,
+    },
+    { "@type": "ListItem", position: 3, name: post.data.title, item: url },
+  ],
 };
 ---
 
 <Base
-  title={`${post.data.title} — tty.cards`}
+  title={`${post.data.title} - tty.cards`}
   description={post.data.description}
   path={`/blog/${post.id}/`}
+  article={{ published: post.data.date }}
 >
   <script
     is:inline
@@ -38,10 +71,20 @@ const schema = {
     set:html={JSON.stringify(schema)}
     slot="head"
   />
+  <script
+    is:inline
+    type="application/ld+json"
+    set:html={JSON.stringify(crumbs)}
+    slot="head"
+  />
 
   <article class="shell max-w-[82ch] pt-[clamp(5ch,7vw,9ch)]" data-hero>
     <p class="text-[0.8rem] tracking-[0.18em] uppercase">
-      <a href="/blog/" class="text-dim transition-colors hover:text-accent"
+      {/* Underlined, not just recoloured: this sits inside text of the same colour,
+          so colour alone would be the only cue (WCAG 1.4.1). */}
+      <a
+        href="/blog/"
+        class="text-dim underline decoration-frame-lit underline-offset-4 transition-colors hover:text-accent hover:decoration-accent"
         >← blog</a
       >
       <span class="text-dim"> · {post.data.date.toISOString().slice(0, 10)}</span>
@@ -61,7 +104,7 @@ const schema = {
 
 <style>
   /* Markdown output has no classes to hang utilities on, so the article body is
-     styled here rather than with a typography plugin — this is a handful of
+     styled here rather than with a typography plugin - this is a handful of
      elements and the terminal look is bespoke anyway. */
   .prose {
     color: var(--color-muted);
@@ -110,8 +153,16 @@ const schema = {
     padding-left: 3ch;
   }
 
+  /* Markdown links land inside body copy, so they need a non-colour cue too. */
   .prose :global(a) {
     color: var(--color-accent);
+    text-decoration: underline;
+    text-decoration-color: var(--color-frame-lit);
+    text-underline-offset: 4px;
+  }
+
+  .prose :global(a:hover) {
+    text-decoration-color: var(--color-accent);
   }
 
   .prose :global(code) {
