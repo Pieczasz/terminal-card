@@ -59,7 +59,7 @@ const lineSize =
       await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
     } catch {
       // Firefox without permission, or any non-secure context. Select the command
-      // so ⌘C still works — better than a button that silently does nothing.
+      // so ⌘C still works - better than a button that silently does nothing.
       const cmd = btn.parentElement?.querySelector("code span:nth-child(2)");
       if (cmd) {
         const r = document.createRange();

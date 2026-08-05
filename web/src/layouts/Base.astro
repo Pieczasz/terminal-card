@@ -8,9 +8,20 @@ interface Props {
   path?: string;
   /** Emitted only on the home page, where the claim is about the product itself. */
   appSchema?: boolean;
+  /** Set on blog posts: switches og:type to article and adds article metadata. */
+  article?: { published: Date; modified?: Date };
+  /** Utility routes (404) that must stay out of the index. */
+  noindex?: boolean;
 }
 
-const { title, description, path = "/", appSchema = false } = Astro.props;
+const {
+  title,
+  description,
+  path = "/",
+  appSchema = false,
+  article,
+  noindex = false,
+} = Astro.props;
 
 const site = Astro.site ?? new URL("https://tty.cards");
 const canonical = new URL(path, site).href;
@@ -23,19 +34,46 @@ const nav = [
   { href: "https://github.com/Pieczasz/terminal-card", label: "source" },
 ];
 
-const schema = appSchema
-  ? {
-      "@context": "https://schema.org",
-      "@type": "SoftwareApplication",
-      name: "tty.cards",
-      applicationCategory: "GameApplication",
-      operatingSystem: "Any (SSH client)",
-      description,
-      url: site.href,
-      license: "https://opensource.org/licenses/MIT",
-      offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
-    }
-  : null;
+const footLinks = [
+  { href: "/blog/", label: "blog" },
+  { href: "/rss.xml", label: "rss" },
+  { href: "https://github.com/Pieczasz/terminal-card", label: "github" },
+  {
+    href: "https://github.com/Pieczasz/terminal-card#self-hosting",
+    label: "self-host",
+  },
+];
+
+/*
+ * WebSite sits alongside SoftwareApplication on the home page. It is what search
+ * engines read for the site-level name that feeds a sitelinks block;
+ * SoftwareApplication alone does not supply one.
+ */
+const schemas: object[] = [];
+
+if (appSchema) {
+  schemas.push({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "tty.cards",
+    url: site.href,
+    description,
+    inLanguage: "en",
+  });
+  schemas.push({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "tty.cards",
+    applicationCategory: "GameApplication",
+    operatingSystem: "Any (SSH client)",
+    description,
+    url: site.href,
+    image: ogImage,
+    license: "https://opensource.org/licenses/MIT",
+    isAccessibleForFree: true,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  });
+}
 ---
 
 <!doctype html>
@@ -43,34 +81,79 @@ const schema = appSchema
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <link rel="canonical" href={canonical} />
 
     <title>{title}</title>
     <meta name="description" content={description} />
 
-    <meta property="og:type" content="website" />
+    {/* max-image-preview:large opts into full-size images in results and Discover.
+        Without it Google may only ever show a thumbnail. */}
+    <meta
+      name="robots"
+      content={
+        noindex
+          ? "noindex, follow"
+          : "index, follow, max-image-preview:large, max-snippet:-1"
+      }
+    />
+
+    <meta property="og:type" content={article ? "article" : "website"} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={ogImage} />
     <meta property="og:site_name" content="tty.cards" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={ogImage} />
+    {/* Some scrapers refuse to render a card without explicit dimensions. */}
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A terminal showing the command: ssh tty.cards"
+    />
+
+    {
+      article && (
+        <>
+          <meta
+            property="article:published_time"
+            content={article.published.toISOString()}
+          />
+          {article.modified && (
+            <meta
+              property="article:modified_time"
+              content={article.modified.toISOString()}
+            />
+          )}
+        </>
+      )
+    }
+
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
 
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0b0b0b" />
+
     <link rel="sitemap" href="/sitemap-index.xml" />
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="tty.cards - engineering notes"
+      href="/rss.xml"
+    />
 
     {
-      schema && (
+      schemas.map((s) => (
         <script
           is:inline
           type="application/ld+json"
-          set:html={JSON.stringify(schema)}
+          set:html={JSON.stringify(s)}
         />
-      )
+      ))
     }
 
     <!-- Pages inject per-route <head> tags here (e.g. BlogPosting JSON-LD).
@@ -125,21 +208,11 @@ const schema = appSchema
         class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-panel"
       >
         <p class="text-dim">
-          <span class="text-accent">tty.cards</span> — cards over ssh. MIT licensed.
+          <span class="text-accent">tty.cards</span> - cards over ssh. MIT licensed.
         </p>
         <ul class="flex flex-wrap gap-x-panel gap-y-cell">
           {
-            [
-              { href: "/blog/", label: "blog" },
-              {
-                href: "https://github.com/Pieczasz/terminal-card",
-                label: "github",
-              },
-              {
-                href: "https://github.com/Pieczasz/terminal-card#self-hosting",
-                label: "self-host",
-              },
-            ].map((l) => (
+            footLinks.map((l) => (
               <li>
                 <a
                   href={l.href}

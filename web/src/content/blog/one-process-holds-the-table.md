@@ -22,7 +22,7 @@ network hop, no cache to invalidate.
 That means the whole correctness argument fits in one place. `Engine` holds `e.mu`
 and `state.mu` together for the entire duration of `Start`, `SubmitAction` and
 `RemovePlayer`, and `Rules` methods are always called with both held. A rules
-implementation can therefore treat `*State` as if it owned it — no defensive
+implementation can therefore treat `*State` as if it owned it - no defensive
 copying, no optimistic retries, no "what if this changed underneath me".
 
 It also means the failure modes are small enough to enumerate. A `Rules`
@@ -32,7 +32,7 @@ the whole concurrency contract, and it is one sentence long.
 ## What it costs
 
 One process means one node. There is no horizontal scaling story here, and adding
-one would mean replacing the broadcaster with a real pub/sub — the code says so out
+one would mean replacing the broadcaster with a real pub/sub - the code says so out
 loud rather than pretending otherwise.
 
 It also means a restart drops every game in flight. Ranked results are written to

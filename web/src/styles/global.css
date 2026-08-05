@@ -16,8 +16,8 @@
   --color-muted: #b4b4b4; /* theme.TextMuted */
   --color-dim: #949494; /* theme.TextDim */
 
-  --color-accent: #ffd700; /* theme.Accent / Selection — gold */
-  --color-heading: #ffb454; /* theme.Heading — amber */
+  --color-accent: #ffd700; /* theme.Accent / Selection - gold */
+  --color-heading: #ffb454; /* theme.Heading - amber */
   --color-cyan: #6be3e3; /* theme.AccentAlt */
 
   --color-err: #ff6b6b; /* theme.Error */
@@ -101,7 +101,7 @@
 
   ::selection {
     background: var(--color-accent);
-    color: #1a1a1a; /* theme.TurnFg — what the TUI puts on a gold field */
+    color: #1a1a1a; /* theme.TurnFg - what the TUI puts on a gold field */
   }
 
   :focus-visible {

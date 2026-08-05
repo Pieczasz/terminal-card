@@ -10,7 +10,7 @@ import { animate } from "motion/mini";
  *
  * Imported from motion/mini (WAAPI-backed animate, ~2KB) rather than the full
  * package. The full entry costs ~20KB brotli, and the only things it adds that are
- * used here are inView and stagger — an IntersectionObserver wrapper and `i * n`.
+ * used here are inView and stagger - an IntersectionObserver wrapper and `i * n`.
  * Both are below, so the 18KB buys nothing.
  *
  * Initial states are set in JS, never in CSS. If this bundle fails to load, every
@@ -23,7 +23,7 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 // Bezier control points, not CSS strings: Motion's Easing type takes a 4-tuple.
 /** Standard ease-out. */
 const OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
-/** Overshoots slightly then settles — a spring without the spring solver. */
+/** Overshoots slightly then settles - a spring without the spring solver. */
 const BACK_OUT: [number, number, number, number] = [0.34, 1.56, 0.64, 1];
 
 /** Fires once, the first time `el` is at least `amount` visible. */
@@ -48,7 +48,7 @@ function hide(els: Iterable<HTMLElement>) {
 /*
  * Anything hidden for a reveal must be guaranteed to come back. IntersectionObserver
  * is reliable, but a display:none ancestor, a zero-height scroll container or an
- * element that never enters the viewport would leave a section invisible forever —
+ * element that never enters the viewport would leave a section invisible forever -
  * and an invisible section is a worse outcome than an unanimated one. This clears
  * every remaining inline hide well after the page has settled.
  */

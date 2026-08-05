@@ -42,7 +42,7 @@ const board: Array<[number, string, number, string]> = [
 ];
 
 const stack: Array<[string, string]> = [
-  ["server", "Go — one process, all live state in memory"],
+  ["server", "Go - one process, all live state in memory"],
   ["tui", "Charm: Wish for ssh, Bubble Tea for the views"],
   ["storage", "Postgres for users, matches and Elo"],
   ["telemetry", "OpenTelemetry into Grafana, Loki, Tempo, Prometheus"],
@@ -56,8 +56,8 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
 ---
 
 <Base
-  title="tty.cards — play poker and crazy eights over ssh"
-  description="Multiplayer card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking — no download, no account, no browser. Free and open source."
+  title="tty.cards - play poker and crazy eights over ssh"
+  description="Multiplayer card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking - no download, no account, no browser. Free and open source."
   appSchema
 >
   <!-- ------------------------------------------------------------- hero --- -->
@@ -77,7 +77,7 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
     <h1
       class="mb-gutter max-w-[46ch] text-[clamp(1.15rem,2.1vw+0.6rem,1.9rem)] leading-[1.35] font-bold text-balance"
     >
-      Poker and Crazy Eights, played entirely in your terminal.
+      Card games, played entirely in your terminal.
     </h1>
 
     <p class="max-w-[62ch] text-[clamp(1rem,1.1vw+0.7rem,1.3rem)] text-muted text-pretty">
@@ -109,7 +109,7 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
     <div class="mb-gap max-w-[62ch]">
       <h2 class={H2}>Try it before you trust it.</h2>
       <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        A shell running in this page — not a video. Type <span
+        A shell running in this page - not a video. Type <span
           class="text-accent">help</span
         > and look around.
       </p>
@@ -129,7 +129,7 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
     <div class="mb-gap max-w-[62ch]">
       <h2 class={H2}>Two games, both playable now.</h2>
       <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        More can be added — a game is one rules file and one view.
+        More can be added - a game is one rules file and one view.
       </p>
     </div>
 
@@ -137,7 +137,7 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
       <TerminalWindow title="CRAZY EIGHTS" meta="2-6 players" tone="gold">
         <div class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel">
           <p class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty">
-            Match the suit or the rank. Eights are wild — play one and name the
+            Match the suit or the rank. Eights are wild - play one and name the
             suit you want next. First to empty their hand takes it.
           </p>
           <CardFan
@@ -217,7 +217,7 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
       <TerminalWindow title="HOW ELO WORKS" tone="quiet">
         <p class="text-muted text-pretty">
           Everyone starts at <span class="text-accent">1500</span>, K-factor
-          <span class="text-accent">32</span> — the chess default. Ranked results
+          <span class="text-accent">32</span> - the chess default. Ranked results
           move it. Casual games never do.
         </p>
         <p class="mt-gutter text-dim text-pretty">
