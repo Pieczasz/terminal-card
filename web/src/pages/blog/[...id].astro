@@ -1,0 +1,147 @@
+---
+import type { CollectionEntry } from "astro:content";
+import { getCollection, render } from "astro:content";
+import type { GetStaticPaths } from "astro";
+import Base from "../../layouts/Base.astro";
+
+export const getStaticPaths: GetStaticPaths = async () => {
+  const posts = await getCollection("blog", ({ data }) => !data.draft);
+  return posts.map((post) => ({ params: { id: post.id }, props: { post } }));
+};
+
+// getStaticPaths cannot infer prop types back into the component, so declare them.
+interface Props {
+  post: CollectionEntry<"blog">;
+}
+
+const { post } = Astro.props as Props;
+const { Content } = await render(post);
+
+const schema = {
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  headline: post.data.title,
+  description: post.data.description,
+  datePublished: post.data.date.toISOString(),
+  author: { "@type": "Person", name: "Pieczasz" },
+};
+---
+
+<Base
+  title={`${post.data.title} — tty.cards`}
+  description={post.data.description}
+  path={`/blog/${post.id}/`}
+>
+  <script
+    is:inline
+    type="application/ld+json"
+    set:html={JSON.stringify(schema)}
+    slot="head"
+  />
+
+  <article class="shell max-w-[82ch] pt-[clamp(5ch,7vw,9ch)]" data-hero>
+    <p class="text-[0.8rem] tracking-[0.18em] uppercase">
+      <a href="/blog/" class="text-dim transition-colors hover:text-accent"
+        >← blog</a
+      >
+      <span class="text-dim"> · {post.data.date.toISOString().slice(0, 10)}</span>
+    </p>
+
+    <h1
+      class="mt-gutter mb-[5ch] text-[clamp(1.4rem,3vw+0.6rem,2.3rem)] leading-[1.25] font-bold text-balance"
+    >
+      {post.data.title}
+    </h1>
+
+    <div class="prose">
+      <Content />
+    </div>
+  </article>
+</Base>
+
+<style>
+  /* Markdown output has no classes to hang utilities on, so the article body is
+     styled here rather than with a typography plugin — this is a handful of
+     elements and the terminal look is bespoke anyway. */
+  .prose {
+    color: var(--color-muted);
+    font-size: 1rem;
+  }
+
+  .prose :global(h2) {
+    color: var(--color-heading);
+    font-size: 1.15rem;
+    font-weight: 700;
+    margin-block: 6ch 2ch;
+  }
+
+  .prose :global(h3) {
+    color: var(--color-fg);
+    font-size: 1rem;
+    font-weight: 700;
+    margin-block: 4ch 1.5ch;
+  }
+
+  .prose :global(p),
+  .prose :global(ul),
+  .prose :global(ol) {
+    margin-bottom: 2.5ch;
+    text-wrap: pretty;
+  }
+
+  .prose :global(ul) {
+    list-style: none;
+    padding-left: 0;
+  }
+
+  .prose :global(ul li) {
+    position: relative;
+    padding-left: 3ch;
+  }
+
+  .prose :global(ul li)::before {
+    content: "·";
+    position: absolute;
+    left: 1ch;
+    color: var(--color-accent);
+  }
+
+  .prose :global(ol) {
+    padding-left: 3ch;
+  }
+
+  .prose :global(a) {
+    color: var(--color-accent);
+  }
+
+  .prose :global(code) {
+    color: var(--color-accent);
+    font-size: 0.92em;
+  }
+
+  .prose :global(pre) {
+    border: 1px solid var(--color-frame);
+    padding: 2.5ch;
+    overflow-x: auto;
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin-bottom: 3ch;
+  }
+
+  .prose :global(pre code) {
+    color: var(--color-muted);
+  }
+
+  .prose :global(blockquote) {
+    border-left: 2px solid var(--color-frame-lit);
+    padding-left: 3ch;
+    margin: 0 0 2.5ch;
+    color: var(--color-dim);
+  }
+
+  .prose :global(hr) {
+    border: 0;
+    border-top: 1px dotted var(--color-frame);
+    margin-block: 5ch;
+  }
+</style>

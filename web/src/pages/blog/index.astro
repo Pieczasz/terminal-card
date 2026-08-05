@@ -1,0 +1,73 @@
+---
+import { getCollection } from "astro:content";
+import TerminalWindow from "../../components/TerminalWindow.astro";
+import Base from "../../layouts/Base.astro";
+
+const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
+  (a, b) => b.data.date.valueOf() - a.data.date.valueOf(),
+);
+
+const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, ".");
+---
+
+<Base
+  title="blog — tty.cards"
+  description="Engineering notes from building tty.cards: an SSH server for multiplayer card games written in Go, with a Bubble Tea TUI and Elo ranking."
+  path="/blog/"
+>
+  <section class="shell pt-[clamp(5ch,7vw,10ch)]" data-hero>
+    <p class="text-[0.8rem] tracking-[0.18em] text-dim uppercase">
+      engineering notes
+    </p>
+    <h1
+      class="my-gutter text-[clamp(1.4rem,3vw+0.6rem,2.4rem)] leading-[1.2] font-bold text-balance"
+    >
+      How this thing is built.
+    </h1>
+    <p class="max-w-[62ch] text-[clamp(1rem,1.1vw+0.7rem,1.3rem)] text-muted text-pretty">
+      Writing about the parts that were harder than they looked: holding a card
+      game's whole state in one process, teaching a TUI to survive a disconnect,
+      and testing money paths you cannot afford to get wrong.
+    </p>
+  </section>
+
+  <section class="shell mt-bay" data-rise>
+    {
+      posts.length === 0 ? (
+        <TerminalWindow title="posts" tone="quiet">
+          <p class="text-dim">
+            Nothing published yet. The first post is being written.
+          </p>
+        </TerminalWindow>
+      ) : (
+        <TerminalWindow
+          title="posts"
+          meta={`${posts.length}`}
+          tone="gold"
+          pad="px-panel py-cell"
+        >
+          <ul>
+            {posts.map((p, i) => (
+              <li class:list={[i > 0 && "border-t border-dotted border-frame"]}>
+                <a
+                  href={`/blog/${p.id}/`}
+                  class="group/post grid gap-x-gutter gap-y-[0.4ch] py-gutter max-sm:grid-cols-1 sm:grid-cols-[minmax(0,12ch)_minmax(0,1fr)]"
+                >
+                  <span class="text-[0.9rem] tabular-nums text-dim">
+                    {fmt(p.data.date)}
+                  </span>
+                  <span class="font-bold text-fg transition-colors group-hover/post:text-accent">
+                    {p.data.title}
+                  </span>
+                  <span class="text-[0.93rem] text-dim text-pretty sm:col-start-2">
+                    {p.data.description}
+                  </span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </TerminalWindow>
+      )
+    }
+  </section>
+</Base>

@@ -1,0 +1,177 @@
+@import "tailwindcss";
+
+/*
+ * Colours are copied from internal/tui/styles/theme.go (dark branch), so the site
+ * and the app it advertises render the same palette. Change them there first.
+ *
+ * Spacing is named rather than numeric because this layout is column-based, not
+ * pixel-based: everything is a multiple of a character cell. Naming them keeps the
+ * markup free of p-[3ch]-style arbitrary values.
+ */
+@theme {
+  --color-bg: #0b0b0b;
+  --color-raised: #111111;
+
+  --color-fg: #fafafa; /* theme.Text */
+  --color-muted: #b4b4b4; /* theme.TextMuted */
+  --color-dim: #949494; /* theme.TextDim */
+
+  --color-accent: #ffd700; /* theme.Accent / Selection — gold */
+  --color-heading: #ffb454; /* theme.Heading — amber */
+  --color-cyan: #6be3e3; /* theme.AccentAlt */
+
+  --color-err: #ff6b6b; /* theme.Error */
+  --color-ok: #6fd48a; /* theme.Success */
+
+  --color-face: #eeeeee; /* theme.CardFace */
+  --color-suit-red: #ff6b6b; /* theme.SuitRed */
+  --color-suit-dark: #dddddd; /* theme.SuitDark */
+
+  --color-gold: #ffd700; /* theme.Placements[0] */
+  --color-silver: #c8c8c8; /* theme.Placements[1] */
+  --color-bronze: #d79a5b; /* theme.Placements[2] */
+
+  /* Site-only chrome. A terminal inherits the user's background and needs borders
+     bright enough to survive any of them; the site owns its background, so it can
+     afford dimmer frames than theme.Border. */
+  --color-frame: #2e2e2e;
+  --color-frame-lit: #4a4a4a;
+
+  --font-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
+
+  /* Column-cell spacing scale. */
+  --spacing-cell: 1ch;
+  --spacing-gutter: 2ch;
+  --spacing-panel: 3ch;
+  --spacing-gap: 4ch;
+  --spacing-bay: 8ch;
+
+  --container-shell: 118ch; /* mirrors maxBoxWidth = 120 in styles/common.go */
+
+  --animate-blink: blink 1.06s steps(1) infinite;
+  --animate-glow: glow 4.5s ease-in-out infinite;
+  --animate-scan: scan 8s linear infinite;
+
+  @keyframes blink {
+    0%,
+    49% {
+      opacity: 1;
+    }
+    50%,
+    100% {
+      opacity: 0;
+    }
+  }
+
+  @keyframes glow {
+    0%,
+    100% {
+      text-shadow: 0 0 0.6ch rgb(255 215 0 / 0.15);
+    }
+    50% {
+      text-shadow: 0 0 1.6ch rgb(255 215 0 / 0.45);
+    }
+  }
+
+  @keyframes scan {
+    to {
+      background-position: 0 4px;
+    }
+  }
+}
+
+@layer base {
+  html {
+    font-size: clamp(13px, 0.55vw + 11px, 16px);
+    scroll-behavior: smooth;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-fg);
+    font-family: var(--font-mono);
+    font-variant-ligatures: none;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background: var(--color-accent);
+    color: #1a1a1a; /* theme.TurnFg — what the TUI puts on a gold field */
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-frame-lit) transparent;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* The horizontal page frame. Used on every top-level section. */
+@utility shell {
+  width: 100%;
+  max-width: var(--container-shell);
+  margin-inline: auto;
+  padding-inline: var(--spacing-gutter);
+}
+
+/* CRT overlay. Decorative, non-interactive. */
+@utility scanlines {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    rgb(250 250 250 / 0.028) 0 1px,
+    transparent 1px 4px
+  );
+  animation: var(--animate-scan);
+}
+
+/* Gold bloom behind the fold, so the hero is not flat black. */
+@utility bloom {
+  position: absolute;
+  inset-inline: 0;
+  top: -14ch;
+  height: 60ch;
+  z-index: -1;
+  pointer-events: none;
+  background: radial-gradient(
+    60% 42% at 30% 30%,
+    rgb(255 215 0 / 0.09),
+    transparent 70%
+  );
+}
+
+@utility sr-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
