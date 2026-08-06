@@ -1,0 +1,174 @@
+---
+/*
+ * Live server state: who is online, how many hands are in progress, and the top of
+ * the leaderboard.
+ *
+ * The site itself stays static. This fetches from the Go server's read-only JSON
+ * endpoint at runtime, so the numbers are real without the site needing a runtime of
+ * its own. PUBLIC_API_BASE lets a local dev point at a local server.
+ *
+ * Everything server-renders with placeholders and degrades quietly: if the endpoint
+ * is unreachable (offline, first deploy, server down) the panel says so instead of
+ * showing zeros, which would read as "nobody plays this".
+ */
+const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://tty.cards/api";
+---
+
+<div data-live-stats data-api={apiBase}>
+  <div class="grid grid-cols-3 gap-gutter border-b border-frame pb-panel">
+    {
+      [
+        ["players", "online"],
+        ["hands", "in play"],
+        ["tables", "open"],
+      ].map(([key, label]) => (
+        <div>
+          <p
+            class="text-[clamp(1.4rem,3.5vw,2.2rem)] leading-none font-bold tabular-nums text-accent"
+            data-stat={key}
+          >
+            <span class="text-frame-lit">--</span>
+          </p>
+          <p class="mt-cell text-[0.78rem] tracking-[0.12em] text-dim uppercase">
+            {label}
+          </p>
+        </div>
+      ))
+    }
+  </div>
+
+  <ol class="mt-panel text-[0.95rem]" data-board>
+    {
+      [0, 1, 2, 3, 4].map((i) => (
+        <li
+          class:list={[
+            "flex items-baseline gap-gutter py-[0.9ch]",
+            i > 0 && "border-t border-dotted border-frame",
+          ]}
+        >
+          <span class="shrink-0 font-bold whitespace-pre text-frame-lit">
+            {`${i + 1}`.padStart(2, " ")}.
+          </span>
+          <span class="min-w-0 flex-1 truncate text-frame-lit">-</span>
+          <span class="shrink-0 tabular-nums text-frame-lit">----</span>
+        </li>
+      ))
+    }
+  </ol>
+
+  <p class="mt-panel text-[0.8rem] text-dim" data-note>
+    <span class="text-frame-lit">connecting...</span>
+  </p>
+</div>
+
+<script>
+  type Stats = {
+    players_online: number;
+    hands_in_play: number;
+    tables_open: number;
+  };
+  type Entry = { rank: number; username: string; elo: number };
+
+  const MEDAL = ["text-gold", "text-silver", "text-bronze"];
+
+  for (const root of document.querySelectorAll<HTMLElement>(
+    "[data-live-stats]",
+  )) {
+    const api = root.dataset.api ?? "";
+    const note = root.querySelector<HTMLElement>("[data-note]");
+    const board = root.querySelector<HTMLElement>("[data-board]");
+
+    const setNote = (html: string) => {
+      if (note) note.innerHTML = html;
+    };
+
+    const paintStats = (s: Stats) => {
+      const map: Record<string, number> = {
+        players: s.players_online,
+        hands: s.hands_in_play,
+        tables: s.tables_open,
+      };
+      for (const [key, value] of Object.entries(map)) {
+        const el = root.querySelector<HTMLElement>(`[data-stat="${key}"]`);
+        if (!el) continue;
+        // Count up, so a live number feels live rather than just appearing.
+        const target = Number(value) || 0;
+        const steps = Math.min(target, 14);
+        if (steps < 2) {
+          el.textContent = String(target);
+          continue;
+        }
+        let i = 0;
+        const tick = setInterval(() => {
+          i += 1;
+          el.textContent = String(Math.round((target * i) / steps));
+          if (i >= steps) clearInterval(tick);
+        }, 45);
+      }
+    };
+
+    const paintBoard = (rows: Entry[]) => {
+      if (!board) return;
+      if (!rows.length) {
+        board.innerHTML = `<li class="py-[0.9ch] text-dim">No ranked games played yet. Be first.</li>`;
+        return;
+      }
+      board.innerHTML = rows
+        .slice(0, 5)
+        .map((r, i) => {
+          const medal = MEDAL[i] ?? "text-dim";
+          const sep = i > 0 ? "border-t border-dotted border-frame" : "";
+          const name = r.username
+            .replace(/&/g, "&amp;")
+            .replace(/</g, "&lt;")
+            .replace(/>/g, "&gt;");
+          return `<li class="flex items-baseline gap-gutter py-[0.9ch] ${sep}">
+            <span class="shrink-0 font-bold whitespace-pre ${medal}">${String(i + 1).padStart(2, " ")}.</span>
+            <span class="min-w-0 flex-1 truncate">${name}</span>
+            <span class="shrink-0 tabular-nums text-dim">${Number(r.elo) || 0}</span>
+          </li>`;
+        })
+        .join("");
+    };
+
+    const load = async () => {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 4000);
+        const [statsRes, boardRes] = await Promise.all([
+          fetch(`${api}/v1/stats`, { signal: ctrl.signal }),
+          fetch(`${api}/v1/leaderboard?limit=5`, { signal: ctrl.signal }),
+        ]);
+        clearTimeout(timer);
+        if (!statsRes.ok || !boardRes.ok) throw new Error("bad status");
+
+        const stats = (await statsRes.json()) as Stats;
+        const rows = (await boardRes.json()) as Entry[];
+
+        paintStats(stats);
+        paintBoard(rows);
+        setNote(
+          `<span class="text-ok">*</span> live from the server, refreshed every 30s`,
+        );
+      } catch {
+        // Deliberately not zeros: an unreachable server is not an empty server.
+        setNote(
+          `<span class="text-dim">server unreachable - the numbers are shy right now. The game still works: <span class="text-accent">ssh tty.cards</span></span>`,
+        );
+      }
+    };
+
+    // Only start once visible, and stop polling when the tab is hidden.
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        io.disconnect();
+        load();
+        setInterval(() => {
+          if (!document.hidden) load();
+        }, 30_000);
+      }
+    });
+    io.observe(root);
+  }
+</script>

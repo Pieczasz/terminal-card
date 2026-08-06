@@ -31,14 +31,18 @@ Run Biome from this directory, not the repo root. Invoked from above, it reports
   characters. `╭───╮` is five glyph advances but a box-drawing glyph's advance is
   not `1ch` in every font, so glyph frames split apart. Same reason the 404 art and
   the terminal's `neofetch` use plain ASCII.
-- Animation lives in `src/scripts/motion.ts`, driven by `data-hero`, `data-rise`,
-  `data-rise-group` and `data-deal` attributes. Import from `motion/mini`, not
+- Animation lives in `src/scripts/motion.ts`, driven by `data-typewriter`,
+  `data-reveal`, `data-rise` and `data-deal` attributes. The hero types its command
+  out, then `data-reveal` elements fade up behind it. Import from `motion/mini`, not
   `motion` - the full entry costs ~20KB brotli for `inView` and `stagger`, both of
   which are reimplemented in that file in a few lines.
 - Reveals set `opacity: 0` from JS, never from CSS, so a failed bundle leaves the
   page visible rather than blank. There is a 4s failsafe that clears any hide the
   observer never got to.
-- `output: 'static'`. No adapter, no server runtime, no API routes.
+- `output: 'static'`. No adapter, no server runtime, no API routes. Live numbers
+  come from the Go server at runtime via `LiveStats.astro`, not at build time.
+  `PUBLIC_API_BASE` points it somewhere else for local work.
+- Prose uses `-`, never an em dash.
 - Biome's `noUnusedVariables`/`noUnusedImports` are off for `.astro` because it
   only parses frontmatter and cannot see template usage.
 

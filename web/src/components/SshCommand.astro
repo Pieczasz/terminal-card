@@ -2,16 +2,22 @@
 /*
  * The one action the whole site exists to produce. Renders as selectable text so it
  * can be copied by hand with no JS; the button is an enhancement.
+ *
+ * With `typewriter`, scripts/motion.ts types the command out on load. The full text
+ * is still in the HTML for crawlers and for the no-JS case - the script clears it
+ * only after it has taken over.
  */
 interface Props {
   cmd?: string;
   size?: "hero" | "inline";
+  typewriter?: boolean;
   class?: string;
 }
 
 const {
   cmd = "ssh tty.cards",
   size = "inline",
+  typewriter = false,
   class: className,
 } = Astro.props;
 
@@ -29,9 +35,11 @@ const lineSize =
 >
   <code class:list={["inline-flex items-baseline font-mono", lineSize]}>
     <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
-      class="whitespace-nowrap">{cmd}</span
+      class="whitespace-nowrap"
+      data-typewriter={typewriter ? "" : undefined}>{cmd}</span
     ><span
       class="ml-[0.2ch] animate-blink text-accent motion-reduce:animate-none"
+      data-cursor
       aria-hidden="true">▊</span
     >
   </code>
@@ -59,7 +67,7 @@ const lineSize =
       await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
     } catch {
       // Firefox without permission, or any non-secure context. Select the command
-      // so ⌘C still works - better than a button that silently does nothing.
+      // so the manual copy shortcut still works.
       const cmd = btn.parentElement?.querySelector("code span:nth-child(2)");
       if (cmd) {
         const r = document.createRange();
