@@ -36,12 +36,7 @@ const nav = [
 
 const footLinks = [
   { href: "/blog/", label: "blog" },
-  { href: "/rss.xml", label: "rss" },
   { href: "https://github.com/Pieczasz/terminal-card", label: "github" },
-  {
-    href: "https://github.com/Pieczasz/terminal-card#self-hosting",
-    label: "self-host",
-  },
 ];
 
 /*
@@ -176,10 +171,7 @@ if (appSchema) {
       <div
         class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-[1.6ch]"
       >
-        <a href="/" class="inline-flex items-baseline gap-cell font-bold text-fg">
-          <span class="text-accent" aria-hidden="true">♠</span>
-          <span>tty.cards</span>
-        </a>
+        <a href="/" class="font-bold text-fg">tty.cards</a>
         <nav aria-label="Primary">
           <ul class="flex flex-wrap gap-x-panel gap-y-cell text-[0.9rem]">
             {

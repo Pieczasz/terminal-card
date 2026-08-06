@@ -8,7 +8,7 @@ export async function GET(context: APIContext) {
   );
 
   return rss({
-    title: "tty.cards — engineering notes",
+    title: "tty.cards - engineering notes",
     description:
       "Notes from building an SSH server for multiplayer card games in Go.",
     // context.site comes from `site` in astro.config.mjs; rss() throws without it.

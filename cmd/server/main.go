@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,6 +16,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/config"
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/httpapi"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/repository"
@@ -67,10 +69,7 @@ func run() (err error) {
 		}
 	}()
 
-	slog.SetDefault(slog.New(observability.NewFanoutHandler(
-		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
-		otelslog.NewHandler("terminal-card"),
-	)))
+	installLogging()
 
 	database, err := db.Connect(cfg)
 	if err != nil {
@@ -94,10 +93,10 @@ func run() (err error) {
 	// and drains registered ones before the handle they write through is closed.
 	defer waitForFinalizers(lobbyManager)
 
-	gameRegistry := game.NewRegistry()
-	for _, e := range catalog.All {
-		gameRegistry.RegisterModule(e.Module())
-	}
+	gameRegistry := buildRegistry()
+
+	// Shared so the stats endpoint can read the live session count.
+	tracker := ssh.NewSessionTracker()
 
 	deps := ssh.ServerDependencies{
 		Config:          cfg,
@@ -105,13 +104,70 @@ func run() (err error) {
 		MatchRepository: matchRepo,
 		LobbyManager:    lobbyManager,
 		GameRegistry:    gameRegistry,
+		Tracker:         tracker,
 	}
 	server, err := ssh.SetupServer(deps)
 	if err != nil {
 		return fmt.Errorf("setup ssh server: %w", err)
 	}
 
+	stopAPI := startStatsAPI(cfg, tracker, lobbyManager, userRepo)
+	defer stopAPI()
+
 	return serve(ctx, cfg, server)
+}
+
+// installLogging fans slog output to stderr and to the OTel logger provider, so a
+// line is both visible to the container runtime and exported.
+func installLogging() {
+	slog.SetDefault(slog.New(observability.NewFanoutHandler(
+		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
+		otelslog.NewHandler("terminal-card"),
+	)))
+}
+
+// buildRegistry turns the catalog into the registry. catalog.All is the only place a
+// game is declared, so this cannot drift from what the TUI routes to.
+func buildRegistry() *game.Registry {
+	registry := game.NewRegistry()
+	for _, e := range catalog.All {
+		registry.RegisterModule(e.Module())
+	}
+	return registry
+}
+
+// startStatsAPI runs the read-only JSON feed the website reads. It is intentionally
+// best-effort: the game is the product, so a failure to bind the stats port logs and
+// carries on rather than refusing to start the server.
+func startStatsAPI(
+	cfg *config.Config,
+	tracker *ssh.SessionTracker,
+	lobbyManager *lobby.Manager,
+	userRepo db.UserRepository,
+) func() {
+	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.APIPort)
+	srv := httpapi.Serve(addr, httpapi.Handler(httpapi.Deps{
+		Sessions:     tracker,
+		Lobbies:      lobbyManager,
+		Users:        userRepo,
+		AllowOrigin:  cfg.APIAllowOrigin,
+		TrustedProxy: cfg.APITrustProxy,
+	}))
+
+	go func() {
+		slog.Info("starting stats api", "address", addr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("stats api stopped", "error", err)
+		}
+	}()
+
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("stats api shutdown was not clean", "error", err)
+		}
+	}
 }
 
 func waitForFinalizers(lobbyManager *lobby.Manager) {

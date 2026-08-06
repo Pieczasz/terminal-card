@@ -1,117 +1,52 @@
 ---
 import CardFan from "../components/CardFan.astro";
+import LiveStats from "../components/LiveStats.astro";
 import LiveTerminal from "../components/LiveTerminal.astro";
 import SshCommand from "../components/SshCommand.astro";
 import TerminalWindow from "../components/TerminalWindow.astro";
 import Base from "../layouts/Base.astro";
 
-const reasons = [
-  {
-    k: "nothing to install",
-    v: "You already have an ssh client. That is the entire download. It works from your laptop, from a box you're already logged into, or from a phone with Termux.",
-  },
-  {
-    k: "your key is your account",
-    v: "No email, no password, no confirmation link. The first time you connect, the username you pick claims itself against your key's fingerprint.",
-  },
-  {
-    k: "real people, right now",
-    v: "Every seat at the table is another person connected to the same process. Nothing here is playing against a bot.",
-  },
-];
-
-const steps: Array<[string, string]> = [
-  [
-    "ssh tty.cards",
-    "Your key authenticates you. First connect claims your name.",
-  ],
-  ["pick a game", "Crazy Eights or Hold'em, straight from the home screen."],
-  [
-    "create or join",
-    "Start a table, or join a friend with an 8-character code.",
-  ],
-  ["everyone readies up", "The last player to hit ready deals the first hand."],
-];
-
-const board: Array<[number, string, number, string]> = [
-  [1, "vim_wizard", 1842, "text-gold"],
-  [2, "kirk", 1791, "text-silver"],
-  [3, "grep_goblin", 1774, "text-bronze"],
-  [4, "ada", 1702, "text-dim"],
-  [5, "monospace", 1655, "text-dim"],
-];
-
-const stack: Array<[string, string]> = [
-  ["server", "Go - one process, all live state in memory"],
-  ["tui", "Charm: Wish for ssh, Bubble Tea for the views"],
-  ["storage", "Postgres for users, matches and Elo"],
-  ["telemetry", "OpenTelemetry into Grafana, Loki, Tempo, Prometheus"],
-  ["tests", "table-driven, property-based, fuzzed, leak-checked"],
-];
-
 const H2 =
   "text-[clamp(1.2rem,2.4vw+0.5rem,2.1rem)] font-bold leading-[1.25] text-balance";
 const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
-const ROW_SPLIT = "border-t border-dotted border-frame";
 ---
 
 <Base
   title="tty.cards - play poker and crazy eights over ssh"
-  description="Multiplayer card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking - no download, no account, no browser. Free and open source."
+  description="Card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking - no download, no account, no browser. Free and open source."
   appSchema
 >
   <!-- ------------------------------------------------------------- hero --- -->
-  <section class="shell relative pt-[clamp(6ch,9vw,13ch)] pb-gutter" data-hero>
+  <section class="shell relative pt-[clamp(7ch,11vw,16ch)] pb-gutter">
     <div class="bloom" aria-hidden="true"></div>
 
-    <p
-      class="mb-panel text-[0.8rem] tracking-[0.18em] text-dim uppercase"
-    >
-      multiplayer card games over ssh
-    </p>
-
     <div class="mb-gap">
-      <SshCommand size="hero" />
+      <SshCommand size="hero" typewriter />
     </div>
 
     <h1
       class="mb-gutter max-w-[46ch] text-[clamp(1.15rem,2.1vw+0.6rem,1.9rem)] leading-[1.35] font-bold text-balance"
+      data-reveal
     >
       Card games, played entirely in your terminal.
     </h1>
 
-    <p class="max-w-[62ch] text-[clamp(1rem,1.1vw+0.7rem,1.3rem)] text-muted text-pretty">
-      No download, no account, no browser tab. If you have an ssh client, you
-      already have the game.
+    <p
+      class="max-w-[54ch] text-[clamp(1rem,1.1vw+0.7rem,1.25rem)] text-muted text-pretty"
+      data-reveal
+    >
+      No download, no account, no browser tab. Bring your own terminal.
     </p>
-  </section>
-
-  <!-- ---------------------------------------------------------- reasons --- -->
-  <section
-    class="shell mt-[10ch] grid grid-cols-[repeat(auto-fit,minmax(30ch,1fr))] gap-gap"
-    aria-label="Why play here"
-    data-rise-group
-  >
-    {
-      reasons.map((r) => (
-        <div>
-          <h2 class="mb-cell text-[0.82rem] tracking-[0.14em] text-accent uppercase">
-            {r.k}
-          </h2>
-          <p class="text-[0.95rem] text-dim text-pretty">{r.v}</p>
-        </div>
-      ))
-    }
   </section>
 
   <!-- ------------------------------------------------------------- demo --- -->
   <section class={BLOCK} data-rise>
     <div class="mb-gap max-w-[62ch]">
-      <h2 class={H2}>Try it before you trust it.</h2>
+      <h2 class={H2}>Have a poke around.</h2>
       <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        A shell running in this page - not a video. Type <span
-          class="text-accent">help</span
-        > and look around.
+        A shell in this page, not a video. Try <span class="text-accent"
+          >help</span
+        >. There is more in here than the list admits.
       </p>
     </div>
     <TerminalWindow
@@ -126,19 +61,18 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
 
   <!-- ------------------------------------------------------------ games --- -->
   <section class={BLOCK} id="games" data-rise>
-    <div class="mb-gap max-w-[62ch]">
-      <h2 class={H2}>Two games, both playable now.</h2>
-      <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        More can be added - a game is one rules file and one view.
-      </p>
-    </div>
+    <h2 class={`${H2} mb-gap`}>Two games so far.</h2>
 
     <div class="grid grid-cols-[repeat(auto-fit,minmax(38ch,1fr))] gap-gap">
       <TerminalWindow title="CRAZY EIGHTS" meta="2-6 players" tone="gold">
-        <div class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel">
-          <p class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty">
+        <div
+          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
+        >
+          <p
+            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
+          >
             Match the suit or the rank. Eights are wild - play one and name the
-            suit you want next. First to empty their hand takes it.
+            suit you want next.
           </p>
           <CardFan
             cards={[
@@ -151,10 +85,14 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
       </TerminalWindow>
 
       <TerminalWindow title="TEXAS HOLD'EM" meta="2-9 seats" tone="gold">
-        <div class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel">
-          <p class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty">
-            No-limit. Blinds, raises, side pots and a real showdown. Chips are
-            plain numbers, so nobody has to trust a shuffle they cannot see.
+        <div
+          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
+        >
+          <p
+            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
+          >
+            No-limit. Blinds, side pots, and a real showdown. Chips are plain
+            numbers.
           </p>
           <CardFan
             cards={[
@@ -168,125 +106,16 @@ const ROW_SPLIT = "border-t border-dotted border-frame";
     </div>
   </section>
 
-  <!-- ----------------------------------------------------------- ranked --- -->
+  <!-- ------------------------------------------------------------- live --- -->
   <section class={BLOCK} id="ranked" data-rise>
-    <div class="mb-gap max-w-[62ch]">
-      <h2 class={H2}>Play for a number, or don't.</h2>
-      <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        New lobbies default to casual, so you can learn a game without paying
-        for it.
-      </p>
-    </div>
-
-    <div class="grid gap-gap lg:grid-cols-[1.15fr_1fr]">
-      <TerminalWindow
-        title="LEADERBOARD"
-        meta="top 100"
-        tone="gold"
-        pad="px-panel pt-gutter pb-panel"
-      >
-        <ul class="text-[0.95rem]">
-          {
-            board.map(([pos, name, elo, cls], i) => (
-              <li
-                class:list={[
-                  "flex items-baseline gap-gutter py-[0.9ch]",
-                  i > 0 && ROW_SPLIT,
-                ]}
-              >
-                <span class:list={["shrink-0 font-bold whitespace-pre", cls]}>
-                  {`${pos}`.padStart(2, " ")}.
-                </span>
-                <span class="min-w-0 flex-1 truncate">{name}</span>
-                <span class="shrink-0 tabular-nums text-dim">{elo}</span>
-              </li>
-            ))
-          }
-          <li
-            class="flex items-baseline gap-gutter border-t border-frame-lit py-[0.9ch]"
-          >
-            <span class="shrink-0 font-bold whitespace-pre text-dim">··</span>
-            <span class="min-w-0 flex-1 truncate text-dim"
-              >you, in about ten minutes</span
-            >
-            <span class="shrink-0 tabular-nums text-dim">1500</span>
-          </li>
-        </ul>
-      </TerminalWindow>
-
-      <TerminalWindow title="HOW ELO WORKS" tone="quiet">
-        <p class="text-muted text-pretty">
-          Everyone starts at <span class="text-accent">1500</span>, K-factor
-          <span class="text-accent">32</span> - the chess default. Ranked results
-          move it. Casual games never do.
-        </p>
-        <p class="mt-gutter text-dim text-pretty">
-          The lobby browser sorts open tables by how close their average rating
-          is to yours, so the first table you see is usually the right one.
-        </p>
-      </TerminalWindow>
-    </div>
-  </section>
-
-  <!-- ------------------------------------------------------------ steps --- -->
-  <section class={BLOCK} data-rise>
-    <h2 class={`${H2} mb-gap`}>Four steps, none of them a form.</h2>
-    <TerminalWindow title="GETTING IN" tone="quiet">
-      <ol>
-        {
-          steps.map(([cmd, note], i) => (
-            <li
-              class:list={[
-                "grid items-baseline gap-x-gutter gap-y-[0.3ch] py-[1.6ch] max-sm:grid-cols-[4ch_minmax(0,1fr)] sm:grid-cols-[4ch_minmax(0,22ch)_minmax(0,1fr)]",
-                i > 0 && ROW_SPLIT,
-              ]}
-            >
-              <span class="text-dim">{`${i + 1}`.padStart(2, "0")}</span>
-              <span class="font-bold text-heading">{cmd}</span>
-              <span class="text-[0.93rem] text-dim text-pretty max-sm:col-start-2">
-                {note}
-              </span>
-            </li>
-          ))
-        }
-      </ol>
-    </TerminalWindow>
-  </section>
-
-  <!-- ------------------------------------------------------------ stack --- -->
-  <section class={BLOCK} data-rise>
-    <div class="mb-gap max-w-[62ch]">
-      <h2 class={H2}>Under the hood.</h2>
-      <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        For the people who came here to read the source, not to play.
-      </p>
-    </div>
-    <TerminalWindow title="STACK" tone="cyan">
-      <dl>
-        {
-          stack.map(([k, v], i) => (
-            <div
-              class:list={[
-                "grid gap-x-gutter gap-y-[0.3ch] py-[1.1ch] max-sm:grid-cols-1 sm:grid-cols-[minmax(0,14ch)_minmax(0,1fr)]",
-                i > 0 && ROW_SPLIT,
-              ]}
-            >
-              <dt class="font-bold text-cyan">{k}</dt>
-              <dd class="text-[0.94rem] text-dim text-pretty">{v}</dd>
-            </div>
-          ))
-        }
-      </dl>
-      <p
-        class="mt-panel max-w-[66ch] border-t border-frame pt-gutter text-[0.92rem] text-dim text-pretty"
-      >
-        No HTTP API. No frontend build. No message broker. The terminal is the
-        client and the ssh session is the transport.
-        <a
-          href="/blog/"
-          class="text-accent transition-colors hover:text-heading">Read how it is put together →</a
-        >
-      </p>
+    <h2 class={`${H2} mb-gap`}>Who is on right now.</h2>
+    <TerminalWindow
+      title="LIVE"
+      meta="top 5"
+      tone="gold"
+      pad="px-panel pt-panel pb-panel"
+    >
+      <LiveStats />
     </TerminalWindow>
   </section>
 
