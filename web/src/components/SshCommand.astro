@@ -1,11 +1,16 @@
 ---
 /*
- * The one action the whole site exists to produce. Renders as selectable text so it
- * can be copied by hand with no JS; the button is an enhancement.
+ * The one action the whole site exists to produce. The command itself is the button:
+ * clicking anywhere on it copies. That is one target instead of two, and it matches
+ * what people already try to do with a command on a page.
  *
- * With `typewriter`, scripts/motion.ts types the command out on load. The full text
- * is still in the HTML for crawlers and for the no-JS case - the script clears it
- * only after it has taken over.
+ * It stays selectable text, so dragging still works and a crawler still reads it.
+ * With `typewriter`, scripts/motion.ts types it out on load; the string is duplicated
+ * into data-typewriter because the script clears the node before replaying it.
+ *
+ * The line reserves its final width up front. Without that the growing text shifts
+ * everything beside it on every keystroke. 1ch is exactly one character here because
+ * the font is monospace.
  */
 interface Props {
   cmd?: string;
@@ -25,36 +30,48 @@ const lineSize =
   size === "hero"
     ? "text-[clamp(1.5rem,6.4vw,4.2rem)] leading-[1.1] font-bold tracking-[-0.02em]"
     : "text-[1.05rem]";
+
+// "$ " plus the command plus the cursor cell.
+const reserve = `${cmd.length + 4}ch`;
 ---
 
 <div
-  class:list={[
-    "flex flex-wrap items-baseline gap-x-gutter gap-y-cell",
-    className,
-  ]}
+  data-ssh
+  class:list={["flex flex-wrap items-baseline gap-x-gutter", className]}
 >
-  <code class:list={["inline-flex items-baseline font-mono", lineSize]}>
-    <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
-      class="whitespace-nowrap"
-      data-typewriter={typewriter ? "" : undefined}>{cmd}</span
-    ><span
-      class="ml-[0.2ch] animate-blink text-accent motion-reduce:animate-none"
-      data-cursor
-      aria-hidden="true">▊</span
-    >
-  </code>
-
   <button
     type="button"
-    data-cmd={cmd}
     data-copy
-    class="cursor-pointer border border-frame-lit px-gutter py-[0.6ch] font-mono text-[0.85rem] whitespace-nowrap text-dim transition-colors hover:border-accent hover:text-accent focus-visible:border-accent focus-visible:text-accent data-[state=done]:border-accent"
+    data-cmd={cmd}
+    aria-label={`Copy ${cmd} to the clipboard`}
+    class="group/cmd cursor-pointer border-0 bg-transparent p-0 text-left font-mono"
   >
-    <span class="in-data-[state=done]:hidden">[ copy ]</span>
-    <span class="hidden text-accent in-data-[state=done]:inline" aria-hidden="true"
-      >[ copied ]</span
+    <code
+      class:list={["inline-flex items-baseline", lineSize]}
+      style={typewriter ? `min-width:${reserve}` : undefined}
     >
+      <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
+        class="whitespace-nowrap transition-colors group-hover/cmd:text-accent"
+        data-typewriter={typewriter ? cmd : undefined}>{cmd}</span
+      ><span class="ml-[0.2ch] text-accent" data-cursor aria-hidden="true">▊</span>
+    </code>
   </button>
+
+  <!-- Idle: nothing. Hover: an affordance. Copied: confirmation. All three occupy
+       the same slot so none of them moves the command. -->
+  <span
+    class="pointer-events-none self-center text-[0.8rem] whitespace-nowrap"
+    aria-live="polite"
+  >
+    <span
+      class="text-dim opacity-0 transition-opacity group-hover/cmd:opacity-100 in-data-[state=done]:!opacity-0"
+      aria-hidden="true">click to copy</span
+    >
+    <span
+      class="ml-[-11ch] text-accent opacity-0 transition-opacity in-data-[state=done]:opacity-100"
+      >&check; copied</span
+    >
+  </span>
 </div>
 
 <script>
@@ -63,24 +80,25 @@ const lineSize =
     const btn = (e.target as HTMLElement)?.closest?.("[data-copy]");
     if (!(btn instanceof HTMLElement)) return;
 
+    const cmd = btn.dataset.cmd ?? "";
     try {
-      await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
+      await navigator.clipboard.writeText(cmd);
     } catch {
-      // Firefox without permission, or any non-secure context. Select the command
-      // so the manual copy shortcut still works.
-      const cmd = btn.parentElement?.querySelector("code span:nth-child(2)");
-      if (cmd) {
+      // Firefox without permission, or any non-secure context. Select the command so
+      // the manual copy shortcut still works rather than the click doing nothing.
+      const text = btn.querySelector("[data-typewriter], code span:nth-child(2)");
+      if (text) {
         const r = document.createRange();
-        r.selectNodeContents(cmd);
+        r.selectNodeContents(text);
         getSelection()?.removeAllRanges();
         getSelection()?.addRange(r);
       }
       return;
     }
 
-    btn.dataset.state = "done";
-    setTimeout(() => {
-      delete btn.dataset.state;
-    }, 1600);
+    // The state lives on the wrapper so both the hint and the tick can react.
+    const wrap = btn.closest("[data-ssh]");
+    wrap?.setAttribute("data-state", "done");
+    setTimeout(() => wrap?.removeAttribute("data-state"), 1800);
   });
 </script>

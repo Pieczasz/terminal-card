@@ -41,7 +41,7 @@ const titleTone = {
     title && (
       <p class="absolute top-0 left-[2.5ch] z-10 max-w-[calc(100%-6ch)] -translate-y-1/2 overflow-hidden bg-bg px-cell text-[0.82rem] leading-none tracking-[0.08em] text-ellipsis whitespace-nowrap">
         <span class:list={["font-bold", titleTone]}>{title}</span>
-        {meta && <span class="text-dim"> · {meta}</span>}
+        {meta && <span class="text-dim"> | {meta}</span>}
       </p>
     )
   }

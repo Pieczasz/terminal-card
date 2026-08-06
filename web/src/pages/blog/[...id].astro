@@ -87,7 +87,7 @@ const crumbs = {
         class="text-dim underline decoration-frame-lit underline-offset-4 transition-colors hover:text-accent hover:decoration-accent"
         >← blog</a
       >
-      <span class="text-dim"> · {post.data.date.toISOString().slice(0, 10)}</span>
+      <span class="text-dim"> | {post.data.date.toISOString().slice(0, 10)}</span>
     </p>
 
     <h1
@@ -143,7 +143,7 @@ const crumbs = {
   }
 
   .prose :global(ul li)::before {
-    content: "·";
+    content: "-";
     position: absolute;
     left: 1ch;
     color: var(--color-accent);

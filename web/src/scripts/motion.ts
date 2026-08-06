@@ -3,18 +3,23 @@ import { animate } from "motion/mini";
 /*
  * Page choreography, wired from data attributes so markup stays declarative.
  *
- *   data-typewriter  type this text out, one character at a time, on load
- *   data-reveal      fade up once the typewriter above it has finished
- *   data-rise        fade up when the element scrolls into view
+ *   data-typewriter  type this text out on load
+ *   data-print       reveal instantly once the typing finishes, in document order
+ *   data-rise        short fade when the element scrolls into view
  *   data-deal        deal a hand of cards in
  *
- * From motion/mini (WAAPI-backed animate, ~2KB) rather than the full package. The
- * full entry costs ~20KB brotli and the only extras used here would be inView and
- * stagger - an IntersectionObserver wrapper and `i * n`, both of which are below.
+ * Two rules keep this feeling like a terminal rather than a marketing page:
  *
- * Initial states are set in JS, never CSS. If this bundle fails to load, everything
- * stays at its natural visible state and the page simply does not animate; opacity:0
- * in CSS would risk a permanently blank page instead.
+ *   1. The cursor does not blink while typing. A real terminal cursor is solid
+ *      whenever characters are arriving and only blinks once it is idle waiting for
+ *      you. Blinking throughout is the single biggest tell of a fake typing effect.
+ *
+ *   2. Output does not fade in, it appears. Nothing in a terminal cross-fades - a
+ *      line is either printed or it is not. So the copy under the command switches
+ *      from hidden to visible in one frame, with a beat between lines.
+ *
+ * Initial states are set here in JS, never in CSS, so a bundle that fails to load
+ * leaves the page fully visible and merely un-animated.
  */
 
 const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -22,9 +27,11 @@ const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const OUT: [number, number, number, number] = [0.16, 1, 0.3, 1];
 const BACK_OUT: [number, number, number, number] = [0.34, 1.56, 0.64, 1];
 
+/** ~62ms lands between "fast typist" and "legible". Below ~40 it reads as a paste. */
+const TYPE_MS = 62;
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Fires once, the first time `el` is at least `amount` visible. */
 function onView(el: Element, run: () => void, amount = 0.15) {
   const io = new IntersectionObserver(
     (entries) => {
@@ -39,85 +46,66 @@ function onView(el: Element, run: () => void, amount = 0.15) {
   io.observe(el);
 }
 
-function hide(els: Iterable<HTMLElement>) {
-  for (const el of els) el.style.opacity = "0";
-}
+async function typeCommand(target: HTMLElement, text: string) {
+  // Marks the whole command as mid-typing so CSS can hold the cursor solid.
+  const line = target.closest("[data-ssh]");
+  line?.setAttribute("data-typing", "");
 
-/*
- * Anything hidden for a reveal must be guaranteed to come back. A display:none
- * ancestor or an element that never enters the viewport would otherwise stay
- * invisible forever, which is a worse outcome than not animating at all.
- */
-function failsafe(els: HTMLElement[]) {
-  setTimeout(() => {
-    for (const el of els) {
-      if (el.style.opacity === "0") el.style.removeProperty("opacity");
-    }
-  }, 5000);
-}
-
-function riseIn(els: HTMLElement[], step = 0) {
-  els.forEach((el, i) => {
-    animate(
-      el,
-      { opacity: [0, 1], transform: ["translateY(12px)", "translateY(0px)"] },
-      { duration: 0.5, delay: i * step, ease: OUT },
-    );
-    el.style.removeProperty("opacity");
-  });
-}
-
-/*
- * Types text with per-character jitter. A fixed interval reads as a machine
- * printing; a real person is uneven, pauses at a space, and hesitates before the
- * first keystroke. The jitter is what makes it feel typed rather than animated.
- */
-async function typeOut(el: HTMLElement, text: string) {
-  el.textContent = "";
-  await sleep(320); // the beat before someone starts typing
+  target.textContent = "";
+  await sleep(300); // the beat before a hand starts moving
 
   for (const ch of text) {
-    el.textContent += ch;
-    const base = ch === " " || ch === "." ? 105 : 52;
-    await sleep(base + Math.random() * 55);
+    target.textContent += ch;
+    // Uneven on purpose, and slower across a separator, the way a real hand is.
+    const pause = ch === " " || ch === "." ? 90 : 0;
+    await sleep(TYPE_MS + pause + Math.random() * 30);
   }
+
+  await sleep(160);
+  line?.removeAttribute("data-typing"); // idle now, so it may blink
 }
 
 async function setup() {
   const hidden: HTMLElement[] = [];
 
-  // ------------------------------------------------------------ hero type ---
+  // -------------------------------------------------------- hero: type it ---
   const typers = [
     ...document.querySelectorAll<HTMLElement>("[data-typewriter]"),
   ];
-  const reveals = [...document.querySelectorAll<HTMLElement>("[data-reveal]")];
+  const prints = [...document.querySelectorAll<HTMLElement>("[data-print]")];
 
-  // Hide the follow-on copy first, so it cannot flash before the command lands.
-  hide(reveals);
-  hidden.push(...reveals);
+  // visibility, not opacity: the element keeps its box, so revealing it later
+  // cannot reflow anything and CLS stays at zero.
+  for (const el of prints) el.style.visibility = "hidden";
 
   if (typers.length) {
     await Promise.all(
-      typers.map((el) => typeOut(el, el.textContent?.trim() ?? "")),
+      typers.map((el) => typeCommand(el, el.dataset.typewriter || "")),
     );
-    await sleep(180);
   }
 
-  riseIn(reveals, 0.09);
+  // Print, do not fade.
+  for (const el of prints) {
+    el.style.visibility = "visible";
+    await sleep(110);
+  }
 
   // ------------------------------------------------------- rise on scroll ---
+  // Kept deliberately plain: a short fade, no travel. Sliding panels around is the
+  // thing that makes a page feel like an advert.
   for (const el of document.querySelectorAll<HTMLElement>("[data-rise]")) {
-    hide([el]);
+    el.style.opacity = "0";
     hidden.push(el);
-    onView(el, () => riseIn([el]));
+    onView(el, () => {
+      animate(el, { opacity: [0, 1] }, { duration: 0.32, ease: OUT });
+      el.style.removeProperty("opacity");
+    });
   }
 
   // --------------------------------------------------------------- cards ---
-  // A hand should arrive dealt, not fade in as a block: each card flies from
-  // roughly where the deck sits and settles on its resting angle.
   for (const fan of document.querySelectorAll<HTMLElement>("[data-deal]")) {
     const cards = [...fan.children] as HTMLElement[];
-    hide(cards);
+    for (const c of cards) c.style.opacity = "0";
     hidden.push(...cards);
 
     onView(
@@ -130,11 +118,11 @@ async function setup() {
             {
               opacity: [0, 1],
               transform: [
-                "translate(-38px, -22px) rotate(-16deg)",
+                "translate(-34px, -20px) rotate(-14deg)",
                 `translate(0px, 0px) rotate(${rest}deg)`,
               ],
             },
-            { duration: 0.45, delay: i * 0.08, ease: BACK_OUT },
+            { duration: 0.42, delay: i * 0.07, ease: BACK_OUT },
           );
           card.style.removeProperty("opacity");
         });
@@ -143,11 +131,14 @@ async function setup() {
     );
   }
 
-  failsafe(hidden);
+  // A hide the observer never reached would leave a section blank, which is worse
+  // than an unanimated one.
+  setTimeout(() => {
+    for (const el of hidden) {
+      if (el.style.opacity === "0") el.style.removeProperty("opacity");
+    }
+    for (const el of prints) el.style.removeProperty("visibility");
+  }, 5000);
 }
 
-if (reduced) {
-  // Nothing to stage: the markup already contains the final text and full opacity.
-} else {
-  setup();
-}
+if (!reduced) setup();
