@@ -165,6 +165,27 @@
   );
 }
 
+/*
+ * The command cursor blinks only while idle. A real terminal cursor holds solid for
+ * as long as characters are arriving and starts blinking once it is waiting on you;
+ * blinking straight through is what makes a typing effect read as fake.
+ * scripts/motion.ts sets data-typing for the duration of the keystrokes.
+ */
+[data-ssh] [data-cursor] {
+  animation: var(--animate-blink);
+}
+
+[data-ssh][data-typing] [data-cursor] {
+  animation: none;
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-ssh] [data-cursor] {
+    animation: none;
+  }
+}
+
 @utility sr-hidden {
   position: absolute;
   width: 1px;

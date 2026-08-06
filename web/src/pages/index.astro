@@ -26,14 +26,14 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
     <h1
       class="mb-gutter max-w-[46ch] text-[clamp(1.15rem,2.1vw+0.6rem,1.9rem)] leading-[1.35] font-bold text-balance"
-      data-reveal
+      data-print
     >
       Card games, played entirely in your terminal.
     </h1>
 
     <p
       class="max-w-[54ch] text-[clamp(1rem,1.1vw+0.7rem,1.25rem)] text-muted text-pretty"
-      data-reveal
+      data-print
     >
       No download, no account, no browser tab. Bring your own terminal.
     </p>
@@ -41,14 +41,7 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
   <!-- ------------------------------------------------------------- demo --- -->
   <section class={BLOCK} data-rise>
-    <div class="mb-gap max-w-[62ch]">
-      <h2 class={H2}>Have a poke around.</h2>
-      <p class="mt-cell text-[0.98rem] text-dim text-pretty">
-        A shell in this page, not a video. Try <span class="text-accent"
-          >help</span
-        >. There is more in here than the list admits.
-      </p>
-    </div>
+    <h2 class={`${H2} mb-gap`}>Have fun messing about with this thing.</h2>
     <TerminalWindow
       title="tty.cards"
       meta="demo"
