@@ -24,13 +24,24 @@ Run Biome from this directory, not the repo root. Invoked from above, it reports
 
 - Design tokens live in `src/styles/global.css` (`@theme`) and are copied from
   `internal/tui/styles/theme.go` (dark branch). Change them there first.
-- Spacing utilities are named, not numeric: `p-panel`, `gap-gap`, `max-w-shell`.
-  The layout is column-based, so prefer these over `p-[3ch]`.
-- Every section is wrapped in `TerminalWindow.astro`. Its frame is a CSS border
+- Spacing that repeats gets a named token: `p-panel`, `gap-gap`, `max-w-shell`,
+  `py-row`. A value used in one place stays an arbitrary utility - a token with a
+  single call site is indirection without reuse. `py-row` exists precisely because
+  it is applied in three places that must agree (`LiveStats` renders placeholder
+  rows on the server, then its client script paints over them from two template
+  strings). Measures like `max-w-[62ch]` and card geometry like `w-[6ch]` are not
+  spacing and stay literal; the card values are mirrored by `CARD_W`/`OVERLAP` in
+  `CardFan.astro`.
+- Content sections are wrapped in `TerminalWindow.astro`. Its frame is a CSS border
   with a notched title, not box-drawing glyphs - do not "fix" that back to
   characters. `╭───╮` is five glyph advances but a box-drawing glyph's advance is
   not `1ch` in every font, so glyph frames split apart. Same reason the 404 art and
   the terminal's `neofetch` use plain ASCII.
+- **The heroes on `/` and `/blog/` are deliberately unframed.** The home hero is a
+  full-bleed `ssh tty.cards` with the gold bloom behind it; boxing that would put a
+  frame around the one element the page exists to show, and the bloom needs to
+  bleed past any border. Both heroes are the exception to the rule above, not an
+  oversight.
 - Animation lives in `src/scripts/motion.ts`, driven by `data-typewriter`,
   `data-reveal`, `data-rise` and `data-deal` attributes. The hero types its command
   out, then `data-reveal` elements fade up behind it. Import from `motion/mini`, not

@@ -42,7 +42,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://tty.cards/api";
       [0, 1, 2, 3, 4].map((i) => (
         <li
           class:list={[
-            "flex items-baseline gap-gutter py-[0.9ch]",
+            "flex items-baseline gap-gutter py-row",
             i > 0 && "border-t border-dotted border-frame",
           ]}
         >
@@ -110,7 +110,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://tty.cards/api";
     const paintBoard = (rows: Entry[]) => {
       if (!board) return;
       if (!rows.length) {
-        board.innerHTML = `<li class="py-[0.9ch] text-dim">No ranked games played yet. Be first.</li>`;
+        board.innerHTML = `<li class="py-row text-dim">No ranked games played yet. Be first.</li>`;
         return;
       }
       board.innerHTML = rows
@@ -122,7 +122,7 @@ const apiBase = import.meta.env.PUBLIC_API_BASE ?? "https://tty.cards/api";
             .replace(/&/g, "&amp;")
             .replace(/</g, "&lt;")
             .replace(/>/g, "&gt;");
-          return `<li class="flex items-baseline gap-gutter py-[0.9ch] ${sep}">
+          return `<li class="flex items-baseline gap-gutter py-row ${sep}">
             <span class="shrink-0 font-bold whitespace-pre ${medal}">${String(i + 1).padStart(2, " ")}.</span>
             <span class="min-w-0 flex-1 truncate">${name}</span>
             <span class="shrink-0 tabular-nums text-dim">${Number(r.elo) || 0}</span>
