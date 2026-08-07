@@ -166,6 +166,42 @@
 }
 
 /*
+ * Copy confirmation: a ring that pings at the pointer and is gone. Positioned fixed
+ * against the viewport because it is spawned from clientX/clientY.
+ */
+.copy-ping {
+  position: fixed;
+  z-index: 80;
+  pointer-events: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: -13px 0 0 -13px;
+  border: 2px solid var(--color-accent);
+  border-radius: 50%;
+  color: var(--color-accent);
+  font-size: 12px;
+  line-height: 1;
+  animation: copy-ping 520ms ease-out forwards;
+}
+
+@keyframes copy-ping {
+  0% {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  25% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/*
  * The command cursor blinks only while idle. A real terminal cursor holds solid for
  * as long as characters are arriving and starts blinking once it is waiting on you;
  * blinking straight through is what makes a typing effect read as fake.

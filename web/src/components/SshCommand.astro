@@ -1,16 +1,19 @@
 ---
 /*
  * The one action the whole site exists to produce. The command itself is the button:
- * clicking anywhere on it copies. That is one target instead of two, and it matches
- * what people already try to do with a command on a page.
+ * clicking anywhere on it copies. One target instead of two, and it matches what
+ * people already try to do with a command on a page.
  *
- * It stays selectable text, so dragging still works and a crawler still reads it.
- * With `typewriter`, scripts/motion.ts types it out on load; the string is duplicated
- * into data-typewriter because the script clears the node before replaying it.
+ * Affordance is the pointer plus the text going gold on hover - no label. Confirmation
+ * is a small ring that pings at the pointer and disappears; a "copied" caption sticks
+ * around drawing attention to itself long after you already knew it worked.
  *
- * The line reserves its final width up front. Without that the growing text shifts
- * everything beside it on every keystroke. 1ch is exactly one character here because
- * the font is monospace.
+ * With `typewriter`, scripts/motion.ts types it out on load. The string is duplicated
+ * into data-typewriter because the script clears the node before replaying it, and the
+ * visible copy still ships in the HTML for crawlers and the no-JS case.
+ *
+ * The line reserves its final width up front, or the growing text shifts whatever sits
+ * beside it on every keystroke. 1ch is exactly one character here: the font is mono.
  */
 interface Props {
   cmd?: string;
@@ -35,54 +38,48 @@ const lineSize =
 const reserve = `${cmd.length + 4}ch`;
 ---
 
-<div
+<button
+  type="button"
   data-ssh
-  class:list={["flex flex-wrap items-baseline gap-x-gutter", className]}
+  data-copy
+  data-cmd={cmd}
+  aria-label={`Copy ${cmd} to the clipboard`}
+  class:list={[
+    "group/cmd inline-block cursor-pointer border-0 bg-transparent p-0 text-left font-mono",
+    className,
+  ]}
 >
-  <button
-    type="button"
-    data-copy
-    data-cmd={cmd}
-    aria-label={`Copy ${cmd} to the clipboard`}
-    class="group/cmd cursor-pointer border-0 bg-transparent p-0 text-left font-mono"
+  <code
+    class:list={["inline-flex items-baseline", lineSize]}
+    style={typewriter ? `min-width:${reserve}` : undefined}
   >
-    <code
-      class:list={["inline-flex items-baseline", lineSize]}
-      style={typewriter ? `min-width:${reserve}` : undefined}
-    >
-      <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
-        class="whitespace-nowrap transition-colors group-hover/cmd:text-accent"
-        data-typewriter={typewriter ? cmd : undefined}>{cmd}</span
-      ><span class="ml-[0.2ch] text-accent" data-cursor aria-hidden="true">▊</span>
-    </code>
-  </button>
-
-  <!-- Idle: nothing. Hover: an affordance. Copied: confirmation. All three occupy
-       the same slot so none of them moves the command. -->
-  <span
-    class="pointer-events-none self-center text-[0.8rem] whitespace-nowrap"
-    aria-live="polite"
-  >
-    <span
-      class="text-dim opacity-0 transition-opacity group-hover/cmd:opacity-100 in-data-[state=done]:!opacity-0"
-      aria-hidden="true">click to copy</span
-    >
-    <span
-      class="ml-[-11ch] text-accent opacity-0 transition-opacity in-data-[state=done]:opacity-100"
-      >&check; copied</span
-    >
-  </span>
-</div>
+    <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
+      class="whitespace-nowrap transition-colors group-hover/cmd:text-accent"
+      data-typewriter={typewriter ? cmd : undefined}>{cmd}</span
+    ><span class="ml-[0.2ch] text-accent" data-cursor aria-hidden="true">▊</span>
+  </code>
+</button>
 
 <script>
+  /** A ring that pings where the pointer is, then removes itself. */
+  function ping(x: number, y: number) {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const el = document.createElement("span");
+    el.className = "copy-ping";
+    el.textContent = "✓";
+    el.style.left = `${x}px`;
+    el.style.top = `${y}px`;
+    document.body.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
+  }
+
   // Delegated once per page, so any number of SshCommand instances share it.
   document.addEventListener("click", async (e) => {
     const btn = (e.target as HTMLElement)?.closest?.("[data-copy]");
     if (!(btn instanceof HTMLElement)) return;
 
-    const cmd = btn.dataset.cmd ?? "";
     try {
-      await navigator.clipboard.writeText(cmd);
+      await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
     } catch {
       // Firefox without permission, or any non-secure context. Select the command so
       // the manual copy shortcut still works rather than the click doing nothing.
@@ -96,9 +93,13 @@ const reserve = `${cmd.length + 4}ch`;
       return;
     }
 
-    // The state lives on the wrapper so both the hint and the tick can react.
-    const wrap = btn.closest("[data-ssh]");
-    wrap?.setAttribute("data-state", "done");
-    setTimeout(() => wrap?.removeAttribute("data-state"), 1800);
+    const ev = e as MouseEvent;
+    // A keyboard activation reports 0,0 - ping the button instead of the corner.
+    if (ev.clientX || ev.clientY) {
+      ping(ev.clientX, ev.clientY);
+    } else {
+      const r = btn.getBoundingClientRect();
+      ping(r.right, r.top + r.height / 2);
+    }
   });
 </script>
