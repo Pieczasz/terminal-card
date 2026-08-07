@@ -1,4 +1,5 @@
 ---
+import BackLink from "../components/BackLink.astro";
 import SshCommand from "../components/SshCommand.astro";
 import TerminalWindow from "../components/TerminalWindow.astro";
 import Base from "../layouts/Base.astro";
@@ -28,10 +29,8 @@ import Base from "../layouts/Base.astro";
           No such route. The card you were looking for is not in this deck.
         </p>
 
-        <div class="flex gap-panel text-[0.95rem]">
-          <a href="/" class="text-accent transition-colors hover:text-heading"
-            >← home</a
-          >
+        <div class="flex items-center gap-panel text-[0.95rem]">
+          <BackLink href="/" label="home" />
           <a href="/blog/" class="text-accent transition-colors hover:text-heading"
             >blog</a
           >

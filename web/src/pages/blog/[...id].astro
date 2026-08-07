@@ -2,6 +2,7 @@
 import type { CollectionEntry } from "astro:content";
 import { getCollection, render } from "astro:content";
 import type { GetStaticPaths } from "astro";
+import BackLink from "../../components/BackLink.astro";
 import Base from "../../layouts/Base.astro";
 
 export const getStaticPaths: GetStaticPaths = async () => {
@@ -79,16 +80,15 @@ const crumbs = {
   />
 
   <article class="shell max-w-[82ch] pt-[clamp(5ch,7vw,9ch)]" data-hero>
-    <p class="text-[0.8rem] tracking-[0.18em] uppercase">
-      {/* Underlined, not just recoloured: this sits inside text of the same colour,
-          so colour alone would be the only cue (WCAG 1.4.1). */}
-      <a
-        href="/blog/"
-        class="text-dim underline decoration-frame-lit underline-offset-4 transition-colors hover:text-accent hover:decoration-accent"
-        >← blog</a
-      >
-      <span class="text-dim"> | {post.data.date.toISOString().slice(0, 10)}</span>
-    </p>
+    {/* A flex row rather than a sentence with a link in it: the arrow already gives
+        the link a non-colour cue, and keeping it out of a text block is what stops
+        axe's link-in-text-block rule (WCAG 1.4.1) from applying at all. */}
+    <div
+      class="flex flex-wrap items-center gap-x-panel gap-y-cell text-[0.8rem] tracking-[0.18em] uppercase"
+    >
+      <BackLink href="/blog/" label="blog" />
+      <span class="text-dim">{post.data.date.toISOString().slice(0, 10)}</span>
+    </div>
 
     <h1
       class="mt-gutter mb-[5ch] text-[clamp(1.4rem,3vw+0.6rem,2.3rem)] leading-[1.25] font-bold text-balance"

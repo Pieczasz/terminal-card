@@ -24,10 +24,23 @@ interface Props {
 const { cards, class: className } = Astro.props;
 const isRed = (s: string) => s === "♥" || s === "♦";
 const rot = (i: number) => i * 3 - 3;
+
+/*
+ * Reserve the fan's footprint up front. The cards are sized in ch and overlap by a
+ * negative margin, so the container's width was only known once the children had laid
+ * out - long enough for the flex line beside it to wrap and then unwrap, which showed
+ * up as the largest layout shift on the page.
+ *
+ * CARD_W and OVERLAP mirror w-[6ch] and -ml-[1.4ch] below; keep them in step.
+ */
+const CARD_W = 6;
+const OVERLAP = 1.4;
+const fanWidth = `${CARD_W + (cards.length - 1) * (CARD_W - OVERLAP)}ch`;
 ---
 
 <div
   class:list={["flex shrink-0 items-start py-[0.5ch]", className]}
+  style={`width:${fanWidth}`}
   data-deal
   role="img"
   aria-label={cards.map((c) => `${c.rank} of ${c.suit}`).join(", ")}
