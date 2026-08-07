@@ -61,13 +61,14 @@ const reserve = `${cmd.length + 4}ch`;
 </button>
 
 <script>
-  /** A ring that pings where the pointer is, then removes itself. */
+  /** Floats "copied" up from the pointer, then removes itself. */
   function ping(x: number, y: number) {
     if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const el = document.createElement("span");
     el.className = "copy-ping";
-    el.textContent = "✓";
-    el.style.left = `${x}px`;
+    el.textContent = "\u2713 copied";
+    // Offset right of the cursor so the pointer never sits on top of the word.
+    el.style.left = `${x + 14}px`;
     el.style.top = `${y}px`;
     document.body.appendChild(el);
     el.addEventListener("animationend", () => el.remove());
