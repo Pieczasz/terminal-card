@@ -45,6 +45,10 @@
   --spacing-cell: 1ch;
   --spacing-gutter: 2ch;
   --spacing-panel: 3ch;
+  /* A leaderboard row's vertical padding. Named because it is applied in three
+     places that must agree: the server-rendered placeholder rows in LiveStats and
+     the two template strings its client script paints over them with. */
+  --spacing-row: 0.9ch;
   --spacing-gap: 4ch;
   --spacing-bay: 8ch;
 
