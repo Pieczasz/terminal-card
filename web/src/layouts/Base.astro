@@ -1,0 +1,226 @@
+---
+import "../styles/global.css";
+
+interface Props {
+  title: string;
+  description: string;
+  /** Omit on the home page; set to the route path elsewhere, e.g. "/blog/". */
+  path?: string;
+  /** Emitted only on the home page, where the claim is about the product itself. */
+  appSchema?: boolean;
+  /** Set on blog posts: switches og:type to article and adds article metadata. */
+  article?: { published: Date; modified?: Date };
+  /** Utility routes (404) that must stay out of the index. */
+  noindex?: boolean;
+}
+
+const {
+  title,
+  description,
+  path = "/",
+  appSchema = false,
+  article,
+  noindex = false,
+} = Astro.props;
+
+const site = Astro.site ?? new URL("https://www.tty.cards");
+const canonical = new URL(path, site).href;
+const ogImage = new URL("/og.png", site).href;
+
+const nav = [
+  { href: "/#games", label: "games" },
+  { href: "/#ranked", label: "ranked" },
+  { href: "/blog/", label: "blog" },
+  { href: "https://github.com/Pieczasz/terminal-card", label: "source" },
+];
+
+const footLinks = [
+  { href: "/blog/", label: "blog" },
+  { href: "https://github.com/Pieczasz/terminal-card", label: "github" },
+];
+
+/*
+ * WebSite sits alongside SoftwareApplication on the home page. It is what search
+ * engines read for the site-level name that feeds a sitelinks block;
+ * SoftwareApplication alone does not supply one.
+ */
+const schemas: object[] = [];
+
+if (appSchema) {
+  schemas.push({
+    "@context": "https://schema.org",
+    "@type": "WebSite",
+    name: "tty.cards",
+    url: site.href,
+    description,
+    inLanguage: "en",
+  });
+  schemas.push({
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "tty.cards",
+    applicationCategory: "GameApplication",
+    operatingSystem: "Any (SSH client)",
+    description,
+    url: site.href,
+    image: ogImage,
+    license: "https://opensource.org/licenses/MIT",
+    isAccessibleForFree: true,
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+  });
+}
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="canonical" href={canonical} />
+
+    <title>{title}</title>
+    <meta name="description" content={description} />
+
+    {/* max-image-preview:large opts into full-size images in results and Discover.
+        Without it Google may only ever show a thumbnail. */}
+    <meta
+      name="robots"
+      content={
+        noindex
+          ? "noindex, follow"
+          : "index, follow, max-image-preview:large, max-snippet:-1"
+      }
+    />
+
+    <meta property="og:type" content={article ? "article" : "website"} />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:site_name" content="tty.cards" />
+    <meta property="og:locale" content="en_US" />
+    <meta property="og:image" content={ogImage} />
+    {/* Some scrapers refuse to render a card without explicit dimensions. */}
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="A terminal showing the command: ssh tty.cards"
+    />
+
+    {
+      article && (
+        <>
+          <meta
+            property="article:published_time"
+            content={article.published.toISOString()}
+          />
+          {article.modified && (
+            <meta
+              property="article:modified_time"
+              content={article.modified.toISOString()}
+            />
+          )}
+        </>
+      )
+    }
+
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <meta name="twitter:image" content={ogImage} />
+
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="theme-color" content="#0b0b0b" />
+
+    <link rel="sitemap" href="/sitemap-index.xml" />
+    <link
+      rel="alternate"
+      type="application/rss+xml"
+      title="tty.cards - engineering notes"
+      href="/rss.xml"
+    />
+
+    {
+      schemas.map((s) => (
+        <script
+          is:inline
+          type="application/ld+json"
+          set:html={JSON.stringify(s)}
+        />
+      ))
+    }
+
+    <!-- Pages inject per-route <head> tags here (e.g. BlogPosting JSON-LD).
+         Without this named slot, slot="head" content is dropped silently. -->
+    <slot name="head" />
+  </head>
+
+  <body>
+    <div class="scanlines motion-reduce:animate-none" aria-hidden="true"></div>
+
+    <a
+      href="#main"
+      class="absolute -left-[9999px] top-0 z-100 border border-accent bg-bg px-gutter py-cell focus:left-gutter focus:top-gutter"
+      >skip to content</a
+    >
+
+    <header
+      class="sticky top-0 z-50 border-b border-frame bg-bg/90 backdrop-blur-sm"
+    >
+      <div
+        class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-[1.6ch]"
+      >
+        <a href="/" class="font-bold text-fg">tty.cards</a>
+        <nav aria-label="Primary">
+          <ul class="flex flex-wrap gap-x-panel gap-y-cell text-[0.9rem]">
+            {
+              nav.map((l) => (
+                <li>
+                  <a
+                    href={l.href}
+                    class="text-dim transition-colors hover:text-accent focus-visible:text-accent"
+                  >
+                    {l.label}
+                  </a>
+                </li>
+              ))
+            }
+          </ul>
+        </nav>
+      </div>
+    </header>
+
+    <main id="main">
+      <slot />
+    </main>
+
+    <footer class="mt-[12ch] border-t border-frame text-[0.85rem]">
+      <div
+        class="shell flex flex-wrap items-center justify-between gap-x-panel gap-y-cell py-panel"
+      >
+        <p class="text-dim">
+          <span class="text-accent">tty.cards</span> - cards over ssh
+        </p>
+        <ul class="flex flex-wrap gap-x-panel gap-y-cell">
+          {
+            footLinks.map((l) => (
+              <li>
+                <a
+                  href={l.href}
+                  class="text-dim transition-colors hover:text-accent focus-visible:text-accent"
+                >
+                  {l.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </div>
+    </footer>
+
+    <script>
+      import "../scripts/motion.ts";
+    </script>
+  </body>
+</html>

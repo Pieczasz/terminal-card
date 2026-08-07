@@ -8,3 +8,8 @@ coverage.out
 bin/
 # Local DB backups
 backups/
+
+# Astro site
+web/node_modules/
+web/dist/
+web/.astro/

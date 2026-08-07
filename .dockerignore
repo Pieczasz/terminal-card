@@ -11,3 +11,6 @@ LICENSE
 Makefile
 compose.yaml
 .DS_Store
+
+# Marketing site: never part of the Go image build context.
+web/

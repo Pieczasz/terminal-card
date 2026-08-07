@@ -295,6 +295,37 @@ func (m *Manager) WaitForFinalizers(timeout time.Duration) bool {
 	}
 }
 
+// Stats counts lobbies by state for the public stats endpoint: how many hands are
+// being played, and how many tables are sitting open waiting for players.
+//
+// Takes only the manager lock, never a lobby's - reading l.state under m.mu alone
+// would race with a lobby mutating itself, so this reads through the same lock order
+// every other caller uses (manager, then lobby).
+func (m *Manager) Stats() (inGame, waiting int) {
+	if m == nil {
+		return 0, 0
+	}
+	m.mu.RLock()
+	lobbies := make([]*Lobby, 0, len(m.lobbies))
+	for _, l := range m.lobbies {
+		lobbies = append(lobbies, l)
+	}
+	m.mu.RUnlock()
+
+	for _, l := range lobbies {
+		l.mu.RLock()
+		switch l.state {
+		case InGame:
+			inGame++
+		case Waiting:
+			waiting++
+		case Closed:
+		}
+		l.mu.RUnlock()
+	}
+	return inGame, waiting
+}
+
 // Kick removes a guest from the lobby. Only the current leader may kick guests.
 func (m *Manager) Kick(host, target *player.Player) error {
 	if host == nil || target == nil {
