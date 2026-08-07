@@ -1,63 +1,89 @@
 ---
-title: "One process holds the table"
-description: "Why tty.cards keeps every live card game in memory in a single Go process, and what that buys before it starts to cost."
+title: "Game state"
+description: "Live game state in tty.cards lives in memory in a single Go process. What that means for the locking contract and for restarts."
 date: 2026-08-05
 draft: false
 ---
 
-Most multiplayer games start by asking where the state lives. A database? Redis? An
-actor per table? tty.cards answers differently: the state lives in a `map` in one
-process, and the SSH session is the only transport.
+All live game state is a struct in memory in one process. No Redis, no actor per
+table, no serialisation anywhere between a keypress and the rules that answer it.
 
-That decision shapes everything else, so it is worth being honest about both halves
-of it.
+## The locking contract
 
-## What it buys
+`Engine` holds two mutexes - its own and the state's - for the whole of `Start`,
+`SubmitAction` and `RemovePlayer`:
 
-There is no serialisation boundary between a player's keypress and the rules that
-answer it. A player presses `enter`, the engine takes two mutexes, the rules mutate
-a `*State` in place, and every subscribed view gets the new snapshot. No JSON, no
-network hop, no cache to invalidate.
+```go
+func (e *Engine) submitAction(playerID string, action Action, playerPresent bool) error {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+	// ...
+}
+```
 
-That means the whole correctness argument fits in one place. `Engine` holds `e.mu`
-and `state.mu` together for the entire duration of `Start`, `SubmitAction` and
-`RemovePlayer`, and `Rules` methods are always called with both held. A rules
-implementation can therefore treat `*State` as if it owned it - no defensive
-copying, no optimistic retries, no "what if this changed underneath me".
+`Rules` methods are always called with both held. That gives implementations a useful
+guarantee: a `Rules` can treat `*State` as if it owned it. Mutate the slice, reassign
+the map, no copying, no retry loop, no version check.
 
-It also means the failure modes are small enough to enumerate. A `Rules`
-implementation must never call back into `Engine`, because that deadlocks. That is
-the whole concurrency contract, and it is one sentence long.
+The cost is one rule: **a `Rules` implementation must never call back into `Engine`.**
+That deadlocks immediately. It is the entire concurrency contract and it fits in a
+sentence, which is the trade I wanted.
 
-## What it costs
+## Turn resolution
 
-One process means one node. There is no horizontal scaling story here, and adding
-one would mean replacing the broadcaster with a real pub/sub - the code says so out
-loud rather than pretending otherwise.
+The cursor is settled in one place, `applyNextTurnLocked`, in this order:
 
-It also means a restart drops every game in flight. Ranked results are written to
-Postgres when a hand finishes, so nothing durable is lost, but a table mid-hand is
-gone. For a game whose sessions last minutes, that trade is fine. For one whose
-sessions last hours, it would not be.
+1. `State.OverrideNextTurn` if the rules set one
+2. otherwise advance to the next seat
+3. otherwise honour whatever `State.CurrentTurn` says
 
-## The part that actually took the longest
+Poker needs (1) constantly - after a betting round closes, the next actor is not the
+next seat, it is first-to-act on the new street. So `AfterAction` writes
+`OverrideNextTurn` and the engine picks it up. Crazy Eights almost never sets it and
+just advances.
 
-Not the rules. Not the TUI. Disconnects.
+`ApplyAction` runs, then `AfterAction`. An error from `AfterAction` finishes the game,
+because a rules set that cannot reach a consistent state should not keep dealing. That
+is why anything checkable up front belongs in `ValidateAction` instead.
 
-A player closing their laptop mid-hand is the normal case, not the edge case, and
-every layer has to agree about what just happened. The engine has to fold them and
-pick the next actor from post-removal seat indices. The lobby has to promote a new
-leader if the leaver was the host. The view has to release its broadcaster
-subscription, or it parks a goroutine and holds a subscriber slot until the engine
-itself closes.
+## Disconnects took the longest
 
-Getting that last one wrong is invisible. No assertion fails; the server just
-leaks a goroutine per disconnected player until something runs out. It is the kind
-of bug that only shows up as a graph trending in the wrong direction three weeks
-later, which is why the test suite runs `goleak.VerifyTestMain` in every package
-that subscribes to anything.
+Not the rules. Not the TUI. A player closing a laptop mid-hand is the normal case, and
+every layer has to agree on what just happened.
 
----
+There is an optional interface for it:
 
-More to come on the poker side pot logic, which is the only part of this codebase
-where getting the arithmetic wrong silently moves other people's chips.
+```go
+type PlayerLeaveHandler interface {
+	OnPlayerLeave(state *State, playerID string)
+	AfterPlayerRemoved(state *State, removedIndex int)
+}
+```
+
+Two hooks and not one, because poker needs both sides of the removal. `OnPlayerLeave`
+folds them while the seat indices are still the old ones. `AfterPlayerRemoved` runs
+once the slice has shifted, and that is where the button and blinds get reindexed and
+the next actor is picked from the *new* seat numbering. Doing either in the other's
+slot points a marker at the wrong player.
+
+The failure that actually cost me an afternoon was quieter than any of that. A view
+holding a broadcaster subscription has to release it:
+
+```go
+type Closer interface{ Close() }
+```
+
+Skip it and the listener goroutine parks on a channel forever and keeps a subscriber
+slot until the engine itself closes. Nothing fails. No assertion notices. You find out
+weeks later from a graph. Every package that subscribes to anything now runs
+`goleak.VerifyTestMain`, which is the only reason I would trust it.
+
+## What a restart costs
+
+Every table in flight, gone. Ranked results are written to Postgres when a hand
+finishes, so nothing durable is lost, but a hand in progress is not recoverable.
+
+For sessions measured in minutes that is fine. For sessions measured in hours it would
+not be, and the fix would not be a small one.
