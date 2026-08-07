@@ -1,0 +1,88 @@
+name: Web
+
+# Builds the Astro site and publishes it to GitHub Pages.
+#
+# The path filter matters: without it every Go-only push would spend a Pages
+# deployment doing nothing. The mirror of this lives in test.yml, which should carry
+# `paths-ignore: ['web/**', '**.md']` so site commits do not run the Go matrix.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  pull_request:
+    paths:
+      - "web/**"
+      - ".github/workflows/web.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: web
+
+jobs:
+  # Runs on pull requests too, so a site that does not typecheck or build never
+  # reaches main in the first place.
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v6
+        with:
+          # There is no package.json at the repo root - this is a Go module with the
+          # site nested inside it - so the action has to be pointed at web/ or it
+          # cannot find `packageManager` and fails to resolve a pnpm version.
+          package_json_file: web/package.json
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: web/.nvmrc
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Lint and format check
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm check
+
+      - name: Build
+        run: pnpm build
+
+      # Only the main-branch run produces something to publish; PR runs stop at the
+      # build above and act purely as a gate.
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/dist
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      pages: write # to publish a Pages deployment
+      id-token: write # deploy-pages authenticates with OIDC, not a PAT
+
+    # Pages allows one deployment at a time. Queue rather than cancel, so a push
+    # that lands during a deploy still goes out instead of being dropped.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

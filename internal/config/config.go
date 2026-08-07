@@ -15,6 +15,9 @@ type Config struct {
 	Env                  string
 	ServerHost           string
 	ServerPort           int
+	APIPort              int
+	APIAllowOrigin       string
+	APITrustProxy        bool
 	MaxConnections       int
 	SSHKeyPath           string
 	DBHost               string
@@ -73,6 +76,7 @@ func Load() (*Config, error) {
 
 	ints := &intEnvs{}
 	serverPort := ints.get("SERVER_PORT", 6969)
+	apiPort := ints.get("API_PORT", 6970)
 	maxConnections := ints.get("MAX_CONNECTIONS", 1000)
 	dbPort := ints.get("DB_PORT", 5432)
 	dbMaxOpenConnections := ints.get("DB_MAX_OPEN_CONNS", 25)
@@ -88,9 +92,14 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		Env:                  env,
-		ServerHost:           getEnv("SERVER_HOST", "0.0.0.0"),
-		ServerPort:           serverPort,
+		Env:            env,
+		ServerHost:     getEnv("SERVER_HOST", "0.0.0.0"),
+		ServerPort:     serverPort,
+		APIPort:        apiPort,
+		APIAllowOrigin: getEnv("API_ALLOW_ORIGIN", "*"),
+		// The compose deployment never publishes the API port, so the only
+		// possible source of X-Forwarded-For is the nginx in front of it.
+		APITrustProxy:        getEnv("API_TRUST_PROXY", "true") == "true",
 		MaxConnections:       maxConnections,
 		SSHKeyPath:           getEnv("SSH_KEY_PATH", ".wishlist/server"),
 		DBHost:               getEnv("DB_HOST", "localhost"),

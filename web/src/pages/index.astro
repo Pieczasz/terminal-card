@@ -1,0 +1,128 @@
+---
+import CardFan from "../components/CardFan.astro";
+import LiveStats from "../components/LiveStats.astro";
+import LiveTerminal from "../components/LiveTerminal.astro";
+import SshCommand from "../components/SshCommand.astro";
+import TerminalWindow from "../components/TerminalWindow.astro";
+import Base from "../layouts/Base.astro";
+
+const H2 =
+  "text-[clamp(1.2rem,2.4vw+0.5rem,2.1rem)] font-bold leading-[1.25] text-balance";
+const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
+---
+
+<Base
+  title="tty.cards - play poker and crazy eights over ssh"
+  description="Card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking - no download, no account, no browser. Free and open source."
+  appSchema
+>
+  <!-- ------------------------------------------------------------- hero --- -->
+  <section class="shell relative pt-[clamp(7ch,11vw,16ch)] pb-gutter">
+    <div class="bloom" aria-hidden="true"></div>
+
+    <div class="mb-gap">
+      <SshCommand size="hero" typewriter />
+    </div>
+
+    <h1
+      class="mb-gutter max-w-[46ch] text-[clamp(1.15rem,2.1vw+0.6rem,1.9rem)] leading-[1.35] font-bold text-balance"
+    >
+      Card games, played entirely in your terminal.
+    </h1>
+
+    <p
+      class="max-w-[54ch] text-[clamp(1rem,1.1vw+0.7rem,1.25rem)] text-muted text-pretty"
+    >
+      No download, no account, no browser tab. Bring your own terminal.
+    </p>
+  </section>
+
+  <!-- ------------------------------------------------------------- demo --- -->
+  <section class={BLOCK} data-rise>
+    <h2 class={`${H2} mb-gutter`}>Have fun playing around with this sh*t.</h2>
+    <TerminalWindow
+      title="tty.cards"
+      meta="demo"
+      tone="gold"
+      pad="px-panel pt-gutter pb-panel"
+    >
+      <LiveTerminal />
+    </TerminalWindow>
+  </section>
+
+  <!-- ------------------------------------------------------------ games --- -->
+  <section class={BLOCK} id="games" data-rise>
+    <h2 class={`${H2} mb-gutter`}>Two games so far.</h2>
+
+    <div class="grid grid-cols-[repeat(auto-fit,minmax(38ch,1fr))] gap-gap">
+      <TerminalWindow title="CRAZY EIGHTS" meta="2-6 players" tone="gold">
+        <div
+          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
+        >
+          <p
+            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
+          >
+            Match the suit or the rank. Eights are wild - play one and name the
+            suit you want next.
+          </p>
+          <CardFan
+            cards={[
+              { rank: "8", suit: "♠" },
+              { rank: "Q", suit: "♥" },
+              { rank: "3", suit: "♦" },
+            ]}
+          />
+        </div>
+      </TerminalWindow>
+
+      <TerminalWindow title="TEXAS HOLD'EM" meta="2-9 seats" tone="gold">
+        <div
+          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
+        >
+          <p
+            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
+          >
+            No-limit. Blinds, side pots, and a real showdown. Chips are plain
+            numbers.
+          </p>
+          <CardFan
+            cards={[
+              { rank: "A", suit: "♠" },
+              { rank: "K", suit: "♥" },
+              { rank: "7", suit: "♣" },
+            ]}
+          />
+        </div>
+      </TerminalWindow>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------------------- live --- -->
+  <section class={BLOCK} id="ranked" data-rise>
+    <h2 class={`${H2} mb-gutter`}>Who is on right now.</h2>
+    <TerminalWindow
+      title="LIVE"
+      meta="top 5"
+      tone="gold"
+      pad="px-panel pt-panel pb-panel"
+    >
+      <LiveStats />
+    </TerminalWindow>
+  </section>
+
+  <!-- --------------------------------------------------------- last cta --- -->
+  <section class={BLOCK} data-rise>
+    <TerminalWindow tone="gold" pad="px-panel py-[5ch]">
+      <div class="flex flex-col items-center gap-panel text-center">
+        <h2
+          class="animate-glow text-[clamp(1.1rem,2.2vw+0.5rem,1.8rem)] font-bold text-accent motion-reduce:animate-none"
+        >
+          Your terminal is already open.
+        </h2>
+        {/* self-center, not just a centred parent: the button is inline-block, so
+            without it the command sits wherever its own box starts. */}
+        <SshCommand size="hero" class="self-center" />
+      </div>
+    </TerminalWindow>
+  </section>
+</Base>

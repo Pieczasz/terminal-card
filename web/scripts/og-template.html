@@ -1,0 +1,155 @@
+<!doctype html>
+<!--
+  Source for public/og.png. Rendered at 1200x630 and screenshotted.
+  Regenerate with:  node scripts/make-og.mjs
+  Kept as HTML rather than hand-authored SVG so it reuses the site's own colours
+  and reads the same as the page it represents.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      :root {
+        --bg: #0b0b0b;
+        --fg: #fafafa;
+        --dim: #949494;
+        --accent: #ffd700;
+        --face: #eeeeee;
+        --suit-red: #ff6b6b;
+        --frame: #2e2e2e;
+      }
+      body {
+        width: 1200px;
+        height: 630px;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "SF Mono", "Menlo", ui-monospace, monospace;
+        position: relative;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        padding: 0 84px;
+      }
+      .bloom {
+        position: absolute;
+        inset: -120px auto auto -120px;
+        width: 900px;
+        height: 700px;
+        background: radial-gradient(
+          50% 50% at 40% 40%,
+          rgb(255 215 0 / 0.13),
+          transparent 70%
+        );
+      }
+      .scan {
+        position: absolute;
+        inset: 0;
+        background: repeating-linear-gradient(
+          to bottom,
+          rgb(250 250 250 / 0.03) 0 1px,
+          transparent 1px 4px
+        );
+      }
+      .brand {
+        position: absolute;
+        top: 54px;
+        left: 84px;
+        font-size: 26px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+      }
+      .brand span {
+        color: var(--accent);
+      }
+      .cmd {
+        font-size: 86px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+        display: flex;
+        align-items: baseline;
+        gap: 22px;
+      }
+      .cmd .p {
+        color: var(--dim);
+      }
+      .cmd .cur {
+        color: var(--accent);
+        font-size: 78px;
+      }
+      .sub {
+        margin-top: 34px;
+        font-size: 33px;
+        color: var(--dim);
+        letter-spacing: -0.01em;
+      }
+      .cards {
+        position: absolute;
+        right: 84px;
+        bottom: 66px;
+        display: flex;
+      }
+      .card {
+        width: 92px;
+        height: 129px;
+        border: 2px solid var(--face);
+        border-radius: 7px;
+        background: var(--bg);
+        margin-left: -22px;
+        padding: 11px 13px;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        font-size: 30px;
+        font-weight: 700;
+        transform-origin: bottom center;
+      }
+      .card:nth-child(1) {
+        transform: rotate(-7deg);
+      }
+      .card:nth-child(2) {
+        transform: rotate(0deg) translateY(-6px);
+      }
+      .card:nth-child(3) {
+        transform: rotate(7deg);
+      }
+      .card .s {
+        font-size: 30px;
+        font-weight: 400;
+      }
+      .red {
+        color: var(--suit-red);
+      }
+      .foot {
+        position: absolute;
+        left: 84px;
+        bottom: 66px;
+        font-size: 24px;
+        color: var(--dim);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="bloom"></div>
+    <div class="brand"><span>♠</span> tty.cards</div>
+
+    <div class="cmd">
+      <span class="p">$</span><span>ssh tty.cards</span><span class="cur">▊</span>
+    </div>
+    <p class="sub">poker and crazy eights, in your terminal</p>
+
+    <div class="foot">no download | no account | free</div>
+
+    <div class="cards">
+      <div class="card"><span>A</span><span class="s">♠</span></div>
+      <div class="card"><span>K</span><span class="s red">♥</span></div>
+      <div class="card"><span>8</span><span class="s">♣</span></div>
+    </div>
+
+    <div class="scan"></div>
+  </body>
+</html>

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/config"
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -41,6 +42,20 @@ const (
 	ctxKeyModel
 )
 
+// handshakeTimeout bounds how long a connection may stay unauthenticated.
+//
+// Until a client attempts auth it is invisible to rateLimitAuth, yet it already
+// holds one of the MAX_CONNECTIONS listener slots - so without this, opening that
+// many sockets and never speaking again locks every real player out. charm.land/ssh
+// drops the deadline once the handshake succeeds and idleTimeout takes over.
+const handshakeTimeout = 20 * time.Second
+
+// connIdleTimeout is deliberately far looser than the router's five-minute TUI
+// idle check: it reaps connections that went away without a FIN, and is not the
+// gameplay rule. A game exempts itself from the TUI check, so anything tighter
+// here would drop players waiting on a slow table.
+const connIdleTimeout = 30 * time.Minute
+
 type SessionTracker struct {
 	mu     sync.Mutex
 	active map[uint]bool
@@ -63,6 +78,14 @@ func (t *SessionTracker) Connect(userID uint) bool {
 	return true
 }
 
+// Count reports how many distinct users hold a live session. Read by the public
+// stats endpoint, so it must not block a connect or disconnect.
+func (t *SessionTracker) Count() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return len(t.active)
+}
+
 func (t *SessionTracker) Disconnect(userID uint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -78,6 +101,10 @@ type ServerDependencies struct {
 	MatchRepository db.MatchRepository
 	LobbyManager    *lobby.Manager
 	GameRegistry    *game.Registry
+	// Tracker is optional. Supply one when something outside the ssh server needs
+	// to read the live session count (the stats endpoint does); leave it nil and
+	// SetupServer owns a private one.
+	Tracker *SessionTracker
 }
 
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
@@ -95,12 +122,16 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		return nil, err
 	}
 
-	tracker := NewSessionTracker()
+	tracker := deps.Tracker
+	if tracker == nil {
+		tracker = NewSessionTracker()
+	}
 	rateLimiter := ratelimit.NewSlidingWindowLimiter(deps.Config.RateLimitCount, deps.Config.RateLimitWindow)
 
 	server, err := wish.NewServer(
 		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
+		wish.WithIdleTimeout(connIdleTimeout),
 		// Any key is accepted; identity is bound to its fingerprint in LoadOrRegisterUser.
 		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
@@ -117,6 +148,8 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while setting up wish ssh server: %w", err)
 	}
+	// wish exposes no option for this one, and it has to be set before Serve.
+	server.HandshakeTimeout = handshakeTimeout
 
 	return server, nil
 }
@@ -141,7 +174,9 @@ func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHa
 		if err != nil {
 			host = ctx.RemoteAddr().String()
 		}
-		if !limiter.Allow(host) {
+		// Budgets are held against the client's network, not its exact address:
+		// see ratelimit.NetKey for why a per-address limit is meaningless over IPv6.
+		if !limiter.Allow(ratelimit.NetKey(host)) {
 			observability.RateLimitRejectsTotal.Add(1)
 			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String(), "session_id", ctx.SessionID())
 			return false

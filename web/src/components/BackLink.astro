@@ -1,0 +1,108 @@
+---
+/*
+ * A back link whose arrow reaches further left on hover, and pulls in when pressed.
+ *
+ * The arrow is a chevron plus a separate bar rather than one SVG path: animating the
+ * length means animating one dimension, and a plain CSS `width` on the bar is exact.
+ * Scaling a path instead needs `transform-box: fill-box` and lands the stroke width
+ * at a different thickness at each end of the transition.
+ */
+interface Props {
+  href: string;
+  label?: string;
+  class?: string;
+}
+
+const { href, label = "blog", class: className } = Astro.props;
+---
+
+<a href={href} class:list={["back", className]}>
+  <span class="arrow" aria-hidden="true">
+    <svg class="chev" viewBox="0 0 6 10" fill="none" focusable="false">
+      <path d="M5.2 1 L1.2 5 L5.2 9" />
+    </svg>
+    <span class="bar"></span>
+  </span>
+  <span>{label}</span>
+</a>
+
+<style>
+  .back {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.9ch;
+    color: var(--color-dim);
+    text-decoration: none;
+    transition: color 160ms linear;
+  }
+
+  .back:hover,
+  .back:focus-visible {
+    color: var(--color-accent);
+  }
+
+  .arrow {
+    display: inline-flex;
+    align-items: center;
+    /* Reserve the hovered width so the label never shifts as the arrow grows. */
+    width: 2.5em;
+    transition: transform 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .chev {
+    width: 0.5em;
+    height: 0.85em;
+    flex: 0 0 auto;
+    stroke: currentColor;
+    stroke-width: 1.7;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .bar {
+    height: 1.5px;
+    width: 0.75em;
+    /* Overlap the chevron's stroke cap so the join has no seam. */
+    margin-left: -1.5px;
+    border-radius: 1px;
+    background: currentColor;
+    transition: width 240ms cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  /* Extend on hover: the head leads left while the tail grows. */
+  .back:hover .arrow,
+  .back:focus-visible .arrow {
+    transform: translateX(-0.2em);
+  }
+
+  .back:hover .bar,
+  .back:focus-visible .bar {
+    width: 1.4em;
+  }
+
+  /* And retract under the pointer, so the click has some give. */
+  .back:active .arrow {
+    transform: translateX(0.05em);
+  }
+
+  .back:active .bar {
+    width: 0.55em;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .arrow,
+    .bar {
+      transition: none;
+    }
+    .back:hover .arrow,
+    .back:focus-visible .arrow,
+    .back:active .arrow {
+      transform: none;
+    }
+    .back:hover .bar,
+    .back:focus-visible .bar,
+    .back:active .bar {
+      width: 0.75em;
+    }
+  }
+</style>

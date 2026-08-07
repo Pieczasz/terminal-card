@@ -1,0 +1,106 @@
+---
+/*
+ * The one action the whole site exists to produce. The command itself is the button:
+ * clicking anywhere on it copies. One target instead of two, and it matches what
+ * people already try to do with a command on a page.
+ *
+ * Affordance is the pointer plus the text going gold on hover - no label. Confirmation
+ * is a small ring that pings at the pointer and disappears; a "copied" caption sticks
+ * around drawing attention to itself long after you already knew it worked.
+ *
+ * With `typewriter`, scripts/motion.ts types it out on load. The string is duplicated
+ * into data-typewriter because the script clears the node before replaying it, and the
+ * visible copy still ships in the HTML for crawlers and the no-JS case.
+ *
+ * The line reserves its final width up front, or the growing text shifts whatever sits
+ * beside it on every keystroke. 1ch is exactly one character here: the font is mono.
+ */
+interface Props {
+  cmd?: string;
+  size?: "hero" | "inline";
+  typewriter?: boolean;
+  class?: string;
+}
+
+const {
+  cmd = "ssh tty.cards",
+  size = "inline",
+  typewriter = false,
+  class: className,
+} = Astro.props;
+
+const lineSize =
+  size === "hero"
+    ? "text-[clamp(1.5rem,6.4vw,4.2rem)] leading-[1.1] font-bold tracking-[-0.02em]"
+    : "text-[1.05rem]";
+
+// "$ " plus the command plus the cursor cell.
+const reserve = `${cmd.length + 4}ch`;
+---
+
+<button
+  type="button"
+  data-ssh
+  data-copy
+  data-cmd={cmd}
+  aria-label={`Copy ${cmd} to the clipboard`}
+  class:list={[
+    "group/cmd inline-block cursor-pointer border-0 bg-transparent p-0 text-left font-mono",
+    className,
+  ]}
+>
+  <code
+    class:list={["inline-flex items-baseline", lineSize]}
+    style={typewriter ? `min-width:${reserve}` : undefined}
+  >
+    <span class="mr-cell text-dim select-none" aria-hidden="true">$</span><span
+      class="whitespace-nowrap transition-colors group-hover/cmd:text-accent"
+      data-typewriter={typewriter ? cmd : undefined}>{cmd}</span
+    ><span class="ml-[0.2ch] text-accent" data-cursor aria-hidden="true">▊</span>
+  </code>
+</button>
+
+<script>
+  /** Floats "copied" up from the pointer, then removes itself. */
+  function ping(x: number, y: number) {
+    if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const el = document.createElement("span");
+    el.className = "copy-ping";
+    el.textContent = "\u2713 copied";
+    // Offset right of the cursor so the pointer never sits on top of the word.
+    el.style.left = `${x + 14}px`;
+    el.style.top = `${y}px`;
+    document.body.appendChild(el);
+    el.addEventListener("animationend", () => el.remove());
+  }
+
+  // Delegated once per page, so any number of SshCommand instances share it.
+  document.addEventListener("click", async (e) => {
+    const btn = (e.target as HTMLElement)?.closest?.("[data-copy]");
+    if (!(btn instanceof HTMLElement)) return;
+
+    try {
+      await navigator.clipboard.writeText(btn.dataset.cmd ?? "");
+    } catch {
+      // Firefox without permission, or any non-secure context. Select the command so
+      // the manual copy shortcut still works rather than the click doing nothing.
+      const text = btn.querySelector("[data-typewriter], code span:nth-child(2)");
+      if (text) {
+        const r = document.createRange();
+        r.selectNodeContents(text);
+        getSelection()?.removeAllRanges();
+        getSelection()?.addRange(r);
+      }
+      return;
+    }
+
+    const ev = e as MouseEvent;
+    // A keyboard activation reports 0,0 - ping the button instead of the corner.
+    if (ev.clientX || ev.clientY) {
+      ping(ev.clientX, ev.clientY);
+    } else {
+      const r = btn.getBoundingClientRect();
+      ping(r.right, r.top + r.height / 2);
+    }
+  });
+</script>

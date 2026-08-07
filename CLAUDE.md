@@ -62,6 +62,23 @@ Lock order when both are involved is manager (`m.mu`) then lobby (`l.mu`) - see 
 
 Middleware in `wish.WithMiddleware` runs **last-first**, so `sessionLifecycle` is listed last to be outermost: charm.land/ssh runs handlers in a goroutine with no recover, so an escaped panic would kill the process. `releaseSession` must stay a direct `defer` for `recover()` to work. Auth accepts any public key; identity is the SHA256 fingerprint, first connection registers the username.
 
+### Stats API
+
+`internal/httpapi` serves a read-only JSON feed the website reads: `/v1/stats`
+(players online, hands in play, tables open) and `/v1/leaderboard?limit=N`. It is
+mounted by `cmd/server/main.go` on `API_PORT` (6970) and reached only through the
+proxy's `/api/` location - never published to the host.
+
+It is deliberately narrow: no writes, no auth, no per-user data, nothing the TUI
+leaderboard does not already show any visitor. That is what makes it safe
+unauthenticated. Live counts come from `ssh.SessionTracker.Count` and
+`lobby.Manager.Stats`, so `SetupServer` accepts an optional `Tracker` for sharing.
+
+`API_TRUST_PROXY` makes the per-IP limiter read `X-Forwarded-For`. Only correct
+because the port is unpublished; a directly exposed listener that trusts the header
+can be evaded by forging it. nginx sets it from `$remote_addr`, not
+`$proxy_add_x_forwarded_for`, so a client cannot prepend its own value.
+
 The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter.
 
 ## Conventions

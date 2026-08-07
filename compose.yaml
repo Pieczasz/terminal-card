@@ -37,6 +37,11 @@ services:
       - ENV=production
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=6969
+      # Stats feed for the website. Reached only through the proxy's /api/ location -
+      # deliberately never published to the host, which is also what makes it safe
+      # for the backend to trust X-Forwarded-For for its rate limit.
+      - API_PORT=6970
+      - API_TRUST_PROXY=true
       - DB_HOST=db
       - DB_PORT=5432
       - DB_USER=${DB_USER:-postgres}
@@ -52,6 +57,16 @@ services:
       - MAX_CONNECTIONS=1000
     volumes:
       - ssh-keys:/data/ssh
+    # A card server needs no privileges and writes nothing outside its volume.
+    # The named mount above stays writable: read_only covers the image layer only,
+    # which is what keygen needs for /data/ssh.
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    # Longer than run's own drain (30s Shutdown + 15s finalizers), so a redeploy
+    # cannot SIGKILL the process while a ranked match is still being persisted.
+    stop_grace_period: 50s
     depends_on:
       db:
         condition: service_healthy
@@ -85,8 +100,15 @@ services:
         source: ./internal/config/nginx.conf
         target: /etc/nginx/nginx.conf
         read_only: true
+      # Built marketing site. Optional: nginx 404s if the directory is empty, so a
+      # deployment that only wants the game works unchanged.
+      - type: bind
+        source: ./web/dist
+        target: /srv/site
+        read_only: true
     ports:
       - 22:22
+      - 80:80
     depends_on:
       - backend
 
