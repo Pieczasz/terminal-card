@@ -26,14 +26,12 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
     <h1
       class="mb-gutter max-w-[46ch] text-[clamp(1.15rem,2.1vw+0.6rem,1.9rem)] leading-[1.35] font-bold text-balance"
-      data-print
     >
       Card games, played entirely in your terminal.
     </h1>
 
     <p
       class="max-w-[54ch] text-[clamp(1rem,1.1vw+0.7rem,1.25rem)] text-muted text-pretty"
-      data-print
     >
       No download, no account, no browser tab. Bring your own terminal.
     </p>
@@ -41,7 +39,7 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
   <!-- ------------------------------------------------------------- demo --- -->
   <section class={BLOCK} data-rise>
-    <h2 class={`${H2} mb-gap`}>Have fun messing about with this thing.</h2>
+    <h2 class={`${H2} mb-gutter`}>Have fun messing about with this thing.</h2>
     <TerminalWindow
       title="tty.cards"
       meta="demo"
@@ -54,7 +52,7 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
   <!-- ------------------------------------------------------------ games --- -->
   <section class={BLOCK} id="games" data-rise>
-    <h2 class={`${H2} mb-gap`}>Two games so far.</h2>
+    <h2 class={`${H2} mb-gutter`}>Two games so far.</h2>
 
     <div class="grid grid-cols-[repeat(auto-fit,minmax(38ch,1fr))] gap-gap">
       <TerminalWindow title="CRAZY EIGHTS" meta="2-6 players" tone="gold">
@@ -101,7 +99,7 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
   <!-- ------------------------------------------------------------- live --- -->
   <section class={BLOCK} id="ranked" data-rise>
-    <h2 class={`${H2} mb-gap`}>Who is on right now.</h2>
+    <h2 class={`${H2} mb-gutter`}>Who is on right now.</h2>
     <TerminalWindow
       title="LIVE"
       meta="top 5"
@@ -115,13 +113,15 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
   <!-- --------------------------------------------------------- last cta --- -->
   <section class={BLOCK} data-rise>
     <TerminalWindow tone="gold" pad="px-panel py-[5ch]">
-      <div class="flex flex-col items-center gap-gap text-center">
+      <div class="flex flex-col items-center gap-panel text-center">
         <h2
           class="animate-glow text-[clamp(1.1rem,2.2vw+0.5rem,1.8rem)] font-bold text-accent motion-reduce:animate-none"
         >
           Your terminal is already open.
         </h2>
-        <SshCommand size="hero" />
+        {/* self-center, not just a centred parent: the button is inline-block, so
+            without it the command sits wherever its own box starts. */}
+        <SshCommand size="hero" class="self-center" />
       </div>
     </TerminalWindow>
   </section>
