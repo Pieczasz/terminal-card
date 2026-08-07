@@ -23,7 +23,7 @@ const {
   noindex = false,
 } = Astro.props;
 
-const site = Astro.site ?? new URL("https://tty.cards");
+const site = Astro.site ?? new URL("https://www.tty.cards");
 const canonical = new URL(path, site).href;
 const ogImage = new URL("/og.png", site).href;
 

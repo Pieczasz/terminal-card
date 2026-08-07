@@ -9,7 +9,7 @@ const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
 
 const fmt = (d: Date) => d.toISOString().slice(0, 10).replace(/-/g, ".");
 
-const base = Astro.site ?? new URL("https://tty.cards");
+const base = Astro.site ?? new URL("https://www.tty.cards");
 
 // A Blog node lets the index be understood as a feed of the posts below it, rather
 // than as an unrelated page that happens to contain links.

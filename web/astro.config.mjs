@@ -54,7 +54,7 @@ export default defineConfig({
 
   // @astrojs/sitemap emits nothing at all without this, and the canonical/OG URLs
   // in Base.astro are resolved against it.
-  site: "https://tty.cards",
+  site: "https://www.tty.cards",
 
   output: "static",
   integrations: [sitemap()],
