@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: https://tty.cards/sitemap-index.xml
+Sitemap: https://www.tty.cards/sitemap-index.xml
