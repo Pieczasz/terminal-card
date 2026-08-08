@@ -48,6 +48,33 @@ func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelect
 	return lg.JoinVertical(lg.Left, fan, labels.String())
 }
 
+// RenderHandMulti is RenderHand for multi-select (Hearts pass phase). selected marks
+// which cards are currently staged for the pass; cursor highlights the focused index.
+func RenderHandMulti(t styles.Theme, hand []deck.Card, selected map[int]struct{}, cursor int) string {
+	if len(hand) == 0 {
+		return ""
+	}
+	fan := components.RenderFanMulti(t, hand, selected)
+
+	var labels strings.Builder
+	for i := range hand {
+		slot := components.CardSlotWidthMulti(i, len(hand), selected)
+		label := " "
+		if i < 10 {
+			style := t.Dim
+			if _, ok := selected[i]; ok {
+				style = t.PlayerItemSelected.Bold(true)
+			} else if i == cursor {
+				style = t.PlayerItemSelected
+			}
+			label = style.Render(strconv.Itoa(i))
+		}
+		labels.WriteString(styles.PadCenter(slot, label))
+	}
+
+	return lg.JoinVertical(lg.Left, fan, labels.String())
+}
+
 type Orientation int
 
 const (

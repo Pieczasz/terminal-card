@@ -7,9 +7,11 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	crazyeightrules "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	heartsrules "github.com/Pieczasz/terminal-card/internal/game/hearts"
 	pokerrules "github.com/Pieczasz/terminal-card/internal/game/poker"
 	unorules "github.com/Pieczasz/terminal-card/internal/game/uno"
 	crazyeightview "github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
+	heartsview "github.com/Pieczasz/terminal-card/internal/tui/views/game/hearts"
 	pokerview "github.com/Pieczasz/terminal-card/internal/tui/views/game/poker"
 	unoview "github.com/Pieczasz/terminal-card/internal/tui/views/game/uno"
 
@@ -49,5 +51,11 @@ var All = []Entry{
 		Slug:  "uno",
 		Rules: func() game.Rules { return &unorules.Rules{} },
 		View:  unoview.New,
+	},
+	{
+		Name:  "Hearts",
+		Slug:  "hearts",
+		Rules: func() game.Rules { return &heartsrules.Rules{} },
+		View:  heartsview.New,
 	},
 }
