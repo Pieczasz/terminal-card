@@ -8,7 +8,6 @@ require (
 	charm.land/lipgloss/v2 v2.0.5
 	charm.land/ssh v0.4.2
 	charm.land/wish/v2 v2.0.3
-	github.com/charmbracelet/harmonica v0.2.0
 	github.com/charmbracelet/keygen v0.5.4
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be
 	github.com/jackc/pgx/v5 v5.10.0
