@@ -107,3 +107,35 @@ func BenchmarkAllow(b *testing.B) {
 		})
 	}
 }
+
+// A non-positive cap would refuse every caller the limiter has not seen before, so it has
+// to be ignored rather than applied.
+func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, -1} {
+		limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(n)
+
+		assert.Truef(t, limiter.Allow("1.1.1.1"), "WithMaxKeys(%d) must keep the default cap", n)
+	}
+}
+
+// Entries for callers who have gone quiet are swept periodically, not only when the key cap
+// is reached: without it a burst of one-off addresses stays resident for as long as the process runs.
+func TestSlidingWindowLimiter_SweepsExpiredKeysPeriodically(t *testing.T) {
+	t.Parallel()
+	// The sweep runs every 64th call, so the window has to be short enough that the
+	// first 63 callers have expired by the time the 64th arrives.
+	const window = 20 * time.Millisecond
+	limiter := ratelimit.NewSlidingWindowLimiter(1, window)
+
+	for i := range 63 {
+		require.True(t, limiter.Allow(strconv.Itoa(i)))
+	}
+	require.Equal(t, 63, limiter.Size(), "nothing is swept before the sweep is due")
+
+	time.Sleep(4 * window)
+	require.True(t, limiter.Allow("late"), "the 64th call is the one that sweeps")
+
+	assert.Equal(t, 1, limiter.Size(), "every caller that has gone quiet is dropped")
+}
