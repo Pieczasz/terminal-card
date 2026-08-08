@@ -16,7 +16,16 @@ type Rules struct{}
 var (
 	_ game.Rules              = (*Rules)(nil)
 	_ game.PlayerLeaveHandler = (*Rules)(nil)
+	_ game.TurnTimeoutHandler = (*Rules)(nil)
 )
+
+// TimeoutAction draws. ValidateAction always accepts a draw, and on an exhausted
+// board it degrades into the forced pass the turn loop already handles - so it is
+// the one move that cannot fail. Picking a card to play would also spend a card the
+// player may have been holding for a reason.
+func (r *Rules) TimeoutAction(_ *game.State) game.Action {
+	return ActionDrawCard{}
+}
 
 func (r *Rules) MinPlayers() int { return 2 }
 func (r *Rules) MaxPlayers() int { return 6 }
@@ -131,7 +140,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionPlayCard:
 		card := action.Cards[0]
 
-		newHand := make([]deck.Card, 0, len(p.Cards)-1)
+		newHand := make([]deck.Card, 0, len(p.Cards))
 		removed := false
 		for _, c := range p.Cards {
 			if c == card && !removed {

@@ -10,11 +10,11 @@ import (
 	"regexp"
 	"slices"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/db"
-	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 )
@@ -34,9 +34,14 @@ type Manager struct {
 	playerLobby         map[string]*Lobby
 	cachedPublicLobbies []*Lobby
 	cacheLastUpdated    time.Time
-	matchRepo           db.MatchRepository
-	appCtx              context.Context
-	joinLimiter         *ratelimit.SlidingWindowLimiter
+	// cacheDirty is set by anything that changes which lobbies are public, a lobby
+	// marking itself in-game included. It is atomic rather than guarded by m.mu: a
+	// lobby sets it while holding its own lock, and reaching for the manager lock
+	// there would invert the documented manager-then-lobby order.
+	cacheDirty  atomic.Bool
+	matchRepo   db.MatchRepository
+	appCtx      context.Context
+	joinLimiter *ratelimit.SlidingWindowLimiter
 	// finalizerMu makes accepting a finished-match write and stopping new writes
 	// atomic with respect to shutdown. WaitGroup alone permits Add after Wait
 	// observes zero.
@@ -127,7 +132,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	lobby := &Lobby{
 		manager:     m,
 		leader:      leader,
-		guests:      make([]*player.Player, 0, options.maxPlayers-1),
+		guests:      nil,
 		options:     options,
 		code:        code,
 		ready:       make(map[string]bool),
@@ -137,41 +142,8 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 
 	m.lobbies[code] = lobby
 	m.playerLobby[leader.ID] = lobby
+	m.invalidatePublicCache()
 	return lobby, nil
-}
-
-func (m *Manager) PublicLobbies(p *player.Player) []*Lobby {
-	lobbies := m.getCachedPublicLobbies()
-	if p == nil || p.DatabaseUser == nil {
-		return lobbies
-	}
-
-	playerElos := make(map[string]uint32)
-	for _, r := range p.DatabaseUser.Rankings {
-		if r.Game.Name != "" {
-			playerElos[r.Game.Name] = r.Elo
-		}
-	}
-
-	// Snapshot each sort key once (GameName/averageElo lock the lobby) so the
-	// comparator can't re-lock or see values shift mid-sort.
-	type ranked struct {
-		lobby *Lobby
-		dist  int
-	}
-	items := make([]ranked, len(lobbies))
-	for i, l := range lobbies {
-		target := playerElos[l.GameName()]
-		if target == 0 {
-			target = elo.ToUint32(elo.DefaultRating)
-		}
-		items[i] = ranked{lobby: l, dist: abs(int(l.averageElo()) - int(target))}
-	}
-	slices.SortFunc(items, func(a, b ranked) int { return a.dist - b.dist })
-	for i, it := range items {
-		lobbies[i] = it.lobby
-	}
-	return lobbies
 }
 
 func (m *Manager) JoinLobbyByCode(code string, p *player.Player) error {
@@ -298,9 +270,9 @@ func (m *Manager) WaitForFinalizers(timeout time.Duration) bool {
 // Stats counts lobbies by state for the public stats endpoint: how many hands are
 // being played, and how many tables are sitting open waiting for players.
 //
-// Takes only the manager lock, never a lobby's - reading l.state under m.mu alone
-// would race with a lobby mutating itself, so this reads through the same lock order
-// every other caller uses (manager, then lobby).
+// The lobby set is copied under m.mu and the lock released before any lobby is
+// touched, so each l.mu is taken on its own rather than nested inside m.mu. Reading
+// l.state without l.mu would race with a lobby mutating itself.
 func (m *Manager) Stats() (inGame, waiting int) {
 	if m == nil {
 		return 0, 0
@@ -384,6 +356,7 @@ func (m *Manager) RemoveLobby(code string) {
 		return
 	}
 	delete(m.lobbies, code)
+	m.invalidatePublicCache()
 
 	l.mu.Lock()
 	leaderID := ""
@@ -416,21 +389,27 @@ func (m *Manager) RemoveLobby(code string) {
 	}
 }
 
-func (m *Manager) getCachedPublicLobbies() []*Lobby {
-	m.mu.RLock()
-	if time.Since(m.cacheLastUpdated) < 2*time.Second {
-		lobbies := slices.Clone(m.cachedPublicLobbies)
-		m.mu.RUnlock()
-		return lobbies
-	}
-	m.mu.RUnlock()
+// publicLobbyCacheTTL is what keeps a browse off every lobby's own lock. The window
+// is short enough that a new table shows up on the next refresh.
+const publicLobbyCacheTTL = 2 * time.Second
 
+// invalidatePublicCache makes the next browse re-scan. Callers are the writes that
+// change which tables are on offer, so a new or closed table shows up immediately
+// rather than a cache window later.
+func (m *Manager) invalidatePublicCache() {
+	if m != nil {
+		m.cacheDirty.Store(true)
+	}
+}
+
+func (m *Manager) getCachedPublicLobbies() []*Lobby {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if time.Since(m.cacheLastUpdated) < 2*time.Second {
+	if !m.cacheDirty.Load() && time.Since(m.cacheLastUpdated) < publicLobbyCacheTTL {
 		lobbies := slices.Clone(m.cachedPublicLobbies)
 		return lobbies
 	}
+	m.cacheDirty.Store(false)
 
 	publicLobbies := make([]*Lobby, 0, len(m.lobbies))
 	for _, l := range m.lobbies {

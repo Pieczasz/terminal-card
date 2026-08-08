@@ -1,18 +1,21 @@
 package poker
 
 import (
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// A disconnect never runs the view's esc/enter paths, so Close is the only thing
-// that releases the engine subscription. If it regresses, the Len assertion fails
-// and the parked listener below never returns, so the test times out.
+// A disconnect never runs the view's esc/enter paths, so Close is the only thing that
+// releases the engine subscription.
 func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	t.Parallel()
 	engine, m := startedTable(t)
@@ -21,8 +24,10 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	require.Equal(t, 1, broadcaster.Len(), "the view subscribed on construction")
 
 	// Park a listener on the channel exactly as the Bubble Tea runtime would. The
-	// command is built here, on this goroutine, because Close writes m.events.
-	listen := m.Init()
+	// command is built here, on this goroutine, because Close writes m.events. It is
+	// listenForEvents rather than Init: Init also batches the turn-clock tick, and
+	// this test is about the subscription alone.
+	listen := listenForEvents(m.events)
 	done := make(chan tea.Msg, 1)
 	go func() { done <- listen() }()
 
@@ -48,7 +53,6 @@ func TestClose_AfterEngineClosed(t *testing.T) {
 }
 
 // stepRaise works in uint, so decreasing below the step would wrap to a huge number.
-// The guard is the whole reason the branch exists.
 func TestStepRaise_ClampsWithinTheLegalBandAndNeverWraps(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
@@ -74,8 +78,8 @@ func TestStepRaise_ClampsWithinTheLegalBandAndNeverWraps(t *testing.T) {
 	assert.Equal(t, wantMax, m.raiseAmount, "increasing eventually reaches the stack")
 }
 
-// Chips are how a raise is built, so a keyed chip must land on top of an already
-// legal amount and never push the raise outside the band.
+// Chips are how a raise is built, so a keyed chip must land on top of an already legal
+// amount and never push the raise outside the band.
 func TestAddChip_StacksOntoTheOpenRaise(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
@@ -108,8 +112,7 @@ func TestAddChip_IsANoOpWhenNotRaising(t *testing.T) {
 	assert.Zero(t, m.raiseAmount, "chips only move inside the raise prompt")
 }
 
-// Between hands the table waits on one player to deal. Enter must send that, not
-// drop everyone back to the lobby the way the end of a match does.
+// Between hands the table waits on one player to deal.
 func TestConfirm_DealsTheNextHandInsteadOfLeaving(t *testing.T) {
 	t.Parallel()
 	engine, m := startedTable(t)
@@ -135,8 +138,7 @@ func TestConfirm_DealsTheNextHandInsteadOfLeaving(t *testing.T) {
 	assert.Equal(t, 2, m.handNumber)
 }
 
-// A pot nobody contested is won face-down. The hand-over screen is shown between
-// hands now, so a leaked hole card is a live read for the rest of the match.
+// A pot nobody contested is won face-down.
 func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
 	t.Parallel()
 	engine, m := startedTable(t)
@@ -154,8 +156,8 @@ func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
 	}
 }
 
-// esc on the between-hands screen leaves the whole match, so the screen has to say
-// so: it otherwise looks exactly like the end-of-game screen where esc was free.
+// esc on the between-hands screen leaves the whole match, so the screen has to say so: it
+// otherwise looks exactly like the end-of-game screen where esc was free.
 func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
@@ -166,6 +168,22 @@ func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
 
 	m.matchDone = true
 	assert.NotContains(t, m.handOverHint(), "forfeiting", "the match is over, esc costs nothing")
+}
+
+// The between-hands hint names the hand that is about to be dealt.
+func TestHandOverHint_NamesTheHandAboutToBeDealt(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.handDone = true
+	m.matchDone = false
+	m.handNumber = 1
+
+	m.baseState.MyTurn = true
+	assert.Contains(t, m.handOverHint(), "deal hand 2", "the hero is on the button")
+
+	m.baseState.MyTurn = false
+	m.baseState.CurrentPlayer = "bob"
+	assert.Contains(t, m.handOverHint(), "hand 2", "and bob is when he is")
 }
 
 // Stepping while the raise prompt is closed must do nothing at all.
@@ -179,4 +197,331 @@ func TestStepRaise_IsANoOpWhenNotRaising(t *testing.T) {
 	m.stepRaise(-1)
 
 	assert.Zero(t, m.raiseAmount, "no adjustment outside the raise prompt")
+}
+
+// The engine only broadcasts that a seat was taken for idling; ending the session is the
+// view's half of the contract.
+func TestIdleRemoved_MatchesOnlyOurOwnSeat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		event game.Event
+		want  bool
+	}{
+		{
+			name:  "our own seat taken for idling",
+			event: game.Event{Type: game.EventPlayerIdle, PlayerID: "1"},
+			want:  true,
+		},
+		{
+			name:  "another player idled out",
+			event: game.Event{Type: game.EventPlayerIdle, PlayerID: "2"},
+			want:  false,
+		},
+		{
+			name:  "our own expired turn is not a removal",
+			event: game.Event{Type: game.EventTurnTimedOut, PlayerID: "1"},
+			want:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			engine, m := startedTable(t)
+			t.Cleanup(engine.Close)
+
+			assert.Equal(t, tt.want, m.idleRemoved(tt.event))
+		})
+	}
+}
+
+// Only the quit path asserts on the returned command.
+func TestUpdate_IdleRemovalQuitsTheSession(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	_, cmd := m.Update(gameMsg(game.Event{Type: game.EventPlayerIdle, PlayerID: "1"}))
+
+	require.NotNil(t, cmd)
+	_, isQuit := cmd().(tea.QuitMsg)
+	assert.True(t, isQuit, "an idled-out player's session must end itself")
+}
+
+// The clock has to keep re-arming while the hand is live, and stop once it is not: a tick
+// chain that outlives the game re-renders every session forever.
+func TestUpdate_ClockTickReschedulesOnlyWhilePlaying(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	_, cmd := m.Update(gameview.ClockTickMsg(time.Now()))
+	require.NotNil(t, cmd, "a live hand keeps counting down")
+	_, isTick := cmd().(gameview.ClockTickMsg)
+	assert.True(t, isTick)
+
+	// Finished on the engine, not on the model: Update re-syncs from the engine before
+	// it decides, so a phase written straight onto baseState would just be overwritten.
+	engine.RemovePlayer("2")
+	require.True(t, engine.IsFinished())
+
+	_, cmd = m.Update(gameview.ClockTickMsg(time.Now()))
+	assert.Nil(t, cmd, "a finished game must not keep ticking")
+}
+
+// A running clock is what the countdown renders from, so it has to survive the trip from
+// the engine into the view's own state.
+func TestSyncState_CarriesTheTurnCountdown(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	assert.Positive(t, m.baseState.TurnRemaining, "a started hand has a clock running")
+	assert.LessOrEqual(t, m.baseState.TurnRemaining, game.DefaultTurnTimeout)
+}
+
+// heroOnTurn advances the hand until the hero is the one to act. The button is dealt
+// at random, so a test that needs the hero on turn cannot assume it.
+func heroOnTurn(t *testing.T, engine *game.Engine, m *Model) {
+	t.Helper()
+	if m.baseState.MyTurn {
+		return
+	}
+	// Heads-up preflop the small blind acts first; calling passes the turn to the
+	// big blind without ending the hand.
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionCall{}))
+	m.syncState()
+	require.True(t, m.baseState.MyTurn, "the hero has to be on turn for this test to mean anything")
+}
+
+// A view that never reads its event channel shows a frozen table while the hand plays on
+// without it.
+func TestListenForEvents_DeliversWhatTheEngineBroadcasts(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan game.Event, 1)
+	events <- game.Event{Type: game.EventTurnAdvanced}
+
+	msg := listenForEvents(events)()
+
+	require.IsType(t, gameMsg{}, msg)
+	assert.Equal(t, game.EventTurnAdvanced, game.Event(msg.(gameMsg)).Type)
+}
+
+func TestListenForEvents_EndsQuietlyWithoutAFeed(t *testing.T) {
+	t.Parallel()
+	assert.Nil(t, listenForEvents(nil)(), "no feed is not an event")
+
+	closed := make(chan game.Event)
+	close(closed)
+	assert.Nil(t, listenForEvents(closed)(), "a closed feed ends the listener")
+}
+
+// The error line is what tells a player their table has gone quiet, so it must stay empty
+// on a healthy connection or every session opens on a false alarm.
+func TestNew_HealthyTableReportsNoError(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	require.NoError(t, m.lastErr, "a successful subscription is not an error")
+	assert.NotNil(t, m.events, "and the feed is live")
+}
+
+// matchDone is what turns esc from "forfeit" into "leave", and what stops the hero being
+// offered actions after the match is over.
+func TestSyncState_MatchDoneTracksTheEnginePhase(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	require.False(t, m.matchDone, "the match has only just started")
+
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+	m.syncState()
+
+	assert.True(t, m.matchDone)
+
+	// Without readable poker state the engine phase is all there is to go on, and it
+	// still has to be believed: this is the path a view lands on if Extra is not there.
+	engine.WithState(func(state *game.State) { state.Extra = nil })
+	m.syncState()
+
+	assert.True(t, m.matchDone, "a finished engine is a finished match either way")
+}
+
+// The action prompts are the only thing standing between a player and an action the engine
+// will reject, so each condition is checked on its own.
+func TestCanAllInAndHeroBusted(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		myTurn     bool
+		handDone   bool
+		chips      uint
+		wantAllIn  bool
+		wantBusted bool
+	}{
+		{name: "on turn with chips", myTurn: true, chips: 500, wantAllIn: true},
+		{name: "not on turn", myTurn: false, chips: 500},
+		{name: "hand already over", myTurn: true, handDone: true, chips: 500},
+		{name: "no chips left", myTurn: true, chips: 0, wantBusted: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			engine, m := startedTable(t)
+			t.Cleanup(engine.Close)
+
+			hero := m.heroSeat()
+			require.NotNil(t, hero)
+			hero.Chips = tt.chips
+			m.baseState.MyTurn = tt.myTurn
+			m.handDone = tt.handDone
+
+			assert.Equal(t, tt.wantAllIn, m.canAllIn(), "canAllIn")
+			assert.Equal(t, tt.wantBusted, m.heroBusted(), "heroBusted")
+		})
+	}
+}
+
+// A step has to actually move the amount: a prompt that ignores the key looks broken, and
+// only a negative direction steps down.
+func TestStepRaise_MovesByExactlyOneChip(t *testing.T) {
+	t.Parallel()
+	_, m := startedTable(t)
+	m.raising = true
+	step := smallestChip()
+	// Well clear of both ends of the band so the clamp cannot hide the movement.
+	m.raiseAmount = m.clampRaise(m.currentBet+m.minRaise) + 10*step
+
+	opening := m.raiseAmount
+	m.stepRaise(-1)
+	assert.Equal(t, opening-step, m.raiseAmount, "one chip down")
+
+	m.stepRaise(+1)
+	assert.Equal(t, opening, m.raiseAmount, "and back up")
+
+	m.stepRaise(0)
+	assert.Equal(t, opening+step, m.raiseAmount, "only a negative direction steps down")
+}
+
+// submit is the single path from a keypress to the engine.
+func TestSubmit(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an accepted action is applied and clears the error line", func(t *testing.T) {
+		t.Parallel()
+		engine, m := startedTable(t)
+		t.Cleanup(engine.Close)
+		heroOnTurn(t, engine, m)
+
+		m.lastErr = assert.AnError
+		m.raising = true
+
+		// Which of the two is free depends on where the button landed.
+		action := game.Action(logic.ActionCheck{})
+		if m.toCall > 0 {
+			action = logic.ActionCall{}
+		}
+		_, cmd := m.submit(action)
+
+		assert.Nil(t, cmd)
+		require.NoError(t, m.lastErr, "a successful move clears the previous complaint")
+		assert.False(t, m.raising, "and closes the raise prompt")
+
+		// ActedThisRound is wiped when a completed round advances the street, so it
+		// cannot say whether the move landed; LastAction survives either way.
+		engine.WithState(func(state *game.State) {
+			extra, ok := state.Extra.(*logic.State)
+			require.True(t, ok)
+			require.NotNil(t, extra.LastAction, "the move actually reached the engine")
+			assert.Equal(t, action.Name(), extra.LastAction.Name())
+		})
+	})
+
+	t.Run("a rejected action is reported and changes nothing", func(t *testing.T) {
+		t.Parallel()
+		engine, m := startedTable(t)
+		t.Cleanup(engine.Close)
+		heroOnTurn(t, engine, m)
+
+		street := m.street
+		_, cmd := m.submit(logic.ActionRaiseTo{Amount: 1})
+
+		assert.Nil(t, cmd)
+		require.Error(t, m.lastErr, "the player has to be told why nothing happened")
+		assert.Equal(t, street, m.street, "and the table has not moved")
+	})
+
+	t.Run("acting out of turn never reaches the engine", func(t *testing.T) {
+		t.Parallel()
+		engine, m := startedTable(t)
+		t.Cleanup(engine.Close)
+		m.baseState.MyTurn = false
+		m.lastErr = nil
+
+		_, cmd := m.submit(logic.ActionFold{})
+
+		assert.Nil(t, cmd)
+		require.NoError(t, m.lastErr, "there is nothing to report, the key is simply not ours")
+		assert.False(t, m.handDone, "and the hand is untouched")
+	})
+}
+
+// The turn marker is how a player knows the table is waiting on them.
+func TestBuildSeats_TurnMarkerNamesOneLiveSeat(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	onTurn := make([]string, 0, 1)
+	for _, s := range m.seats {
+		if s.IsTurn {
+			onTurn = append(onTurn, s.PlayerID)
+		}
+	}
+	require.Len(t, onTurn, 1, "one seat, and only one, is on turn")
+	assert.Equal(t, engine.CurrentPlayerID(), onTurn[0])
+
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
+	m.syncState()
+	require.True(t, m.handDone)
+
+	for _, s := range m.seats {
+		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
+	}
+}
+
+// The countdown belongs to the seat that is on turn: a number under somebody else's cards
+// tells the table the wrong player is being waited on.
+func TestView_CountdownIsDrawnOnTheSeatOnTurn(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	rendered := stripANSI(m.View().Content)
+
+	clock := gameview.FormatTurnClock(m.baseState.TurnRemaining, m.baseState.MyTurn)
+	require.NotEmpty(t, clock, "a started hand has a clock running")
+	assert.Equal(t, 1, strings.Count(rendered, clock),
+		"the countdown is drawn exactly once, on the seat that owes an action")
+}
+
+// A finished hand has nobody on turn, so no seat may still be counting down.
+func TestView_NoCountdownBetweenHands(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
+	m.syncState()
+	require.True(t, m.handDone)
+
+	for _, s := range m.seats {
+		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
+	}
 }

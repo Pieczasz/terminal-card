@@ -57,6 +57,12 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		global.Width = msg.Width
 		global.Height = msg.Height
 		return true, nil
+	case tea.BackgroundColorMsg:
+		// The router updates its own copy for views built later; this updates the
+		// view that is on screen right now, so a mid-session theme switch takes
+		// effect without navigating away.
+		global.Theme = styles.NewTheme(msg.IsDark())
+		return true, nil
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "ctrl+c":
@@ -66,10 +72,13 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 	return false, nil
 }
 
-func RenderCenteredLayout(width, height int, header, content, footer string) string {
-	return lg.Place(
-		width, height,
+// RenderCenteredLayout frames content for a full-screen view. It takes the whole
+// GlobalContext rather than loose dimensions because the frame needs the session's
+// theme as well as its size.
+func RenderCenteredLayout(g router.GlobalContext, header, content, footer string) string {
+	return styles.Place(
+		g.Width, g.Height,
 		lg.Center, lg.Center,
-		styles.RenderMainLayout(width, height, header, content, footer),
+		g.Theme.RenderMainLayout(g.Width, g.Height, header, content, footer),
 	)
 }

@@ -3,6 +3,7 @@ package game
 import (
 	"errors"
 	"slices"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -58,7 +59,7 @@ func (b *BoundEngine) Snapshot() StateSnapshot {
 	if b == nil || b.engine == nil {
 		return StateSnapshot{}
 	}
-	return b.engine.SnapshotFor(b.playerID)
+	return b.engine.Snapshot()
 }
 
 // Hand returns a defensive copy of the bound player's cards.
@@ -86,6 +87,17 @@ func (b *BoundEngine) WithExtra(fn func(extra any)) {
 	b.engine.WithState(func(state *State) {
 		fn(state.Extra)
 	})
+}
+
+func (b *BoundEngine) TurnRemaining() time.Duration {
+	if b == nil || b.engine == nil {
+		return 0
+	}
+	deadline := b.engine.TurnDeadline()
+	if deadline.IsZero() {
+		return 0
+	}
+	return max(time.Until(deadline), 0)
 }
 
 // IsFinished reports whether the bound engine's game is finished.

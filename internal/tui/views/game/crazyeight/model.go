@@ -2,6 +2,7 @@ package crazyeight
 
 import (
 	"fmt"
+	"log/slog"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -59,15 +60,23 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 	bound := game.Bind(engine, playerID)
 
 	var ch <-chan game.Event
+	var subErr error
 	if bound != nil {
 		if b := bound.Broadcaster(); b != nil {
-			ch = b.Subscribe()
+			ch, subErr = b.Subscribe()
+			if subErr != nil {
+				// Without the feed the table would freeze on the current frame while the
+				// hand carries on without them, so say so rather than look responsive.
+				slog.Error("crazy eights view could not subscribe to game events", "error", subErr, "player_id", playerID)
+				subErr = fmt.Errorf("live table updates unavailable, leave and rejoin: %w", subErr)
+			}
 		}
 	}
 	m := &Model{
 		global:          global,
 		bound:           bound,
 		events:          ch,
+		lastActionErr:   subErr,
 		selectionSpring: animation.DefaultSpring(),
 		selectionLift:   2.0,
 		selectionVel:    0,
@@ -77,7 +86,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) syncState() {
-	m.baseState = gameview.SyncBaseState(m.global, m.bound)
+	m.baseState = gameview.SyncBaseState(m.bound)
 
 	if m.bound != nil {
 		m.bound.WithExtra(func(extra any) {
@@ -97,5 +106,6 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		listenForEvents(m.events),
 		animation.Tick(),
+		gameview.ClockTick(),
 	)
 }

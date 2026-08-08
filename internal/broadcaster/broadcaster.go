@@ -3,11 +3,25 @@
 package broadcaster
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 )
 
 const defaultMaxSubscribers = 64
+
+// subscriberBuffer is how many events a slow subscriber may fall behind before
+// Broadcast starts dropping its oldest.
+const subscriberBuffer = 256
+
+// Subscribe reports these rather than handing back a channel that is already
+// closed. A closed channel is indistinguishable from a finished game, so a caller
+// given one silently stops receiving events and has no way to tell why.
+var (
+	ErrClosed     = errors.New("broadcaster is closed")
+	ErrAtCapacity = errors.New("broadcaster is at subscriber capacity")
+)
 
 type subscriber[T any] struct {
 	id int
@@ -35,26 +49,21 @@ func New[T any](maxSubscribers int) *Broadcaster[T] {
 	}
 }
 
-func (b *Broadcaster[T]) Subscribe() <-chan T {
+func (b *Broadcaster[T]) Subscribe() (<-chan T, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	if b.closed {
-		ch := make(chan T)
-		close(ch)
-		return ch
+		return nil, ErrClosed
 	}
 	if len(b.subscribers) >= b.maxSubscribers {
-		slog.Warn("broadcaster at capacity, rejecting subscriber", "max", b.maxSubscribers)
-		ch := make(chan T)
-		close(ch)
-		return ch
+		return nil, fmt.Errorf("%w of %d", ErrAtCapacity, b.maxSubscribers)
 	}
 
-	ch := make(chan T, 256)
+	ch := make(chan T, subscriberBuffer)
 	b.subscribers[b.nextID] = &subscriber[T]{ch: ch, id: b.nextID}
 	b.nextID++
-	return ch
+	return ch, nil
 }
 
 func (b *Broadcaster[T]) Unsubscribe(ch <-chan T) {

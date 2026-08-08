@@ -20,9 +20,12 @@ const (
 	EventActionApplied
 	EventGameEnded
 	EventGameStarted
+	EventTurnTimedOut
+	EventPlayerIdle
 )
 
 type PlayerSnapshot struct {
+	ID       string
 	Username string
 	HandSize int
 }

@@ -98,3 +98,34 @@ func TestMatchRepositoryRecordMatchTransactionError(t *testing.T) {
 	err = repo.RecordMatch(ctx, 1, orderedUserIDs, nil, false)
 	assert.Error(t, err)
 }
+
+// Reproduction: a ranked match must still read back as ranked through the history
+// the profile screen renders from. The write and the read are in different
+// repositories, so each being correct on its own does not prove the pair is.
+func TestRankedMatchReadsBackAsRankedInHistory(t *testing.T) {
+	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{},
+		&db.MatchParticipant{}, &db.PublicKey{}, &db.Ranking{})
+
+	u1 := &db.User{Username: "winner"}
+	u2 := &db.User{Username: "loser"}
+	require.NoError(t, gormDB.Create(u1).Error)
+	require.NoError(t, gormDB.Create(u2).Error)
+
+	matches := repository.NewMatchRepository(gormDB)
+	users := repository.NewUserRepository(gormDB)
+	ctx := context.Background()
+
+	require.NoError(t, matches.FinalizeRankedMatch(ctx, "Poker", []uint{u1.ID, u2.ID}))
+
+	var stored db.Match
+	require.NoError(t, gormDB.First(&stored).Error)
+	assert.True(t, stored.Ranked, "the row itself has to say ranked")
+
+	history, err := users.UserMatchHistory(ctx, u1.ID, 10)
+	require.NoError(t, err)
+	require.Len(t, history, 1)
+	assert.True(t, history[0].Match.Ranked,
+		"the profile reads Match.Ranked from here, so it has to survive the preload")
+	assert.Equal(t, "Poker", history[0].Match.Game.Name)
+	assert.NotZero(t, history[0].EloDelta, "a ranked match moved the rating")
+}

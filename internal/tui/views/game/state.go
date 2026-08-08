@@ -1,11 +1,10 @@
 package game
 
 import (
-	"fmt"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/tui/router"
 )
 
 // BaseState contains a standard engine state applicable to most games.
@@ -17,10 +16,17 @@ type BaseState struct {
 	Opponents     []game.PlayerSnapshot
 	CurrentPlayer string
 	Winner        string
+	// TurnRemaining is how long the player on turn has left before the engine plays
+	// for them. Zero means no clock is running.
+	TurnRemaining time.Duration
 }
 
 // SyncBaseState builds a redacted view via BoundEngine (own hand only).
-func SyncBaseState(global router.GlobalContext, bound *game.BoundEngine) BaseState {
+//
+// Every identity comparison here goes through bound.PlayerID, which is the
+// authenticated session's player: display names are for rendering, never for
+// deciding whose hand or whose turn this is.
+func SyncBaseState(bound *game.BoundEngine) BaseState {
 	var base BaseState
 	if bound == nil {
 		return base
@@ -32,18 +38,15 @@ func SyncBaseState(global router.GlobalContext, bound *game.BoundEngine) BaseSta
 	base.CurrentPlayer = snap.CurrentPlayer
 	base.Winner = snap.Winner
 	base.Hand = bound.Hand()
+	base.TurnRemaining = bound.TurnRemaining()
 
-	if global.User != nil && base.Phase == game.Playing {
-		base.MyTurn = bound.Engine() != nil &&
-			bound.Engine().CurrentPlayerID() == fmt.Sprint(global.User.ID)
+	heroID := bound.PlayerID()
+	if base.Phase == game.Playing && bound.Engine() != nil {
+		base.MyTurn = bound.Engine().CurrentPlayerID() == heroID
 	}
 
-	viewerName := ""
-	if global.User != nil {
-		viewerName = global.User.Username
-	}
 	for _, opp := range snap.Players {
-		if opp.Username == viewerName {
+		if opp.ID == heroID {
 			continue
 		}
 		base.Opponents = append(base.Opponents, opp)

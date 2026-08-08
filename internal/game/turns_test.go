@@ -22,7 +22,7 @@ func TestTurns_ClampCurrent(t *testing.T) {
 	t.Parallel()
 	m := NewTurnManager(2)
 
-	// A stale index past the end (e.g. a leftover OverrideNextTurn computed when
+	// A stale index past the end (e.g., a leftover OverrideNextTurn computed when
 	// there were more players) must never survive as an out-of-range value.
 	m.SetCurrent(5)
 	m.clampCurrent()
@@ -50,8 +50,8 @@ func TestTurns_RemovePlayer(t *testing.T) {
 	assert.Equal(t, 0, m.Current())
 }
 
-// RemovePlayer's cursor shift is what stops a turn being handed to the wrong seat
-// when an earlier player leaves. The `current > index` decrement had no coverage.
+// RemovePlayer's cursor shift is what stops a turn being handed to the wrong seat when an
+// earlier player leaves.
 func TestTurnManager_RemovePlayer_ShiftsTheCursor(t *testing.T) {
 	t.Parallel()
 
@@ -64,6 +64,7 @@ func TestTurnManager_RemovePlayer_ShiftsTheCursor(t *testing.T) {
 		wantCount   int
 	}{
 		{name: "removing an earlier seat shifts the cursor down", count: 3, current: 2, remove: 0, wantCurrent: 1, wantCount: 2},
+		{name: "the shift moves down, not up", count: 4, current: 3, remove: 0, wantCurrent: 2, wantCount: 3},
 		{name: "removing a later seat leaves the cursor alone", count: 3, current: 0, remove: 2, wantCurrent: 0, wantCount: 2},
 		{name: "removing the seat on turn keeps the index", count: 3, current: 1, remove: 1, wantCurrent: 1, wantCount: 2},
 		{name: "a trailing cursor is clamped back in range", count: 2, current: 1, remove: 1, wantCurrent: 0, wantCount: 1},
