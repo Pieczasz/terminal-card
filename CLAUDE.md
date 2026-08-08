@@ -46,13 +46,23 @@ Per-game state lives in `State.Extra` (`crazyeight.State`, `poker.State`). The t
 
 Mid-hand disconnects: implement the optional `game.PlayerLeaveHandler` (`OnPlayerLeave` before removal, `AfterPlayerRemoved` after seat indices shift).
 
+### Turn clock
+
+`applyNextTurnLocked` also arms a per-turn timer (`DefaultTurnTimeout`, 30s). On expiry the engine plays the move from the optional `game.TurnTimeoutHandler` (`TimeoutAction`) and broadcasts `EventTurnTimedOut`; after `MaxMissedTurns` (3) consecutive expiries it broadcasts `EventPlayerIdle` and calls `RemovePlayer`. A player's own action clears their count, so this only fires on someone who stopped playing.
+
+Rules opt in: no `TurnTimeoutHandler` means no clock. Poker checks when free, folds when not, and deals between hands (an absent dealer would otherwise freeze the table); crazy eights draws. `TimeoutAction` must return something `ValidateAction` accepts, or the turn re-arms and the seat is taken on the next expiry instead.
+
+`turnSeq` is what makes this safe: every cursor change invalidates timers already in flight, so a player who acted as their clock ran out is not charged a miss. `stopTurnTimerLocked` runs from `finishGameLocked`, the last-player-standing path, and `Close`.
+
+The game view quits its bubbletea program on its own `EventPlayerIdle`, which is what ends the ssh session through the ordinary `releaseSession` path - the engine never reaches into the session layer.
+
 ### BoundEngine, not Engine, in views
 
 `game.Bind(engine, playerID)` gives a session-scoped handle that only submits as that player and only returns that player's hand. TUI views use `BoundEngine` / `SyncBaseState`; `Engine.WithState` and `SubmitAction` are for the server side.
 
 ### Subscription lifecycle
 
-`broadcaster.Broadcaster[T]` is latest-wins (drops the oldest on a full buffer) and hands back a *closed* channel when at capacity - engines size it `len(players)+8` for the ranked-finalize watcher and reconnect overlap.
+`broadcaster.Broadcaster[T]` is latest-wins (drops the oldest on a full buffer) and `Subscribe` returns `ErrAtCapacity` / `ErrClosed` rather than a pre-closed channel, so a caller cannot mistake "you will never receive anything" for "the stream ended". Engines size it `len(players)+8` for the ranked-finalize watcher and reconnect overlap. Views surface a failure in their own error line; the lobby logs it loudly because it means a match result will not be persisted.
 
 Any view holding a subscription must implement `router.Closer`. The router closes the active view on navigation; `ssh.releaseSession` closes the whole model on disconnect. Skipping `Close()` parks a listener goroutine and burns a subscriber slot until the engine closes.
 
@@ -74,10 +84,14 @@ leaderboard does not already show any visitor. That is what makes it safe
 unauthenticated. Live counts come from `ssh.SessionTracker.Count` and
 `lobby.Manager.Stats`, so `SetupServer` accepts an optional `Tracker` for sharing.
 
-`API_TRUST_PROXY` makes the per-IP limiter read `X-Forwarded-For`. Only correct
-because the port is unpublished; a directly exposed listener that trusts the header
-can be evaded by forging it. nginx sets it from `$remote_addr`, not
-`$proxy_add_x_forwarded_for`, so a client cannot prepend its own value.
+`API_TRUST_PROXY` makes the per-network limiter read `X-Forwarded-For`. It **defaults
+to false** and compose opts in explicitly: a directly exposed listener that trusts the
+header can be evaded by forging it, so the unsafe direction has to be chosen. nginx
+sets it from `$remote_addr`, not `$proxy_add_x_forwarded_for`, so a client cannot
+prepend its own value.
+
+Both limiters key on `ratelimit.NetKey`, which collapses IPv6 to its /64. Keying on the
+full address is meaningless there: one customer is routinely handed 2^64 of them.
 
 The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter.
 
