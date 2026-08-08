@@ -56,3 +56,18 @@ jobs:
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.12.2
+
+  vulncheck:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.26'
+
+    # Reachability-based, so it fails only on advisories our call graph can actually
+    # reach. Clean today; this is what keeps it clean.
+    - name: govulncheck
+      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
