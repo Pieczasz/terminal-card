@@ -1,5 +1,0 @@
--- No-op migration. The ranked column is now part of 000001_init.up.sql.
--- This file is kept for reference: it originally fixed a bug where editing 000001 in
--- place meant the column only reached fresh databases, not databases created before
--- the edit. Now that there is no production database, the fix is consolidated into 000001.
--- (To be deleted once CI and local tests confirm 000001 as the canonical schema.)
