@@ -129,7 +129,11 @@ if (appSchema) {
     <meta name="twitter:description" content={description} />
     <meta name="twitter:image" content={ogImage} />
 
-    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    {/* The icons are cropped to the framed spade rather than the full logo. The
+        whole composition - outer margin, the >_ prompt, the small card marks - is
+        illegible below about 64px; the panel alone still reads at 32. */}
+    <link rel="icon" href="/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="theme-color" content="#0b0b0b" />
 
