@@ -144,7 +144,7 @@ terminal-card/
 │   │   ├── matches.go          Match, MatchParticipant
 │   │   ├── games.go            Game
 │   │   ├── gorm.go             Connect(): pool 10 idle / cfg max / 1h lifetime
-│   │   └── migrations/         000001_init.{up,down}.sql (000002 is a no-op)
+│   │   └── migrations/         000001_init.{up,down}.sql — the only version
 │   ├── deck/                   cards, piles, shuffling (builder.go, card.go, deck.go)
 │   ├── elo/elo.go              Simple Multiplayer Elo, K=32, clamped [100, 4000]
 │   ├── game/                   PURE rules/engine. no db, no tui, no routes
