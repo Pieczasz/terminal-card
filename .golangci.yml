@@ -11,6 +11,8 @@ linters:
     - govet
     - ineffassign
     - staticcheck
+    - unused
+    - unparam
     - modernize
     - revive
     - godot
