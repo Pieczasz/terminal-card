@@ -8,20 +8,11 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
-)
-
-var (
-	nameStyle     = lg.NewStyle().Foreground(lg.Color("#E8D5A3")).Bold(true)
-	turnNameStyle = lg.NewStyle().Foreground(lg.Color("#1A1A1A")).Background(lg.Color("#E8D5A3")).Bold(true).Padding(0, 1)
-	dimStyle      = lg.NewStyle().Foreground(lg.Color("#666666"))
-	metaStyle     = lg.NewStyle().Foreground(lg.Color("#9A9A9A"))
-	accentStyle   = lg.NewStyle().Foreground(lg.Color("#C4A35A")).Bold(true)
-	errStyle      = lg.NewStyle().Foreground(lg.Color("196"))
-	badgeStyle    = lg.NewStyle().Foreground(lg.Color("#8FBC8F")).Bold(true)
 )
 
 func (m *Model) View() tea.View {
@@ -29,7 +20,7 @@ func (m *Model) View() tea.View {
 		return tea.NewView(m.renderHandOver())
 	}
 	if m.baseState.Phase != game.Playing {
-		return tea.NewView(gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.winnerName))
+		return tea.NewView(gameview.RenderWaitingScreen(m.global, m.baseState.Phase, m.winnerName))
 	}
 
 	compact := m.global.Height < 30
@@ -41,33 +32,39 @@ func (m *Model) View() tea.View {
 	mid := m.renderMiddle(midH, zones.left, zones.right, compact)
 
 	return tea.NewView(lg.JoinVertical(lg.Left,
-		lg.PlaceHorizontal(m.global.Width, lg.Center, top),
+		styles.PadCenter(m.global.Width, top),
 		mid,
-		lg.PlaceHorizontal(m.global.Width, lg.Center, bot),
+		styles.PadCenter(m.global.Width, bot),
 	))
 }
+
+// seatNameWidth is the name column on the results screen. Usernames run to 16
+// characters, so it has to elide rather than let a long name shove the chip
+// columns out of line.
+const seatNameWidth = 12
 
 func (m *Model) renderHandOver() string {
 	compact := m.global.Height < 30
 	board := m.renderBoard(compact)
 
-	title := accentStyle.Render(fmt.Sprintf("HAND %d/%d COMPLETE", m.handNumber, m.handsTotal))
-	winner := accentStyle.Render(m.winnerName + " wins the hand")
+	title := m.global.Theme.Accented.Render(fmt.Sprintf("HAND %d/%d COMPLETE", m.handNumber, m.handsTotal))
+	winner := m.global.Theme.Accented.Render(m.winnerName + " wins the hand")
 	if m.matchDone {
-		title = accentStyle.Render("MATCH COMPLETE")
-		winner = accentStyle.Render(m.winnerName + " wins")
+		title = m.global.Theme.Accented.Render("MATCH COMPLETE")
+		winner = m.global.Theme.Accented.Render(m.winnerName + " wins")
 	}
 
 	seatLines := make([]string, 0, len(m.seats))
 	for _, s := range m.seats {
 		// Chip glyphs carry their own colour, so they are joined in rather than
-		// rendered through metaStyle.
-		line := metaStyle.Render(fmt.Sprintf("%-12s %6d  ", s.Name, s.Chips)) + renderChipStack(s.Chips)
+		// rendered through m.global.Theme.Muted.
+		line := m.global.Theme.Muted.Render(fmt.Sprintf("%s %6d  ", styles.PadTruncate(s.Name, seatNameWidth), s.Chips)) +
+			renderChipStack(m.global.Theme, s.Chips)
 		if s.Folded {
-			line += metaStyle.Render("  folded")
+			line += m.global.Theme.Muted.Render("  folded")
 		}
 		if len(s.Hole) == 2 {
-			line += "  " + renderMiniCard(s.Hole[0]) + renderMiniCard(s.Hole[1])
+			line += "  " + renderMiniCard(m.global.Theme, s.Hole[0]) + renderMiniCard(m.global.Theme, s.Hole[1])
 		}
 		seatLines = append(seatLines, line)
 	}
@@ -75,9 +72,9 @@ func (m *Model) renderHandOver() string {
 	content := lg.JoinVertical(lg.Center,
 		title, winner, "", board, "",
 		lg.JoinVertical(lg.Left, seatLines...),
-		"", dimStyle.Render(m.handOverHint()),
+		"", m.global.Theme.Dim.Render(m.handOverHint()),
 	)
-	return lg.Place(m.global.Width, m.global.Height, lg.Center, lg.Center, content)
+	return styles.Place(m.global.Width, m.global.Height, lg.Center, lg.Center, content)
 }
 
 // handOverHint spells out that esc leaves the whole match. The screen looks like
@@ -191,9 +188,9 @@ func (m *Model) renderMiddle(height int, left, right []Seat, compact bool) strin
 	center := m.renderCenter(compact)
 
 	return lg.JoinHorizontal(lg.Top,
-		lg.Place(w1, height, lg.Left, lg.Center, leftView),
-		lg.Place(w2, height, lg.Center, lg.Center, center),
-		lg.Place(w3, height, lg.Right, lg.Center, rightView),
+		styles.Place(w1, height, lg.Left, lg.Center, leftView),
+		styles.Place(w2, height, lg.Center, lg.Center, center),
+		styles.Place(w3, height, lg.Right, lg.Center, rightView),
 	)
 }
 
@@ -210,14 +207,14 @@ func (m *Model) renderSideStack(seats []Seat, compact bool, orientation gameview
 
 func (m *Model) renderCenter(compact bool) string {
 	board := m.renderBoard(compact)
-	potLine := accentStyle.Render(fmt.Sprintf("POT %d", m.pot))
+	potLine := m.global.Theme.Accented.Render(fmt.Sprintf("POT %d", m.pot))
 	if m.sidePots > 1 {
-		potLine += metaStyle.Render(fmt.Sprintf("  (%d pots)", m.sidePots))
+		potLine += m.global.Theme.Muted.Render(fmt.Sprintf("  (%d pots)", m.sidePots))
 	}
-	street := accentStyle.Render(fmt.Sprintf("%s | hand %d/%d", m.street, m.handNumber, m.handsTotal))
-	betLine := metaStyle.Render(fmt.Sprintf("bet %d | to call %d", m.currentBet, m.toCall))
+	street := m.global.Theme.Accented.Render(fmt.Sprintf("%s | hand %d/%d", m.street, m.handNumber, m.handsTotal))
+	betLine := m.global.Theme.Muted.Render(fmt.Sprintf("bet %d | to call %d", m.currentBet, m.toCall))
 
-	return lg.JoinVertical(lg.Center, board, "", potLine, renderChipStack(m.pot), street, betLine)
+	return lg.JoinVertical(lg.Center, board, "", potLine, renderChipStack(m.global.Theme, m.pot), street, betLine)
 }
 
 func (m *Model) renderBoard(compact bool) string {
@@ -225,72 +222,83 @@ func (m *Model) renderBoard(compact bool) string {
 	for i := range 5 {
 		if i < len(m.board) {
 			if compact {
-				slots[i] = renderMiniCard(m.board[i])
+				slots[i] = renderMiniCard(m.global.Theme, m.board[i])
 			} else {
-				slots[i] = components.RenderCard(m.board[i], false)
+				slots[i] = components.RenderCard(m.global.Theme, m.board[i], false)
 			}
 		} else if compact {
-			slots[i] = dimStyle.Render("[  ]")
+			slots[i] = m.global.Theme.Dim.Render("[  ]")
 		} else {
-			slots[i] = renderEmptySlot()
+			slots[i] = renderEmptySlot(m.global.Theme)
 		}
 	}
 	return lg.JoinHorizontal(lg.Bottom, slots...)
 }
 
-func renderEmptySlot() string {
+func renderEmptySlot(t styles.Theme) string {
 	inner := lg.Place(7, 5, lg.Center, lg.Center, "")
 	return lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("#8A8A8A")).
+		BorderForeground(t.BorderMuted).
 		Padding(0, 1).
 		MarginTop(1).
 		Render(inner)
 }
 
-func renderMiniCard(c deck.Card) string {
+func renderMiniCard(t styles.Theme, c deck.Card) string {
 	rank := rankShort(c.Rank)
-	suit, style := suitGlyph(c.Suit)
+	suit, style := suitGlyph(t, c.Suit)
 	return style.Render(fmt.Sprintf("[%s%s]", rank, suit))
 }
 
-func renderHoleBack() string {
-	return dimStyle.Render("[??]")
+func renderHoleBack(t styles.Theme) string {
+	return t.Dim.Render("[??]")
 }
 
 func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientation) string {
-	ns := nameStyle
+	t := m.global.Theme
+	ns := lg.NewStyle().Bold(true).Foreground(t.Accent)
 	if s.IsTurn {
-		ns = turnNameStyle
+		ns = t.TurnName
 	} else if s.Folded {
-		ns = dimStyle
+		ns = t.Dim
 	}
 
 	badges := seatBadges(s)
 	name := ns.Render(s.Name)
 	if badges != "" {
-		name = lg.JoinHorizontal(lg.Center, name, " ", badgeStyle.Render(badges))
+		name = lg.JoinHorizontal(lg.Center, name, " ", m.global.Theme.SuccessText.Render(badges))
 	}
 
-	stack := metaStyle.Render(strconv.FormatUint(uint64(s.Chips), 10))
+	stack := m.global.Theme.Muted.Render(strconv.FormatUint(uint64(s.Chips), 10))
 	if s.Bet > 0 {
-		stack = lg.JoinHorizontal(lg.Center, stack, metaStyle.Render(fmt.Sprintf(" | bet %d", s.Bet)))
+		stack = lg.JoinHorizontal(lg.Center, stack, m.global.Theme.Muted.Render(fmt.Sprintf(" | bet %d", s.Bet)))
 	}
 	if s.AllIn && !s.Folded {
-		stack = lg.JoinHorizontal(lg.Center, stack, " ", accentStyle.Render("ALL-IN"))
+		stack = lg.JoinHorizontal(lg.Center, stack, " ", m.global.Theme.Accented.Render("ALL-IN"))
 	}
 	if s.Folded {
-		stack = dimStyle.Render("folded")
+		stack = m.global.Theme.Dim.Render("folded")
 	}
 
 	cards := m.renderSeatCards(s, compact, orientation)
 	rows := []string{cards, name, stack}
 	if !compact {
 		// A short terminal needs the row for cards more than for decoration.
-		rows = append(rows, renderChipStack(s.Chips))
+		rows = append(rows, renderChipStack(m.global.Theme, s.Chips))
 	}
 	pad := lg.NewStyle().Padding(0, 1)
-	return pad.Render(lg.JoinVertical(lg.Center, rows...))
+	block := pad.Render(lg.JoinVertical(lg.Center, rows...))
+
+	// Only the seat on turn has a clock, so this is what tells a player the table is
+	// waiting on them without them having to find the status line.
+	if !s.IsTurn {
+		return block
+	}
+	// Tenths for the hero's own clock; every other seat reads in whole seconds, which
+	// is also what lets those sessions tick once a second instead of ten times.
+	clock := gameview.RenderTurnClock(t, m.baseState.TurnRemaining, s.IsHero)
+	return gameview.AttachTurnClock(block, clock, orientation)
 }
 
 func seatBadges(s Seat) string {
@@ -310,17 +318,17 @@ func seatBadges(s Seat) string {
 func (m *Model) renderSeatCards(s Seat, compact bool, orientation gameview.Orientation) string {
 	if len(s.Hole) == 2 {
 		if compact {
-			return lg.JoinHorizontal(lg.Center, renderMiniCard(s.Hole[0]), renderMiniCard(s.Hole[1]))
+			return lg.JoinHorizontal(lg.Center, renderMiniCard(m.global.Theme, s.Hole[0]), renderMiniCard(m.global.Theme, s.Hole[1]))
 		}
 		return lg.JoinHorizontal(lg.Bottom,
-			components.RenderCard(s.Hole[0], false),
-			components.RenderCard(s.Hole[1], false),
+			components.RenderCard(m.global.Theme, s.Hole[0], false),
+			components.RenderCard(m.global.Theme, s.Hole[1], false),
 		)
 	}
 	if compact {
-		return lg.JoinHorizontal(lg.Center, renderHoleBack(), renderHoleBack())
+		return lg.JoinHorizontal(lg.Center, renderHoleBack(m.global.Theme), renderHoleBack(m.global.Theme))
 	}
-	return gameview.RenderCardBacks(2, orientation)
+	return gameview.RenderCardBacks(m.global.Theme, 2, orientation)
 }
 
 func (m *Model) renderHero(compact bool) string {
@@ -330,12 +338,12 @@ func (m *Model) renderHero(compact bool) string {
 		seatBlock = m.renderSeat(*hero, compact, gameview.OrientationTop)
 	}
 
-	status := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
+	status := gameview.RenderStatus(m.global.Theme, m.baseState.CurrentPlayer, m.baseState.MyTurn)
 	actions := m.renderActionBar()
 
 	parts := []string{seatBlock, status, actions}
 	if m.lastErr != nil {
-		parts = append(parts, errStyle.Render(m.lastErr.Error()))
+		parts = append(parts, m.global.Theme.ErrorText.Render(m.lastErr.Error()))
 	}
 	block := lg.JoinVertical(lg.Center, parts...)
 	if !compact {
@@ -366,22 +374,22 @@ func (m *Model) renderActionBar() string {
 	}
 	if len(opts) == 0 {
 		if m.handDone || m.baseState.Phase == game.Finished {
-			return metaStyle.Render("esc -> lobby")
+			return m.global.Theme.Muted.Render("esc -> lobby")
 		}
-		return metaStyle.Render("waiting…")
+		return m.global.Theme.Muted.Render("waiting…")
 	}
-	return accentStyle.Render(strings.Join(opts, " | "))
+	return m.global.Theme.Accented.Render(strings.Join(opts, " | "))
 }
 
 // renderRaisePrompt shows the raise being built: the running total, the chips that
 // can be pushed onto it, and how far it can still go.
 func (m *Model) renderRaisePrompt() string {
-	total := accentStyle.Render(fmt.Sprintf("RAISE TO %d", m.raiseAmount))
-	bounds := metaStyle.Render(fmt.Sprintf("(min %d, all-in %d)", m.currentBet+m.minRaise, m.streetBetMax()))
-	keys := dimStyle.Render("[/] fine  |  enter confirm  |  esc cancel")
+	total := m.global.Theme.Accented.Render(fmt.Sprintf("RAISE TO %d", m.raiseAmount))
+	bounds := m.global.Theme.Muted.Render(fmt.Sprintf("(min %d, all-in %d)", m.currentBet+m.minRaise, m.streetBetMax()))
+	keys := m.global.Theme.Dim.Render("[/] fine  |  enter confirm  |  esc cancel")
 	return lg.JoinVertical(lg.Center,
 		lg.JoinHorizontal(lg.Center, total, "  ", bounds),
-		renderChipRack(),
+		renderChipRack(m.global.Theme),
 		keys,
 	)
 }
@@ -403,17 +411,17 @@ func rankShort(r deck.Rank) string {
 	}
 }
 
-func suitGlyph(s deck.Suit) (string, lg.Style) {
+func suitGlyph(t styles.Theme, s deck.Suit) (string, lg.Style) {
 	switch s {
 	case deck.Hearts:
-		return "♥", lg.NewStyle().Foreground(lg.Color("#CC4444"))
+		return "♥", lg.NewStyle().Foreground(t.SuitRed)
 	case deck.Diamonds:
-		return "♦", lg.NewStyle().Foreground(lg.Color("#CC4444"))
+		return "♦", lg.NewStyle().Foreground(t.SuitRed)
 	case deck.Clubs:
-		return "♣", lg.NewStyle().Foreground(lg.Color("#CCCCCC"))
+		return "♣", lg.NewStyle().Foreground(t.SuitDark)
 	case deck.Spades:
-		return "♠", lg.NewStyle().Foreground(lg.Color("#CCCCCC"))
+		return "♠", lg.NewStyle().Foreground(t.SuitDark)
 	default:
-		return "?", dimStyle
+		return "?", t.Dim
 	}
 }

@@ -329,7 +329,9 @@ func TestAdjustSeatIndex(t *testing.T) {
 		{name: "the leaver's own marker steps back", seat: 2, removed: 2, nAfter: 3, want: 1},
 		{name: "seat 0 leaving wraps its marker to the last seat", seat: 0, removed: 0, nAfter: 3, want: 2},
 		{name: "a marker past the end is clamped inside", seat: 5, removed: 4, nAfter: 2, want: 1},
+		{name: "a marker exactly at the new end is clamped inside", seat: 3, removed: 0, nAfter: 2, want: 1},
 		{name: "an empty table collapses to zero", seat: 3, removed: 1, nAfter: 0, want: 0},
+		{name: "the leaver's own marker on an empty table collapses too", seat: 1, removed: 1, nAfter: 0, want: 0},
 		{name: "a negative table size collapses to zero", seat: 1, removed: 0, nAfter: -1, want: 0},
 		{name: "heads-up: the leaver's marker lands on the survivor", seat: 1, removed: 1, nAfter: 1, want: 0},
 	}
@@ -345,4 +347,70 @@ func TestAdjustSeatIndex(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRules_TimeoutAction(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		turn  int
+		extra *State
+		want  game.Action
+	}{
+		{
+			name:  "nothing to call, so checking costs the player nothing",
+			extra: &State{CurrentBet: 0},
+			want:  ActionCheck{},
+		},
+		{
+			name:  "facing a bet folds rather than paying with chips they did not commit",
+			extra: &State{CurrentBet: DefaultBigBlind},
+			want:  ActionFold{},
+		},
+		{
+			name:  "between hands an absent dealer still deals, or the table freezes",
+			extra: &State{HandComplete: true},
+			want:  ActionNextHand{},
+		},
+		{
+			name:  "a finished match has nothing left to play",
+			extra: &State{HandComplete: true, MatchComplete: true},
+			want:  nil,
+		},
+		{
+			name:  "a turn cursor outside the table yields nothing to play",
+			turn:  9,
+			extra: &State{CurrentBet: 0},
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := &game.State{
+				Players:     []*player.Player{{ID: "hero"}, {ID: "villain"}},
+				CurrentTurn: tt.turn,
+				Extra:       tt.extra,
+			}
+			assert.Equal(t, tt.want, (&Rules{}).TimeoutAction(state))
+		})
+	}
+}
+
+// A safe move the rules then refuse would leave the seat stalling the whole table, so
+// the two are checked against each other on a real hand rather than in isolation.
+func TestRules_TimeoutAction_IsAcceptedByValidateAction(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	engine := game.NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}, rules.InitialDeck())
+	t.Cleanup(engine.Close)
+	require.NoError(t, engine.Start())
+
+	engine.WithState(func(state *game.State) {
+		action := rules.TimeoutAction(state)
+		require.NotNil(t, action, "a live hand must always have a safe move")
+		assert.NoError(t, rules.ValidateAction(state, action))
+	})
 }

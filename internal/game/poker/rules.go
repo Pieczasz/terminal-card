@@ -3,6 +3,7 @@ package poker
 import (
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -23,9 +24,54 @@ const (
 type Rules struct{}
 
 var (
-	_ game.Rules              = (*Rules)(nil)
-	_ game.PlayerLeaveHandler = (*Rules)(nil)
+	_ game.Rules               = (*Rules)(nil)
+	_ game.PlayerLeaveHandler  = (*Rules)(nil)
+	_ game.TurnTimeoutHandler  = (*Rules)(nil)
+	_ game.TurnDurationHandler = (*Rules)(nil)
 )
+
+// TimeoutAction never risks chips on an absent player's behalf: it checks when that
+// is free and folds when it is not, which is what every real poker client does with
+// a player who has stopped responding.
+//
+// Between hands it deals the next one instead. The player holding the button is the
+// only one who can, so an absent dealer would otherwise freeze the match for
+// everyone still playing.
+func (r *Rules) TimeoutAction(state *game.State) game.Action {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return nil
+	}
+	if extra.HandComplete {
+		if extra.MatchComplete {
+			return nil
+		}
+		return ActionNextHand{}
+	}
+	if state.CurrentTurn < 0 || state.CurrentTurn >= len(state.Players) {
+		return nil
+	}
+	if ToCall(extra, state.Players[state.CurrentTurn].ID) == 0 {
+		return ActionCheck{}
+	}
+	return ActionFold{}
+}
+
+// DealTurnTimeout is how long the incoming dealer has to start the next hand. Dealing
+// is a decision about whether to keep playing rather than a move made under pressure,
+// so it gets longer than a betting turn - but it stays bounded, because an absent
+// dealer is the one seat that can freeze the match for everybody else.
+const DealTurnTimeout = time.Minute
+
+// TurnTimeout gives the between-hands deal its own clock and leaves every betting
+// turn on the engine's.
+func (r *Rules) TurnTimeout(state *game.State) time.Duration {
+	extra, ok := state.Extra.(*State)
+	if !ok || !extra.HandComplete || extra.MatchComplete {
+		return 0
+	}
+	return DealTurnTimeout
+}
 
 func (r *Rules) MinPlayers() int { return 2 }
 func (r *Rules) MaxPlayers() int { return 9 }

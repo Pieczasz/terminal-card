@@ -6,13 +6,28 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/player"
+)
+
+const (
+	// DefaultTurnTimeout is how long a player has to act before the engine plays
+	// their safest move for them. One idle player must not be able to hold a table
+	// hostage, and a table that stalls is indistinguishable to everyone else from a
+	// server that has hung.
+	DefaultTurnTimeout = 30 * time.Second
+
+	// MaxMissedTurns is how many turns in a row a player may let expire before they
+	// lose their seat. Their own action resets the count, so this only ever fires on
+	// somebody who has stopped playing entirely.
+	MaxMissedTurns = 3
 )
 
 type Engine struct {
@@ -20,17 +35,45 @@ type Engine struct {
 	state       *State
 	turnManager *TurnManager
 	broadcaster *broadcaster.Broadcaster[Event]
+
+	turnTimeout time.Duration
+	// turnSeq increments whenever the cursor settles. A timer captures it when armed
+	// and abandons its work if it no longer matches, so a player who acted in the
+	// moment before their clock expired is never charged for it.
+	turnSeq      uint64
+	turnTimer    *time.Timer
+	turnDeadline time.Time
+	// missedTurns counts consecutive expiries per player, cleared by any action they
+	// submit themselves.
+	missedTurns map[string]int
 }
 
-func NewEngine(rules Rules, players []*player.Player, cards []deck.Card) *Engine {
-	return &Engine{
+// EngineOption adjusts an Engine at construction.
+type EngineOption func(*Engine)
+
+// WithTurnTimeout overrides how long a player has to act. A non-positive duration
+// disables the clock entirely. Tests use it because they cannot wait out the real one.
+func WithTurnTimeout(d time.Duration) EngineOption {
+	return func(e *Engine) {
+		e.turnTimeout = d
+	}
+}
+
+func NewEngine(rules Rules, players []*player.Player, cards []deck.Card, opts ...EngineOption) *Engine {
+	e := &Engine{
 		state:       NewState(rules, players, cards),
 		turnManager: NewTurnManager(len(players)),
 		// Headroom above the player count for non-player subscribers (the lobby's
 		// ranked-finalize watcher) and brief reconnect overlap; too small a cap
 		// hands a closed channel to a real player, freezing their view.
 		broadcaster: broadcaster.New[Event](len(players) + 8),
+		turnTimeout: DefaultTurnTimeout,
+		missedTurns: make(map[string]int, len(players)),
 	}
+	for _, opt := range opts {
+		opt(e)
+	}
+	return e
 }
 
 // CurrentPlayerID returns the ID of the player whose turn it is.
@@ -62,6 +105,134 @@ func (e *Engine) applyNextTurnLocked(advance bool) {
 	}
 	e.turnManager.clampCurrent()
 	e.state.CurrentTurn = e.turnManager.Current()
+	e.armTurnTimerLocked()
+}
+
+// armTurnTimerLocked restarts the acting player's clock. Bumping turnSeq first
+// invalidates any timer still in flight, which is what makes this safe to call on
+// every cursor change. Caller must hold e.mu and e.state.mu.
+func (e *Engine) armTurnTimerLocked() {
+	e.stopTurnTimerLocked()
+
+	if e.turnTimeout <= 0 || e.state.Phase != Playing || len(e.state.Players) == 0 {
+		return
+	}
+	// Rules opt in by supplying a safe move. Without one there is nothing to play on
+	// an absent player's behalf, so they get no clock rather than a silent removal.
+	if _, ok := e.state.Rules.(TurnTimeoutHandler); !ok {
+		return
+	}
+
+	timeout := e.turnTimeout
+	if h, ok := e.state.Rules.(TurnDurationHandler); ok {
+		if override := h.TurnTimeout(e.state); override > 0 {
+			timeout = override
+		}
+	}
+
+	seq := e.turnSeq
+	e.turnDeadline = time.Now().Add(timeout)
+	e.turnTimer = time.AfterFunc(timeout, func() { e.onTurnTimeout(seq) })
+}
+
+// stopTurnTimerLocked cancels the running clock and invalidates any timer that has
+// already fired but not yet taken the lock. Caller must hold e.mu and e.state.mu.
+func (e *Engine) stopTurnTimerLocked() {
+	e.turnSeq++
+	if e.turnTimer != nil {
+		e.turnTimer.Stop()
+		e.turnTimer = nil
+	}
+	e.turnDeadline = time.Time{}
+}
+
+// TurnDeadline is when the acting player's clock expires. A zero time means no clock
+// is running, either because the game is not in play or the rules have no safe move.
+func (e *Engine) TurnDeadline() time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.turnDeadline
+}
+
+// MissedTurns is how many turns in a row playerID has let expire.
+func (e *Engine) MissedTurns(playerID string) int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.missedTurns[playerID]
+}
+
+// onTurnTimeout plays for a player whose clock ran out, and takes their seat once
+// they have let MaxMissedTurns expire in a row.
+//
+// It runs on a timer goroutine, so it acquires the locks itself and re-checks seq
+// before doing anything: by the time it gets in, the player may already have acted.
+func (e *Engine) onTurnTimeout(seq uint64) {
+	playerID, action, takeSeat := e.resolveTurnTimeout(seq)
+	if playerID == "" {
+		return
+	}
+
+	if takeSeat {
+		// Broadcast before removing so the idle player's own session sees why it is
+		// about to end, and the table learns who stopped playing.
+		e.broadcaster.Broadcast(Event{Type: EventPlayerIdle, PlayerID: playerID})
+		e.RemovePlayer(playerID)
+		return
+	}
+
+	e.broadcaster.Broadcast(Event{Type: EventTurnTimedOut, PlayerID: playerID})
+	if err := e.submitAction(playerID, action, false); err != nil {
+		// Either the turn moved on between releasing the lock and here, or the rules
+		// refused their own safe move. Re-arm so the table cannot stall on it: the
+		// miss is already counted, so a seat that keeps failing still gets taken.
+		slog.Warn("auto-play for an expired turn was refused",
+			"error", err, "player_id", playerID, "action", action.Name())
+		e.rearmTurnTimer()
+	}
+}
+
+// resolveTurnTimeout decides, under both locks, what an expired clock means: who it
+// belongs to, what to play for them, and whether this is the miss that costs them
+// their seat. An empty playerID means the timeout is stale and there is nothing to do.
+func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action, takeSeat bool) {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+
+	if seq != e.turnSeq || e.state.Phase != Playing || len(e.state.Players) == 0 {
+		return "", nil, false
+	}
+
+	current := e.currentPlayerLocked()
+	if current == nil {
+		return "", nil, false
+	}
+
+	e.missedTurns[current.ID]++
+	if e.missedTurns[current.ID] >= MaxMissedTurns {
+		return current.ID, nil, true
+	}
+
+	handler, ok := e.state.Rules.(TurnTimeoutHandler)
+	if !ok {
+		return "", nil, false
+	}
+	safe := handler.TimeoutAction(e.state)
+	if safe == nil {
+		// The rules have no safe move here, so idling cannot be absorbed by playing
+		// on: the seat goes rather than the table waiting.
+		return current.ID, nil, true
+	}
+	return current.ID, safe, false
+}
+
+func (e *Engine) rearmTurnTimer() {
+	e.mu.Lock()
+	e.state.mu.Lock()
+	defer e.state.mu.Unlock()
+	defer e.mu.Unlock()
+	e.armTurnTimerLocked()
 }
 
 func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
@@ -123,17 +294,18 @@ func (e *Engine) standingsLocked() []*player.Player {
 
 // WithState allows thread-safe read access to the game state.
 // The provided function is executed while holding the state lock.
-// Prefer SnapshotFor / BoundEngine for TUI and untrusted callers.
+// Prefer Snapshot / BoundEngine for TUI and untrusted callers.
 func (e *Engine) WithState(fn func(state *State)) {
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
 	fn(e.state)
 }
 
-// SnapshotFor returns public table state and hand sizes but no hand contents;
-// a player reads their own cards via BoundEngine.Hand. The viewer parameter is
-// reserved for future per-viewer redaction.
-func (e *Engine) SnapshotFor(_ string) StateSnapshot {
+// Snapshot returns public table state and hand sizes but no hand contents; a player
+// reads their own cards via BoundEngine.Hand. Nothing here is viewer-specific, so
+// there is no viewer parameter to get wrong - redaction lives in BoundEngine.Hand
+// and in each view's own seat builder.
+func (e *Engine) Snapshot() StateSnapshot {
 	var snap StateSnapshot
 	e.WithState(func(state *State) {
 		snap.Phase = state.Phase
@@ -157,6 +329,7 @@ func (e *Engine) SnapshotFor(_ string) StateSnapshot {
 				continue
 			}
 			snap.Players = append(snap.Players, PlayerSnapshot{
+				ID:       p.ID,
 				Username: p.Username(),
 				HandSize: len(p.Cards),
 			})
@@ -219,7 +392,17 @@ func cryptoIntN(n int) (int, error) {
 	return int(v.Int64()), nil
 }
 
+// SubmitAction applies action on behalf of playerID, who must be the one on turn.
+// A player acting for themselves clears their missed-turn count.
 func (e *Engine) SubmitAction(playerID string, action Action) error {
+	return e.submitAction(playerID, action, true)
+}
+
+// submitAction is SubmitAction with control over the missed-turn count. The engine
+// passes false when playing for an absent player: that timeout has already been
+// counted, and letting the auto-play clear it would mean somebody who never comes
+// back is never removed.
+func (e *Engine) submitAction(playerID string, action Action, playerPresent bool) error {
 	e.mu.Lock()
 	e.state.mu.Lock()
 	defer e.state.mu.Unlock()
@@ -232,6 +415,12 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 	currentPlayer := e.currentPlayerLocked()
 	if currentPlayer.ID != playerID {
 		return errors.New("wait for your turn to perform an action")
+	}
+
+	// Cleared before validation: a player sending a move the rules reject is still
+	// sitting at the keyboard, and idling is what this counter is for.
+	if playerPresent {
+		delete(e.missedTurns, playerID)
 	}
 
 	if err := e.state.Rules.ValidateAction(e.state, action); err != nil {
@@ -278,6 +467,9 @@ func (e *Engine) SubmitAction(playerID string, action Action) error {
 // must hold e.mu and e.state.mu.
 func (e *Engine) finishGameLocked(fallback *player.Player) {
 	e.state.Phase = Finished
+	// Nobody is on turn any more, and a clock left running would auto-play into a
+	// finished game.
+	e.stopTurnTimerLocked()
 
 	standings := e.state.Rules.Standings(e.state)
 	switch {
@@ -352,6 +544,7 @@ func (e *Engine) RemovePlayer(playerID string) {
 
 	if len(e.state.Players) == 1 {
 		e.state.Phase = Finished
+		e.stopTurnTimerLocked()
 		e.state.Winner = e.state.Players[0]
 		e.broadcaster.Broadcast(Event{
 			Type:     EventGameEnded,
@@ -367,11 +560,13 @@ func (e *Engine) RemovePlayer(playerID string) {
 	})
 }
 
-// Close releases engine broadcaster resources. Safe to call multiple times.
+// Close stops the turn clock and releases engine broadcaster resources. Safe to call
+// multiple times.
 func (e *Engine) Close() {
 	e.mu.Lock()
+	e.state.mu.Lock()
+	e.stopTurnTimerLocked()
+	e.state.mu.Unlock()
 	defer e.mu.Unlock()
-	if e.broadcaster != nil {
-		e.broadcaster.Close()
-	}
+	e.broadcaster.Close()
 }

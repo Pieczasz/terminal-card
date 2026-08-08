@@ -51,7 +51,8 @@ func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 		require.NoError(t, manager.JoinLobbyByCode(l.Code(), g))
 	}
 
-	events := l.Subscribe(leader.ID)
+	events, subErr := l.Subscribe(leader.ID)
+	require.NoError(t, subErr)
 	t.Cleanup(func() { l.Unsubscribe(leader.ID, events) })
 
 	for _, p := range players {
@@ -119,7 +120,8 @@ func TestSystemCasualGameRecordsHistoryWithoutElo(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, manager.JoinLobbyByCode(l.Code(), players[1]))
 
-	events := l.Subscribe(players[0].ID)
+	events, subErr := l.Subscribe(players[0].ID)
+	require.NoError(t, subErr)
 	t.Cleanup(func() { l.Unsubscribe(players[0].ID, events) })
 	for _, p := range players {
 		require.NoError(t, l.ToggleReady(p, registry))

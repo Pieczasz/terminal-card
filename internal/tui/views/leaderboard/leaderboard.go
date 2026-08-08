@@ -72,8 +72,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() tea.View {
 	innerWidth := styles.InnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Leaderboard", innerWidth)
-	titleText := styles.Title.Render(titleFig)
-	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
+	titleText := m.global.Theme.Title.Render(titleFig)
+	footer := m.global.Theme.RenderActionFooter(styles.GlobalActions)
 
 	var content string
 
@@ -89,7 +89,7 @@ func (m model) View() tea.View {
 		content = m.renderRankings(contentWidth, contentHeight)
 	}
 
-	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, content, footer))
+	return tea.NewView(views.RenderCenteredLayout(m.global, titleText, content, footer))
 }
 
 func (m model) renderError() string {
@@ -142,22 +142,16 @@ func (m model) renderRankings(contentWidth, contentHeight int) string {
 }
 
 func (m model) renderHeaderRow(playerWidth int) string {
-	return styles.SectionHeading.Render(
+	return m.global.Theme.SectionHeading.Render(
 		fmt.Sprintf("%-5s | %-*s | %-15s | %s", "Rank", playerWidth, "Player", "Game", "Elo"),
 	)
 }
 
 func (m model) renderPlayerRow(index int, r db.Ranking, playerWidth int) string {
-	userStr := r.User.Username
-	// Truncate by runes, not bytes, to avoid splitting multi-byte UTF-8 usernames.
-	if runes := []rune(userStr); len(runes) > playerWidth {
-		userStr = string(runes[:playerWidth-3]) + "..."
-	} else {
-		userStr = fmt.Sprintf("%-*s", playerWidth, userStr)
-	}
+	userStr := styles.PadTruncate(r.User.Username, playerWidth)
 
 	if m.global.User != nil && r.User.ID == m.global.User.ID {
-		userStr = lg.NewStyle().Foreground(lg.Color("205")).Bold(true).Render(userStr)
+		userStr = m.global.Theme.PlayerItemSelected.Bold(true).Render(userStr)
 	}
 	return fmt.Sprintf("%-5d | %s | %-15s | %d", index+1, userStr, r.Game.Name, r.Elo)
 }

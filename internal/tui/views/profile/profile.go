@@ -74,12 +74,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() tea.View {
 	titleFig := styles.RenderFigureASCII("User Profile", styles.InnerWidth(m.global.Width))
-	titleText := styles.Title.Render(titleFig)
-	header := styles.Title.Render(titleText)
-	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
+	titleText := m.global.Theme.Title.Render(titleFig)
+	header := titleText
+	footer := m.global.Theme.RenderActionFooter(styles.GlobalActions)
 
 	content := m.renderContent(header, footer)
-	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer))
+	return tea.NewView(views.RenderCenteredLayout(m.global, header, content, footer))
 }
 
 func (m model) renderContent(header, footer string) string {
@@ -107,7 +107,7 @@ func (m model) renderContent(header, footer string) string {
 
 func (m model) rankingRows(maxItems int) []string {
 	rows := make([]string, 0, 1+len(m.userProfile.Rankings))
-	rows = append(rows, styles.SectionHeading.Render("Rankings:"))
+	rows = append(rows, m.global.Theme.SectionHeading.Render("Rankings:"))
 	if len(m.userProfile.Rankings) == 0 {
 		return append(rows, "No games played yet.")
 	}
@@ -122,7 +122,7 @@ func (m model) rankingRows(maxItems int) []string {
 
 func (m model) historyRows(maxItems int) []string {
 	rows := make([]string, 0, 1+len(m.history))
-	rows = append(rows, styles.SectionHeading.Render("Recent Matches:"))
+	rows = append(rows, m.global.Theme.SectionHeading.Render("Recent Matches:"))
 	if len(m.history) == 0 {
 		return append(rows, "No recent matches.")
 	}
@@ -131,35 +131,36 @@ func (m model) historyRows(maxItems int) []string {
 			return append(rows, "... and more")
 		}
 		rows = append(rows, fmt.Sprintf("%s: %s (%s)",
-			h.Match.Game.Name, placementLabel(h.Placement), resultLabel(h)))
+			h.Match.Game.Name, placementLabel(m.global.Theme, h.Placement), resultLabel(m.global.Theme, h)))
 	}
 	return rows
 }
 
 // resultLabel says what the match was worth: a rating swing for a ranked game,
 // and plainly "casual" for one that was never going to move Elo.
-func resultLabel(h db.MatchParticipant) string {
+func resultLabel(t styles.Theme, h db.MatchParticipant) string {
 	if !h.Match.Ranked {
-		return lg.NewStyle().Foreground(lg.Color("250")).Render("casual game")
+		return t.Muted.Render("casual game")
 	}
-	return "Elo change: " + eloDeltaLabel(h.EloDelta)
+	return "Elo change: " + eloDeltaLabel(t, h.EloDelta)
 }
 
-func eloDeltaLabel(delta int) string {
+var placementWords = [3]string{"1st place", "2nd place", "3rd place"}
+
+func eloDeltaLabel(t styles.Theme, delta int) string {
 	if delta >= 0 {
-		return lg.NewStyle().Foreground(lg.Color("46")).Render(fmt.Sprintf("+%d", delta))
+		return t.SuccessText.Render(fmt.Sprintf("+%d", delta))
 	}
-	return lg.NewStyle().Foreground(lg.Color("9")).Render(strconv.Itoa(delta))
+	return t.ErrorText.Render(strconv.Itoa(delta))
 }
 
-func placementLabel(placement int) string {
+// placementLabel spells the placing out in words as well as colouring it: the
+// medal colours alone would leave 4th onwards indistinguishable, and mean nothing
+// to a colour-blind reader.
+func placementLabel(t styles.Theme, placement int) string {
 	switch placement {
-	case 1:
-		return lg.NewStyle().Foreground(lg.Color("226")).Render("1st place")
-	case 2:
-		return lg.NewStyle().Foreground(lg.Color("250")).Render("2nd place")
-	case 3:
-		return lg.NewStyle().Foreground(lg.Color("130")).Render("3rd place")
+	case 1, 2, 3:
+		return lg.NewStyle().Foreground(t.Placements[placement-1]).Render(placementWords[placement-1])
 	default:
 		return fmt.Sprintf("%d place", placement)
 	}

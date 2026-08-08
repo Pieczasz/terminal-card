@@ -63,9 +63,10 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 		require.NoError(t, manager.JoinLobbyByCode(l.Code(), g), "guest %s should join", g.ID)
 	}
 	require.Equal(t, 4, l.CurrentPlayers())
-	assert.Contains(t, manager.PublicLobbies(leader), l, "a public waiting lobby is listed")
+	assert.Contains(t, browseCodes(manager, leader), l.Code(), "a public waiting lobby is listed")
 
-	events := l.Subscribe(leader.ID)
+	events, subErr := l.Subscribe(leader.ID)
+	require.NoError(t, subErr)
 	t.Cleanup(func() { l.Unsubscribe(leader.ID, events) })
 
 	// --- everyone readies up; the last one starts the game ------------------
@@ -77,6 +78,8 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	engine := awaitGameStart(t, events)
 	require.NotNil(t, engine)
 	assert.False(t, l.IsWaiting(), "a started lobby is no longer waiting")
+	assert.NotContains(t, browseCodes(manager, leader), l.Code(),
+		"and stops being offered to anyone browsing for a seat")
 
 	startingChips := chipsInPlay(t, engine)
 	require.Positive(t, startingChips)
@@ -155,4 +158,15 @@ func TestSystemLeaderLeavingPromotesGuest(t *testing.T) {
 	manager.LeaveLobby(guest)
 	_, err = manager.FindLobbyByCode(l.Code())
 	assert.Error(t, err, "an empty lobby is cleaned up")
+}
+
+// browseCodes lists the lobby codes on offer to p, unfiltered: a full table is still
+// listed, it just has no seat.
+func browseCodes(manager *lobby.Manager, p *player.Player) []string {
+	entries := manager.BrowseLobbies(p, lobby.BrowseFilter{})
+	codes := make([]string, 0, len(entries))
+	for _, e := range entries {
+		codes = append(codes, e.Code)
+	}
+	return codes
 }

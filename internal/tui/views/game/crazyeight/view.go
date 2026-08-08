@@ -4,7 +4,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
-	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
@@ -12,8 +11,6 @@ import (
 )
 
 const keyHints = "<-/h: left | ->/l: right | enter: play/confirm | d: draw | esc: leave/cancel"
-
-var hintStyle = lg.NewStyle().Foreground(lg.Color("#888888"))
 
 // suitLabels are the picker cells, in grid order. suitPickerOrder in update.go
 // maps a cursor position back to the suit and must stay in the same order.
@@ -34,7 +31,7 @@ func widestLabel(labels []string) int {
 
 func (m *Model) View() tea.View {
 	if m.baseState.Phase != game.Playing {
-		return tea.NewView(gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner))
+		return tea.NewView(gameview.RenderWaitingScreen(m.global, m.baseState.Phase, m.baseState.Winner))
 	}
 
 	compactMode := m.global.Height < 30
@@ -53,9 +50,9 @@ func (m *Model) View() tea.View {
 	if superCompact {
 		fullPlayerArea = mySection
 	} else if compactMode {
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, hintStyle.Render(keyHints))
+		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.global.Theme.Dim.Render(keyHints))
 	} else {
-		hints := hintStyle.MarginTop(1).Render(keyHints)
+		hints := m.global.Theme.Dim.MarginTop(1).Render(keyHints)
 		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
 	}
 
@@ -101,9 +98,9 @@ func (m *Model) renderTopOpponent(superCompact bool) string {
 		o := m.baseState.Opponents[idx]
 		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
+			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
 		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
+		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationTop, m.baseState.TurnRemaining)
 	}
 	return ""
 }
@@ -113,9 +110,9 @@ func (m *Model) renderLeftOpponent(superCompact bool) string {
 		o := m.baseState.Opponents[0]
 		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
+			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
 		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationLeft)
+		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationLeft, m.baseState.TurnRemaining)
 	}
 	return ""
 }
@@ -125,22 +122,22 @@ func (m *Model) renderRightOpponent(superCompact bool) string {
 		o := m.baseState.Opponents[1]
 		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
+			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
 		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
+		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationRight, m.baseState.TurnRemaining)
 	} else if len(m.baseState.Opponents) >= 3 {
 		o := m.baseState.Opponents[2]
 		isTurn := m.baseState.CurrentPlayer == o.Username
 		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
+			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
 		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
+		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationRight, m.baseState.TurnRemaining)
 	}
 	return ""
 }
 
 func (m *Model) renderCenterTable() string {
-	discardView := components.RenderCard(m.baseState.TopDiscard, false)
+	discardView := components.RenderCard(m.global.Theme, m.baseState.TopDiscard, false)
 	currentSuitView := m.renderCurrentSuitIndicator()
 	return lg.JoinVertical(lg.Center, discardView, currentSuitView)
 }
@@ -164,17 +161,23 @@ func (m *Model) renderCurrentSuitIndicator() string {
 		return ""
 	}
 
-	return lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render("Current Suit: ") +
-		lg.NewStyle().Bold(true).Render(suitStr)
+	return m.global.Theme.Muted.Render("Current Suit: ") +
+		lg.NewStyle().Bold(true).Foreground(m.global.Theme.Text).Render(suitStr)
 }
 
 func (m *Model) renderPlayerSection() string {
-	statusView := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
-	handView := gameview.RenderHand(m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
+	statusView := gameview.RenderStatus(m.global.Theme, m.baseState.CurrentPlayer, m.baseState.MyTurn)
+	handView := gameview.RenderHand(m.global.Theme, m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
 
 	sections := []string{statusView, handView}
+	// The hero's own clock goes under their hand, where every other seat's is.
+	if m.baseState.MyTurn {
+		if clock := gameview.RenderTurnClock(m.global.Theme, m.baseState.TurnRemaining, true); clock != "" {
+			sections = append(sections, clock)
+		}
+	}
 	if m.lastActionErr != nil {
-		errView := lg.NewStyle().Foreground(lg.Color("196")).Render(m.lastActionErr.Error())
+		errView := m.global.Theme.ErrorText.Render(m.lastActionErr.Error())
 		sections = append(sections, errView)
 	}
 
@@ -186,13 +189,14 @@ func (m *Model) renderSuitPicker() string {
 		return ""
 	}
 
+	t := m.global.Theme
 	renderedSuits := make([]string, 0, len(suitLabels))
 	for i, suitName := range suitLabels {
 		style := lg.NewStyle().Padding(0, 1).Border(lg.RoundedBorder())
 		if i == m.suitCursor {
-			style = style.BorderForeground(styles.Gold).Foreground(styles.Gold).Bold(true)
+			style = style.BorderForeground(t.Selection).Foreground(t.Selection).Bold(true)
 		} else {
-			style = style.BorderForeground(lg.Color("#555555")).Foreground(lg.Color("#AAAAAA"))
+			style = style.BorderForeground(t.BorderMuted).Foreground(t.TextMuted)
 		}
 		renderedSuits = append(renderedSuits, style.Width(suitCellWidth).Align(lg.Center).Render(suitName))
 	}
@@ -203,11 +207,11 @@ func (m *Model) renderSuitPicker() string {
 
 	return lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(styles.Gold).
+		BorderForeground(t.Selection).
 		Padding(1, 2).
 		Render(
 			lg.JoinVertical(lg.Center,
-				lg.NewStyle().Bold(true).Foreground(styles.Gold).Render("Pick a suit:"),
+				lg.NewStyle().Bold(true).Foreground(t.Selection).Render("Pick a suit:"),
 				"",
 				pickerBox,
 			),

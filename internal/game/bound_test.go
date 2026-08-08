@@ -1,6 +1,7 @@
 package game
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -42,6 +43,29 @@ func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 
 	other := Bind(engine, "2").Hand()
 	assert.Len(t, other, len(hand))
+}
+
+// Hand is the redaction boundary: it is the only place a player's own cards are readable,
+// so it has to match the bound seat and no other.
+func TestBoundEngine_HandBelongsToTheBoundPlayerOnly(t *testing.T) {
+	t.Parallel()
+
+	p1 := &player.Player{ID: "1"}
+	p2 := &player.Player{ID: "2"}
+	engine := NewEngine(bindRules{}, []*player.Player{p1, p2}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+	require.NoError(t, engine.Start())
+
+	var dealt1, dealt2 []deck.Card
+	engine.WithState(func(state *State) {
+		dealt1 = slices.Clone(state.Players[0].Cards)
+		dealt2 = slices.Clone(state.Players[1].Cards)
+	})
+	require.NotEqual(t, dealt1, dealt2, "a shuffled deck must not deal two identical hands")
+
+	assert.Equal(t, dealt1, Bind(engine, "1").Hand(), "each seat sees exactly its own cards")
+	assert.Equal(t, dealt2, Bind(engine, "2").Hand())
+	assert.Nil(t, Bind(engine, "not-seated").Hand(), "an ID with no seat holds no cards")
 }
 
 type noopAction struct{}

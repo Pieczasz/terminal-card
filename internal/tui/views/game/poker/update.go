@@ -5,6 +5,7 @@ import (
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
+	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -18,11 +19,29 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case gameMsg:
+		if m.idleRemoved(game.Event(msg)) {
+			// The engine took this seat for repeated missed turns. Quitting ends the
+			// bubbletea program, which is what tears the ssh session down and runs the
+			// ordinary leave path.
+			return m, tea.Quit
+		}
 		m.lastErr = nil
 		m.syncState()
 		return m, listenForEvents(m.events)
+	case gameview.ClockTickMsg:
+		m.syncState()
+		if m.baseState.Phase != game.Playing {
+			return m, nil
+		}
+		return m, gameview.ClockTickFor(m.baseState.TurnRemaining, m.baseState.MyTurn)
 	}
 	return m, nil
+}
+
+// idleRemoved reports whether ev says this session's own player lost their seat for
+// idling. Everyone else's removal is just another state change.
+func (m *Model) idleRemoved(ev game.Event) bool {
+	return ev.Type == game.EventPlayerIdle && m.bound != nil && ev.PlayerID == m.bound.PlayerID()
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {

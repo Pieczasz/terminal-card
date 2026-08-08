@@ -1,7 +1,10 @@
 package lobby
 
 import (
+	"bytes"
 	"context"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +78,7 @@ func mockPlayer(id string, dbID uint) *player.Player {
 		},
 	}
 }
+
 func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -208,16 +212,21 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 		}).
 		Return(nil)
 
-	ch := l.Broadcaster().Subscribe()
+	ch, subErr := l.Broadcaster().Subscribe()
+	require.NoError(t, subErr)
 
 	err = l.ToggleReady(leader, registry)
 	require.NoError(t, err)
 	err = l.ToggleReady(guest, registry)
 	require.NoError(t, err)
 
-	// Game is started, let's trigger GameEnded event directly to test handleBroadcasterEvents
+	// Game is started, let's trigger GameEnded event directly to test
+	// handleBroadcasterEvents. Read under the lock: the watcher releases a finished
+	// game from its own goroutine, so activeEngine has a concurrent writer.
+	l.mu.RLock()
 	engine := l.activeEngine
-	assert.NotNil(t, engine)
+	l.mu.RUnlock()
+	require.NotNil(t, engine)
 
 	engine.Broadcaster().Broadcast(game.Event{
 		Type: game.EventGameEnded,
@@ -233,8 +242,8 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	mockRepo.AssertExpectations(t)
 }
 
-// A casual game is still a game the players want to find in their history, so it
-// is recorded; only the Elo write is reserved for ranked lobbies.
+// A casual game is still a game the players want to find in their history, so it is
+// recorded; only the Elo write is reserved for ranked lobbies.
 func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
@@ -341,4 +350,472 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	// Remove non-existent player
 	removed := l3.RemovePlayer(guest3)
 	assert.False(t, removed)
+}
+
+// newTestLobby is a lobby with rules registered under "Mock" that accepts up to
+// maxPlayers, for tests that care about lobby bookkeeping rather than the game.
+func newTestLobby(t *testing.T, maxPlayers int) (*Manager, *Lobby, *game.Registry) {
+	t.Helper()
+	m := NewManager(context.Background(), nil)
+	leader := mockPlayer("p1", 1)
+
+	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame(&db.Game{Name: "Mock"}))
+	require.NoError(t, err)
+
+	registry := game.NewRegistry()
+	rules := new(MockRules)
+	rules.On("MinPlayers").Return(2).Maybe()
+	rules.On("MaxPlayers").Return(maxPlayers).Maybe()
+	rules.On("InitialDeck").Return(deck.StandardDeck()).Maybe()
+	rules.On("InitialDealCount").Return(2).Maybe()
+	rules.On("OnGameStart", mock.Anything).Return(nil).Maybe()
+	rules.On("CheckWinCondition", mock.Anything).Return(false).Maybe()
+	rules.On("Standings", mock.Anything).Return([]*player.Player{}).Maybe()
+	registerGame(registry, "Mock", rules)
+
+	return m, l, registry
+}
+
+// drainEventTypes collects whatever is already queued. Broadcast happens under the
+// lobby lock and returns before the call that caused it, so anything that is going to
+// arrive has arrived by the time the caller gets control back.
+func drainEventTypes(ch <-chan Event) []string {
+	var types []string
+	for {
+		select {
+		case ev, ok := <-ch:
+			if !ok {
+				// Leaving closes the leaver's own subscription, so the stream ending is
+				// an ordinary outcome here rather than the absence of events.
+				return types
+			}
+			types = append(types, ev.Type)
+			continue
+		default:
+		}
+		return types
+	}
+}
+
+// Every roster and settings change has to reach the other clients: a lobby view that is
+// never told somebody joined shows a stale table until the player presses a key.
+func TestLobby_ChangesAreBroadcast(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a guest joining", func(t *testing.T) {
+		t.Parallel()
+		m, l, _ := newTestLobby(t, 4)
+		ch, err := l.Subscribe("p1")
+		require.NoError(t, err)
+
+		require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("p2", 2)))
+
+		assert.Equal(t, []string{EventPlayersUpdated}, drainEventTypes(ch))
+	})
+
+	t.Run("a guest leaving", func(t *testing.T) {
+		t.Parallel()
+		m, l, _ := newTestLobby(t, 4)
+		guest := mockPlayer("p2", 2)
+		require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+		ch, err := l.Subscribe("p1")
+		require.NoError(t, err)
+		m.LeaveLobby(guest)
+
+		assert.Equal(t, []string{EventPlayersUpdated}, drainEventTypes(ch))
+	})
+
+	t.Run("the leader leaving an empty lobby closes it", func(t *testing.T) {
+		t.Parallel()
+		_, l, _ := newTestLobby(t, 4)
+		// Not l.Subscribe: a leaving player's own subscription is closed before the
+		// event goes out, so only an observer that is not the leaver can see it.
+		observer, err := l.Broadcaster().Subscribe()
+		require.NoError(t, err)
+		own, err := l.Subscribe("p1")
+		require.NoError(t, err)
+
+		assert.True(t, l.RemovePlayer(l.Leader()), "the last player out closes the lobby")
+
+		assert.Equal(t, []string{EventLobbyClosed}, drainEventTypes(observer))
+		assert.Empty(t, drainEventTypes(own), "the leaver's own stream is already closed")
+	})
+
+	t.Run("a settings change", func(t *testing.T) {
+		t.Parallel()
+		_, l, _ := newTestLobby(t, 4)
+		ch, err := l.Subscribe("p1")
+		require.NoError(t, err)
+
+		require.NoError(t, l.SetPrivate(l.Leader(), false))
+
+		assert.Equal(t, []string{EventSettingsUpdated}, drainEventTypes(ch))
+	})
+
+	t.Run("a rejected settings change is not announced", func(t *testing.T) {
+		t.Parallel()
+		_, l, _ := newTestLobby(t, 4)
+		ch, err := l.Subscribe("p1")
+		require.NoError(t, err)
+
+		require.Error(t, l.SetMaxPlayers(l.Leader(), 0, 0, 0))
+
+		assert.Empty(t, drainEventTypes(ch), "nothing changed, so there is nothing to publish")
+	})
+}
+
+// SetMaxPlayers is the one setting that can contradict reality: it must not be allowed to
+// drop below the players already seated, or below what the game itself needs.
+func TestLobby_SetMaxPlayers_Bounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		guests   int
+		limit    int
+		rulesMin int
+		rulesMax int
+		wantErr  string
+	}{
+		{name: "equal to the roster is allowed", guests: 2, limit: 3},
+		{name: "above the roster is allowed", guests: 2, limit: 4},
+		{name: "below the roster is refused", guests: 2, limit: 2, wantErr: "below current roster (3)"},
+		{name: "equal to the game minimum is allowed", guests: 0, limit: 2, rulesMin: 2},
+		{name: "below the game minimum is refused", guests: 0, limit: 2, rulesMin: 3, wantErr: "at least 3"},
+		{name: "equal to the game maximum is allowed", guests: 0, limit: 4, rulesMax: 4},
+		{name: "above the game maximum is refused", guests: 0, limit: 5, rulesMax: 4, wantErr: "cannot exceed 4"},
+		{name: "unbounded rules impose nothing", guests: 0, limit: 9, rulesMin: 0, rulesMax: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m, l, _ := newTestLobby(t, 9)
+			for i := range tt.guests {
+				require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer(fmt.Sprintf("g%d", i), uint(10+i))))
+			}
+
+			err := l.SetMaxPlayers(l.Leader(), tt.limit, tt.rulesMin, tt.rulesMax)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				assert.Equal(t, 9, l.MaxPlayers(), "a refused change must not be applied")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.limit, l.MaxPlayers())
+		})
+	}
+}
+
+// A player who leaves must stop receiving lobby events.
+func TestLobby_LeavingUnsubscribesThePlayer(t *testing.T) {
+	t.Parallel()
+	m, l, _ := newTestLobby(t, 4)
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	guestCh, err := l.Subscribe(guest.ID)
+	require.NoError(t, err)
+	leaderCh, err := l.Subscribe("p1")
+	require.NoError(t, err)
+
+	m.LeaveLobby(guest)
+
+	select {
+	case _, ok := <-guestCh:
+		assert.False(t, ok, "the departed player's channel must be closed")
+	case <-time.After(time.Second):
+		t.Fatal("the departed player is still subscribed")
+	}
+
+	l.mu.RLock()
+	_, stillTracked := l.playerSubs[guest.ID]
+	l.mu.RUnlock()
+	assert.False(t, stillTracked, "and their subscription must not be tracked any more")
+	assert.Equal(t, []string{EventPlayersUpdated}, drainEventTypes(leaderCh), "everybody else still hears about it")
+}
+
+// A lobby whose broadcaster has been torn down by RemoveLobby is still reachable from any
+// session that was holding it, so every path that publishes has to tolerate that.
+func TestLobby_SurvivesATornDownBroadcaster(t *testing.T) {
+	t.Parallel()
+	m, l, _ := newTestLobby(t, 4)
+
+	m.RemoveLobby(l.Code())
+
+	require.NotPanics(t, func() {
+		l.mu.Lock()
+		l.broadcastLocked(Event{Type: EventPlayersUpdated})
+		l.unsubscribePlayerLocked("p1")
+		l.mu.Unlock()
+
+		assert.NoError(t, l.SetPrivate(l.Leader(), true))
+		l.Unsubscribe("p1", make(chan Event))
+	})
+
+	_, err := l.Subscribe("p1")
+	require.ErrorContains(t, err, "lobby is closed")
+}
+
+// A table can be re-used for a second hand once the first is over, but never while one is
+// still running.
+func TestLobby_ToggleReadyAfterAFinishedGame(t *testing.T) {
+	t.Parallel()
+	m, l, registry := newTestLobby(t, 2)
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	require.NoError(t, l.ToggleReady(l.Leader(), registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	require.Equal(t, InGame, l.state)
+
+	require.ErrorContains(t, l.ToggleReady(l.Leader(), registry), "already in progress",
+		"an unfinished game holds the table")
+
+	l.mu.RLock()
+	engine := l.activeEngine
+	l.mu.RUnlock()
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+
+	require.NoError(t, l.ToggleReady(l.Leader(), registry))
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	assert.Nil(t, l.activeEngine, "the finished engine is released")
+	assert.True(t, l.ready["p1"], "and the toggle that noticed applies to the next hand")
+}
+
+// startGameLocked has to accept a table that is exactly full: refusing it would make the
+// last seat unusable in every game.
+func TestLobby_StartsWithExactlyMaxPlayers(t *testing.T) {
+	t.Parallel()
+	m, l, registry := newTestLobby(t, 3)
+	guests := []*player.Player{mockPlayer("p2", 2), mockPlayer("p3", 3)}
+	for _, g := range guests {
+		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
+	}
+
+	require.NoError(t, l.ToggleReady(l.Leader(), registry))
+	for i, g := range guests {
+		err := l.ToggleReady(g, registry)
+		require.NoErrorf(t, err, "guest %d", i)
+	}
+
+	assert.Equal(t, InGame, l.state, "a full table is a startable table")
+}
+
+// recordFinishedMatch is the last step before a result exists at all, so both branches have
+// to report failure rather than swallow it: a silent error loses the match.
+func TestLobby_RecordFinishedMatch(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		ranked  bool
+		setup   func(*MockMatchRepo)
+		wantErr string
+	}{
+		{
+			name:   "ranked success",
+			ranked: true,
+			setup: func(r *MockMatchRepo) {
+				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(nil)
+			},
+		},
+		{
+			name:   "ranked failure is reported",
+			ranked: true,
+			setup: func(r *MockMatchRepo) {
+				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+			},
+			wantErr: "finalize ranked match",
+		},
+		{
+			name: "casual success",
+			setup: func(r *MockMatchRepo) {
+				r.On("GetOrCreateGame", mock.Anything, "Mock").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
+				r.On("RecordMatch", mock.Anything, uint(7), []uint{1}, map[uint]int(nil), false).Return(nil)
+			},
+		},
+		{
+			name: "casual failure is reported",
+			setup: func(r *MockMatchRepo) {
+				r.On("GetOrCreateGame", mock.Anything, "Mock").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
+				r.On("RecordMatch", mock.Anything, uint(7), []uint{1}, map[uint]int(nil), false).Return(assert.AnError)
+			},
+			wantErr: "record casual match",
+		},
+		{
+			name: "an unresolvable game is reported",
+			setup: func(r *MockMatchRepo) {
+				r.On("GetOrCreateGame", mock.Anything, "Mock").Return((*db.Game)(nil), assert.AnError)
+			},
+			wantErr: "resolve game",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			repo := new(MockMatchRepo)
+			tt.setup(repo)
+			m := NewManager(context.Background(), repo)
+			l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(tt.ranked))
+			require.NoError(t, err)
+
+			err = l.recordFinishedMatch(context.Background(), "Mock", []uint{1}, tt.ranked)
+
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+			} else {
+				require.NoError(t, err)
+			}
+			repo.AssertExpectations(t)
+		})
+	}
+}
+
+// Unsubscribe is what a view calls when it navigates away.
+func TestLobby_UnsubscribeClosesTheChannel(t *testing.T) {
+	t.Parallel()
+	_, l, _ := newTestLobby(t, 4)
+
+	ch, err := l.Subscribe("p1")
+	require.NoError(t, err)
+
+	l.Unsubscribe("p1", ch)
+
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "the channel must be closed")
+	case <-time.After(time.Second):
+		t.Fatal("Unsubscribe left the channel open")
+	}
+
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	assert.NotContains(t, l.playerSubs, "p1", "and the player must no longer be tracked")
+}
+
+// A failed write is the one outcome nobody else will notice: the players see a
+// finished game either way, so the log line is the only signal the result was lost.
+//
+//nolint:paralleltest // slog.SetDefault is process-wide, so this cannot share the process
+func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
+	var logged bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	repo := new(MockMatchRepo)
+	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+	m := NewManager(context.Background(), repo)
+	l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(true))
+	require.NoError(t, err)
+
+	engine := game.NewEngine(&stubRules{}, []*player.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+
+	l.finalizeFinishedGame(engine)
+
+	assert.Contains(t, logged.String(), "failed to record finished match",
+		"a lost match result has to be shouted about")
+	repo.AssertExpectations(t)
+}
+
+// stubRules is the smallest Rules that lets an engine hand back standings; the
+// finalize path only needs Standings to resolve.
+type stubRules struct{}
+
+func (stubRules) MinPlayers() int                               { return 1 }
+func (stubRules) MaxPlayers() int                               { return 9 }
+func (stubRules) InitialDeck() []deck.Card                      { return deck.StandardDeck() }
+func (stubRules) InitialDealCount() int                         { return 1 }
+func (stubRules) OnGameStart(*game.State) error                 { return nil }
+func (stubRules) ValidateAction(*game.State, game.Action) error { return nil }
+func (stubRules) ApplyAction(*game.State, game.Action)          {}
+func (stubRules) AfterAction(*game.State, game.Action) error    { return nil }
+func (stubRules) CheckWinCondition(*game.State) bool            { return false }
+func (stubRules) Standings(s *game.State) []*player.Player      { return s.Players }
+
+// A match that ends has to reopen the table by itself.
+func TestLobby_FinishedGameReopensTheTableForSettings(t *testing.T) {
+	t.Parallel()
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	require.Equal(t, InGame, l.state)
+	require.ErrorContains(t, l.SetRanked(leader, true), "in progress",
+		"settings are correctly refused while a game is actually running")
+
+	l.mu.RLock()
+	engine := l.activeEngine
+	l.mu.RUnlock()
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+	l.releaseFinishedGame()
+
+	assert.True(t, l.IsWaiting(), "the table is open again")
+	require.NoError(t, l.SetRanked(leader, true), "and the leader can change settings")
+	assert.True(t, l.IsRanked())
+
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	assert.Nil(t, l.activeEngine, "the finished engine is released")
+	assert.Empty(t, l.ready, "and nobody carries a stale ready flag into the next game")
+}
+
+// The player left holding a lobby after everyone else walked out is its leader, and a
+// leader who cannot change anything is indistinguishable from a broken screen.
+func TestLobby_InheritedLeaderCanChangeSettingsAfterTheGameEnds(t *testing.T) {
+	t.Parallel()
+	m, l, registry := newTestLobby(t, 2)
+	original := l.Leader()
+	inheritor := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), inheritor))
+
+	require.NoError(t, l.ToggleReady(original, registry))
+	require.NoError(t, l.ToggleReady(inheritor, registry))
+	require.Equal(t, InGame, l.state)
+
+	// The original leader walks out mid-match, which both promotes the guest and,
+	// leaving one player, finishes the game.
+	m.LeaveLobby(original)
+	require.Equal(t, inheritor, l.Leader(), "the remaining player inherits the lobby")
+
+	l.releaseFinishedGame()
+
+	require.NoError(t, l.SetPrivate(inheritor, false), "the new leader owns the settings")
+	require.NoError(t, l.SetMaxPlayers(inheritor, 4, 2, 9))
+	assert.Equal(t, 4, l.MaxPlayers())
+}
+
+// Releasing is only for a match that is actually over, and running twice must not disturb a
+// table that has already reopened.
+func TestLobby_ReleaseFinishedGameIsANoOpOtherwise(t *testing.T) {
+	t.Parallel()
+	m, l, registry := newTestLobby(t, 2)
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	require.NotPanics(t, l.releaseFinishedGame)
+	assert.True(t, l.IsWaiting(), "a lobby that never started is left alone")
+
+	require.NoError(t, l.ToggleReady(l.Leader(), registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	l.releaseFinishedGame()
+	assert.Equal(t, InGame, l.state, "a game still being played is not released")
+
+	l.mu.RLock()
+	engine := l.activeEngine
+	l.mu.RUnlock()
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+
+	l.releaseFinishedGame()
+	require.NotPanics(t, l.releaseFinishedGame)
+	assert.True(t, l.IsWaiting())
 }

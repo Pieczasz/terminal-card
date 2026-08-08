@@ -25,10 +25,9 @@ type testingT interface {
 	Helper()
 }
 
-func startHeadsUp(t testingT) (*game.Engine, *Rules) {
+func startHeadsUp(t testingT) *game.Engine {
 	t.Helper()
-	// Rules is stateless, so the caller's handle need not be the engine's own.
-	return startTable(t, 2), &Rules{}
+	return startTable(t, 2)
 }
 
 func extraOf(t testingT, e *game.Engine) *State {
@@ -44,7 +43,7 @@ func extraOf(t testingT, e *game.Engine) *State {
 
 func TestOnGameStart_HeadsUpBlinds(t *testing.T) {
 	t.Parallel()
-	engine, _ := startHeadsUp(t)
+	engine := startHeadsUp(t)
 	extra := extraOf(t, engine)
 
 	assert.Equal(t, PreFlop, extra.Phase)
@@ -57,7 +56,7 @@ func TestOnGameStart_HeadsUpBlinds(t *testing.T) {
 
 func TestBetting_FoldWinsHand(t *testing.T) {
 	t.Parallel()
-	engine, _ := startHeadsUp(t)
+	engine := startHeadsUp(t)
 	actor := engine.CurrentPlayerID()
 	other := "p1"
 	if actor == "p1" {
@@ -303,7 +302,7 @@ func TestNextToAct_SkipsFolded(t *testing.T) {
 
 func TestLeave_FoldsAndAwardsPot(t *testing.T) {
 	t.Parallel()
-	engine, _ := startHeadsUp(t)
+	engine := startHeadsUp(t)
 	leaver := engine.CurrentPlayerID()
 	other := "p1"
 	if leaver == "p1" {

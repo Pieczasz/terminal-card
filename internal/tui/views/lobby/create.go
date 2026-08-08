@@ -151,8 +151,8 @@ func (m *createModel) View() tea.View {
 		cursor := "  "
 		if m.cursor == idx {
 			cursor = "> "
-			label = lg.NewStyle().Foreground(lg.Color("205")).Render(label)
-			value = lg.NewStyle().Foreground(lg.Color("205")).Render(value)
+			label = m.global.Theme.PlayerItemSelected.Render(label)
+			value = m.global.Theme.PlayerItemSelected.Render(value)
 		}
 		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
 	}
@@ -176,7 +176,7 @@ func (m *createModel) View() tea.View {
 	submitText := "[ Create Lobby ]"
 	if m.cursor == createCursorSubmit {
 		submitCursor = "> "
-		submitText = lg.NewStyle().Foreground(lg.Color("42")).Render(submitText)
+		submitText = m.global.Theme.SuccessText.Render(submitText)
 	}
 	submitStr := fmt.Sprintf("%s%s", submitCursor, submitText)
 
@@ -191,16 +191,15 @@ func (m *createModel) View() tea.View {
 
 	content := form
 	if m.err != nil {
-		content += fmt.Sprintf("\n\nError: %v", m.err)
+		content += "\n\n" + m.global.Theme.ErrorText.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 
 	innerWidth := styles.InnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Create New Lobby", innerWidth)
-	titleText := styles.Title.Render(titleFig)
-	header := styles.Title.Render(titleText)
+	header := m.global.Theme.Title.Render(titleFig)
 
 	footerActions := slices.Concat([]string{"enter - Confirm"}, styles.GlobalActions)
-	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
+	footer := m.global.Theme.RenderActionFooter(footerActions)
 
-	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, content, footer))
+	return tea.NewView(views.RenderCenteredLayout(m.global, header, content, footer))
 }
