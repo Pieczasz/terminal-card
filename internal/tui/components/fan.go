@@ -2,6 +2,7 @@ package components
 
 import (
 	"strings"
+	"sync"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
@@ -71,8 +72,34 @@ func RenderFan(t styles.Theme, cards []deck.Card, selected int) string {
 	return strings.Join(rows, "\n")
 }
 
+// columnKey is everything a fan column depends on; width follows from closed.
+type columnKey struct {
+	rank     deck.Rank
+	suit     deck.Suit
+	selected bool
+	closed   bool
+	dark     bool
+}
+
+// columnCache memoises fan columns. Every row of every card would otherwise re-emit
+// its own colour sequence on every frame - a seven-card hand is over a hundred style
+// renders - and a column only has a few hundred possible forms.
+var columnCache sync.Map // columnKey -> []string
+
 // fanColumn renders one card's slice of the fan: top border, face rows, bottom border.
+// The returned slice is shared with the cache and must not be mutated.
 func fanColumn(t styles.Theme, card deck.Card, selected bool, width int, closed bool) []string {
+	key := columnKey{rank: card.Rank, suit: card.Suit, selected: selected, closed: closed, dark: t.Dark}
+	if cached, ok := columnCache.Load(key); ok {
+		lines, _ := cached.([]string)
+		return lines
+	}
+	lines := renderFanColumn(t, card, selected, width, closed)
+	columnCache.Store(key, lines)
+	return lines
+}
+
+func renderFanColumn(t styles.Theme, card deck.Card, selected bool, width int, closed bool) []string {
 	border := t.CardFace
 	if selected {
 		border = t.Selection
