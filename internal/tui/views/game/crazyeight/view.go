@@ -167,7 +167,7 @@ func (m *Model) renderCurrentSuitIndicator() string {
 
 func (m *Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.global.Theme, m.baseState.CurrentPlayer, m.baseState.MyTurn)
-	handView := gameview.RenderHand(m.global.Theme, m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
+	handView := gameview.RenderHand(m.global.Theme, m.baseState.Hand, m.selectedCardIdx, m.pickingSuit)
 
 	sections := []string{statusView, handView}
 	// The hero's own clock goes under their hand, where every other seat's is.
