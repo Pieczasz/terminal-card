@@ -97,9 +97,11 @@ func Load() (*Config, error) {
 		ServerPort:     serverPort,
 		APIPort:        apiPort,
 		APIAllowOrigin: getEnv("API_ALLOW_ORIGIN", "*"),
-		// The compose deployment never publishes the API port, so the only
-		// possible source of X-Forwarded-For is the nginx in front of it.
-		APITrustProxy:        getEnv("API_TRUST_PROXY", "true") == "true",
+		// Defaults to off because trusting X-Forwarded-For on a directly reachable
+		// listener lets any caller forge an address and walk past the rate limit
+		// entirely. The compose deployment never publishes the API port, so nginx is
+		// the only possible source of the header there - and it opts in explicitly.
+		APITrustProxy:        getEnv("API_TRUST_PROXY", "false") == "true",
 		MaxConnections:       maxConnections,
 		SSHKeyPath:           getEnv("SSH_KEY_PATH", ".wishlist/server"),
 		DBHost:               getEnv("DB_HOST", "localhost"),
@@ -114,13 +116,6 @@ func Load() (*Config, error) {
 		ServiceVersion:       getEnv("SERVICE_VERSION", detectVersion()),
 		RateLimitCount:       rateLimitCount,
 		RateLimitWindow:      time.Duration(rateLimitWindowMS) * time.Millisecond,
-	}
-
-	if cfg.DBSSLMode == "" {
-		cfg.DBSSLMode = defaultSSLMode
-	}
-	if cfg.ServiceVersion == "" {
-		cfg.ServiceVersion = detectVersion()
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -155,16 +150,46 @@ func (c *Config) Validate() error {
 	return nil
 }
 
+// DSN carries DBPassword in clear text. Never log the result; log the Config
+// itself, whose String method redacts it.
 func (c *Config) DSN() string {
 	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=UTC",
 		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort, c.DBSSLMode)
 }
 
-func detectVersion() string {
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-		return info.Main.Version
+// String keeps the database password out of logs. Without it, any %v or
+// slog.Any on a Config prints DB_PASSWORD in clear text, which is one careless
+// debug line away from leaking the credential into log storage.
+func (c *Config) String() string {
+	if c == nil {
+		return "<nil>"
 	}
-	return "0.1.0"
+	redacted := *c
+	if redacted.DBPassword != "" {
+		redacted.DBPassword = "[REDACTED]"
+	}
+	// plain drops the method set, so formatting it cannot re-enter String.
+	type plain Config
+	return fmt.Sprintf("%+v", plain(redacted))
+}
+
+const fallbackVersion = "0.1.0"
+
+func detectVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return fallbackVersion
+	}
+	return normalizeVersion(info.Main.Version)
+}
+
+// normalizeVersion rejects the two build stamps that carry no information. Reporting
+// "(devel)" as a service version tells an operator nothing about what is deployed.
+func normalizeVersion(version string) string {
+	if version == "" || version == "(devel)" {
+		return fallbackVersion
+	}
+	return version
 }
 
 // getEnv returns the environment value for key, falling back when it is unset or
