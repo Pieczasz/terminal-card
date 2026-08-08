@@ -7,10 +7,12 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	crazyeightrules "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	ginrummyrules "github.com/Pieczasz/terminal-card/internal/game/ginrummy"
 	heartsrules "github.com/Pieczasz/terminal-card/internal/game/hearts"
 	pokerrules "github.com/Pieczasz/terminal-card/internal/game/poker"
 	unorules "github.com/Pieczasz/terminal-card/internal/game/uno"
 	crazyeightview "github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
+	ginrummyview "github.com/Pieczasz/terminal-card/internal/tui/views/game/ginrummy"
 	heartsview "github.com/Pieczasz/terminal-card/internal/tui/views/game/hearts"
 	pokerview "github.com/Pieczasz/terminal-card/internal/tui/views/game/poker"
 	unoview "github.com/Pieczasz/terminal-card/internal/tui/views/game/uno"
@@ -57,5 +59,11 @@ var All = []Entry{
 		Slug:  "hearts",
 		Rules: func() game.Rules { return &heartsrules.Rules{} },
 		View:  heartsview.New,
+	},
+	{
+		Name:  "Gin Rummy",
+		Slug:  "gin_rummy",
+		Rules: func() game.Rules { return &ginrummyrules.Rules{} },
+		View:  ginrummyview.New,
 	},
 }
