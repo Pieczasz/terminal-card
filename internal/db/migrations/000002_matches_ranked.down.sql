@@ -1,0 +1,1 @@
+ALTER TABLE matches DROP COLUMN IF EXISTS ranked;
