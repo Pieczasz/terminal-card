@@ -66,13 +66,12 @@ per-session UI scheduling:
 | Timer | Interval | Where |
 |---|---|---|
 | Turn countdown (adaptive) | 1 s, or **100 ms** under 6 s remaining | `internal/tui/views/game/layout.go` `ClockTickFor` |
-| Card-selection spring animation | `time.Second / 60` (60 FPS) | `internal/tui/animation/animation.go` |
 | Lobby-browser refresh | 2 s (`browseRefresh`) | `internal/tui/views/lobby/join.go` |
 | Router idle watchdog | 10 s poll, quits after 5 min idle | `internal/tui/router/router.go` |
 | Engine turn clock | 30 s one-shot (`DefaultTurnTimeout`), re-armed | `internal/game/engine.go` |
 
-The 60 FPS figure applies to one spring animation on the card fan, not to the
-application.
+Nothing animates: the card fan draws the selected card on top rather than moving it,
+so there is no frame loop anywhere in the UI.
 
 ### Design patterns in use
 
@@ -145,7 +144,7 @@ terminal-card/
 │   │   ├── matches.go          Match, MatchParticipant
 │   │   ├── games.go            Game
 │   │   ├── gorm.go             Connect(): pool 10 idle / cfg max / 1h lifetime
-│   │   └── migrations/         000001_init.{up,down}.sql — the only version
+│   │   └── migrations/         000001_init.{up,down}.sql (000002 is a no-op)
 │   ├── deck/                   cards, piles, shuffling (builder.go, card.go, deck.go)
 │   ├── elo/elo.go              Simple Multiplayer Elo, K=32, clamped [100, 4000]
 │   ├── game/                   PURE rules/engine. no db, no tui, no routes
@@ -186,7 +185,6 @@ terminal-card/
 │       ├── styles/
 │       │   ├── theme.go        THE only file allowed to name a colour
 │       │   └── common.go       sizing (BoxWidth/InnerWidth/…), PadTruncate, layout
-│       ├── animation/          harmonica spring, 60 FPS FrameMsg
 │       ├── components/card.go  card glyph rendering
 │       └── views/
 │           ├── common.go       HandleCommonMsg, NavigateOn, RenderCenteredLayout
@@ -691,7 +689,7 @@ A player's own cards come only from `BoundEngine.Hand()`, which returns a
 `slices.Clone` of the cards belonging to the bound `playerID` and nobody else.
 
 **TUI messages:** `router.ChangeViewMsg{ViewName, Context}`, `gameview.ClockTickMsg`,
-`animation.FrameMsg`, `poker.gameMsg`/`crazyeight.gameMsg` (both wrap `game.Event`),
+`poker.gameMsg`/`crazyeight.gameMsg` (both wrap `game.Event`),
 `lobby.refreshMsg` (browser tick), plus the Bubble Tea built-ins `tea.KeyPressMsg`,
 `tea.WindowSizeMsg`, `tea.BackgroundColorMsg`.
 
@@ -1059,7 +1057,7 @@ Recorded so nobody searches for code that was never written.
 
 | Topic in the brief | Reality |
 |---|---|
-| **Target tick rate / FPS, 30–60 Hz logic loop decoupled from render** | No game loop exists. The engine is event-driven: it advances on `SubmitAction` or a turn timer. The only 60 FPS thing is one `harmonica` spring on the card fan. See [§1](#not-tick-driven). |
+| **Target tick rate / FPS, 30–60 Hz logic loop decoupled from render** | No game loop and no frame loop exist. The engine is event-driven: it advances on `SubmitAction` or a turn timer, and the UI redraws on input, a broadcast or the turn countdown. See [§1](#not-tick-driven). |
 | **Worker pool** | None. No `errgroup`, no semaphore, no job queue. Exactly four explicit `go func` sites; concurrency is bounded by `netutil.LimitListener(MaxConnections)` and nginx `limit_conn ssh_addr 8`. |
 | **Ring buffer / dropped-frame handling** | The policy is latest-wins on a 256-deep buffered channel per subscriber, not a ring buffer. Same effect, different mechanism — [§4.1](#41-broadcaster-architecture). |
 | **Redis/Valkey scaling boundary, storage abstraction to swap or complement** | Absent by design. No cache interface, no pub/sub abstraction. The nearest thing is a comment naming Watermill-over-Redis as the upgrade path. [§4.2](#42-in-memory-store-and-the-scaling-boundary) documents the two seams and what they would each require. |
