@@ -7,12 +7,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/tui/animation"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/harmonica"
 )
 
 type gameMsg game.Event
@@ -26,16 +24,10 @@ type Model struct {
 	selectedCardIdx int
 
 	// Crazy Eights specific
-	currentSuit     deck.Suit
-	pickingSuit     bool
-	suitCursor      int
-	lastActionErr   error
-	selectionSpring harmonica.Spring
-	selectionLift   float64
-	selectionVel    float64
-	// animating is true while the frame loop is running. It stops the loop from
-	// being started twice, which would double the frame rate.
-	animating bool
+	currentSuit   deck.Suit
+	pickingSuit   bool
+	suitCursor    int
+	lastActionErr error
 }
 
 func listenForEvents(ch <-chan game.Event) tea.Cmd {
@@ -73,13 +65,10 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 		}
 	}
 	m := &Model{
-		global:          global,
-		bound:           bound,
-		events:          ch,
-		lastActionErr:   subErr,
-		selectionSpring: animation.DefaultSpring(),
-		selectionLift:   2.0,
-		selectionVel:    0,
+		global:        global,
+		bound:         bound,
+		events:        ch,
+		lastActionErr: subErr,
 	}
 	m.syncState()
 	return m
@@ -102,10 +91,8 @@ func (m *Model) syncState() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	m.animating = true
 	return tea.Batch(
 		listenForEvents(m.events),
-		animation.Tick(),
 		gameview.ClockTick(),
 	)
 }

@@ -18,38 +18,34 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, selectionLift float64, disableSelection bool) string {
-	renderedCards := make([]string, 0, len(hand))
-	for i, c := range hand {
-		isSelected := i == selectedIdx && !disableSelection
-		var lift int
-		if isSelected {
-			lift = max(int(math.Round(selectionLift)), 0)
-		}
-
-		cardView := components.RenderCard(t, c, isSelected)
-		if i < 10 {
-			numStyle := t.Dim
-			if isSelected {
-				numStyle = t.PlayerItemSelected.Bold(true)
-			}
-			numView := numStyle.Render(strconv.Itoa(i))
-			cardView = lg.JoinVertical(lg.Center, cardView, numView)
-		}
-
-		maxLift := 2
-		if lift > maxLift {
-			lift = maxLift
-		}
-
-		cardView = lg.NewStyle().
-			MarginTop(maxLift - lift).
-			MarginBottom(lift).
-			Render(cardView)
-
-		renderedCards = append(renderedCards, cardView)
+func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelection bool) string {
+	if len(hand) == 0 {
+		return ""
 	}
-	return lg.JoinHorizontal(lg.Top, renderedCards...)
+	selected := selectedIdx
+	if disableSelection {
+		selected = -1
+	}
+
+	fan := components.RenderFan(t, hand, selected)
+
+	// The index row sits under the fan, one number centred in each card's visible slot,
+	// so a player can see which key picks which card.
+	var labels strings.Builder
+	for i := range hand {
+		slot := components.CardSlotWidth(i, len(hand), selected)
+		label := " "
+		if i < 10 {
+			style := t.Dim
+			if i == selected {
+				style = t.PlayerItemSelected.Bold(true)
+			}
+			label = style.Render(strconv.Itoa(i))
+		}
+		labels.WriteString(lg.PlaceHorizontal(slot, lg.Center, label))
+	}
+
+	return lg.JoinVertical(lg.Left, fan, labels.String())
 }
 
 type Orientation int

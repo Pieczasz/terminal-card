@@ -1,12 +1,9 @@
 package crazyeight
 
 import (
-	"math"
-
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/tui/animation"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
@@ -37,16 +34,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, gameview.ClockTickFor(m.baseState.TurnRemaining, m.baseState.MyTurn)
-	case animation.FrameMsg:
-		m.selectionLift, m.selectionVel = m.selectionSpring.Update(m.selectionLift, m.selectionVel, selectionRest)
-		if m.springAtRest() {
-			// Stop the loop, or every session re-renders at 60 FPS forever for an
-			// animation that has finished moving.
-			m.selectionLift, m.selectionVel = selectionRest, 0
-			m.animating = false
-			return m, nil
-		}
-		return m, animation.Tick()
 	}
 
 	return m, nil
@@ -115,30 +102,6 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 
 // selectionRest is where the lift animation settles, and selectionEpsilon is how
 // close counts as arrived.
-const (
-	selectionRest    = 2.0
-	selectionEpsilon = 0.01
-)
-
-// springAtRest reports whether the lift animation has finished moving.
-func (m *Model) springAtRest() bool {
-	return math.Abs(m.selectionVel) < selectionEpsilon &&
-		math.Abs(selectionRest-m.selectionLift) < selectionEpsilon
-}
-
-// restartSelectionAnimation drops the lift and starts the frame loop, unless it is
-// already running - a second Tick would double the frame rate and the chains would
-// never merge back.
-func (m *Model) restartSelectionAnimation() tea.Cmd {
-	m.selectionLift = 0
-	m.selectionVel = 0
-	if m.animating {
-		return nil
-	}
-	m.animating = true
-	return animation.Tick()
-}
-
 func (m *Model) handleLeft() (tea.Model, tea.Cmd) {
 	if m.pickingSuit {
 		if m.suitCursor%2 != 0 {
@@ -148,7 +111,7 @@ func (m *Model) handleLeft() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedCardIdx > 0 {
 		m.selectedCardIdx--
-		return m, m.restartSelectionAnimation()
+		return m, nil
 	}
 	return m, nil
 }
@@ -162,7 +125,7 @@ func (m *Model) handleRight() (tea.Model, tea.Cmd) {
 	}
 	if m.selectedCardIdx < len(m.baseState.Hand)-1 {
 		m.selectedCardIdx++
-		return m, m.restartSelectionAnimation()
+		return m, nil
 	}
 	return m, nil
 }
