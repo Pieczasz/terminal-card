@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/attribute"
 	otellog "go.opentelemetry.io/otel/log"
 	"go.opentelemetry.io/otel/log/global"
 	collogpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
@@ -80,7 +81,7 @@ func TestOTel_Integration(t *testing.T) {
 	logger := global.Logger("test-logger")
 
 	var record otellog.Record
-	record.SetBody(otellog.StringValue("hello from test"))
+	record.SetBody(attribute.StringValue("hello from test"))
 
 	logger.Emit(ctx, record)
 
