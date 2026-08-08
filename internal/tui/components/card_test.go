@@ -165,6 +165,7 @@ func TestRankLabels_CoversAllDeckRanks(t *testing.T) {
 	for _, rank := range []deck.Rank{
 		deck.Ace, deck.Two, deck.Five, deck.Nine, deck.Ten,
 		deck.Jack, deck.Queen, deck.King, deck.Joker,
+		deck.Zero, deck.One, deck.Skip, deck.Reverse, deck.DrawTwo, deck.Wild, deck.WildDrawFour,
 	} {
 		label, ok := rankLabels[rank]
 		require.Truef(t, ok, "rankLabels missing deck.Rank %d", rank)

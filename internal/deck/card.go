@@ -22,6 +22,14 @@ const (
 	Queen
 	King
 	Joker
+	// Uno ranks (additive; StandardDeck never deals them).
+	Zero
+	One
+	Skip
+	Reverse
+	DrawTwo
+	Wild
+	WildDrawFour
 )
 
 type Suit uint8
