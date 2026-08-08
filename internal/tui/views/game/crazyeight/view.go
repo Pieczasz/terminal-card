@@ -4,6 +4,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
@@ -60,9 +61,9 @@ func (m *Model) View() tea.View {
 	botHeight := lg.Height(fullPlayerArea)
 	midHeight := max(m.global.Height-topHeight-botHeight, 0)
 
-	topArea := lg.PlaceHorizontal(m.global.Width, lg.Center, topAreaContent)
+	topArea := styles.PadCenter(m.global.Width, topAreaContent)
 	midArea := m.renderMiddleLayer(midHeight, superCompact)
-	botArea := lg.PlaceHorizontal(m.global.Width, lg.Center, fullPlayerArea)
+	botArea := styles.PadCenter(m.global.Width, fullPlayerArea)
 
 	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
 }
@@ -82,9 +83,9 @@ func (m *Model) renderMiddleLayer(height int, superCompact bool) string {
 	w2 := m.global.Width / 3
 	w3 := m.global.Width - w1 - w2
 
-	leftArea := lg.Place(w1, height, lg.Left, lg.Center, leftOpponent)
-	centerArea := lg.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
-	rightArea := lg.Place(w3, height, lg.Right, lg.Center, rightOpponent)
+	leftArea := styles.Place(w1, height, lg.Left, lg.Center, leftOpponent)
+	centerArea := styles.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
+	rightArea := styles.Place(w3, height, lg.Right, lg.Center, rightOpponent)
 
 	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
 }

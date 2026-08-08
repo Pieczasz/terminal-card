@@ -42,7 +42,7 @@ func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelect
 			}
 			label = style.Render(strconv.Itoa(i))
 		}
-		labels.WriteString(lg.PlaceHorizontal(slot, lg.Center, label))
+		labels.WriteString(styles.PadCenter(slot, label))
 	}
 
 	return lg.JoinVertical(lg.Left, fan, labels.String())
