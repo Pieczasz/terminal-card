@@ -155,6 +155,23 @@ func TestRenderFan_OnlyTheTopCardClosesItsEdge(t *testing.T) {
 	assert.Empty(t, RenderFan(theme, nil, -1), "no cards, nothing to draw")
 }
 
+// rankLabels must contain an entry for every deck.Rank, or card rendering fails
+// silently with a blank rank label. The map is non-exhaustive and never uses a
+// default case, so missing entries produce empty strings.
+func TestRankLabels_CoversAllDeckRanks(t *testing.T) {
+	t.Parallel()
+
+	// Test a representative sample across the standard deck (numeric, face, special)
+	for _, rank := range []deck.Rank{
+		deck.Ace, deck.Two, deck.Five, deck.Nine, deck.Ten,
+		deck.Jack, deck.Queen, deck.King, deck.Joker,
+	} {
+		label, ok := rankLabels[rank]
+		require.Truef(t, ok, "rankLabels missing deck.Rank %d", rank)
+		assert.NotEmptyf(t, label, "rankLabels[%d] is empty", rank)
+	}
+}
+
 func stripANSI(s string) string {
 	var out strings.Builder
 	inEscape := false
