@@ -1,0 +1,75 @@
+package lobby
+
+import (
+	"context"
+	"fmt"
+	"testing"
+
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+
+	"github.com/stretchr/testify/require"
+)
+
+func benchGlobal(m *lobby.Manager) router.GlobalContext {
+	return router.GlobalContext{
+		User: testUser(99, "browser"), LobbyManager: m,
+		GameRegistry: testRegistry(), Width: 120, Height: 40,
+		Theme: styles.NewTheme(true),
+	}
+}
+
+// The browser re-renders every two seconds for every player sitting on it, so this is
+// a per-second cost across the whole server rather than a per-keypress one.
+func BenchmarkJoinView_Render(b *testing.B) {
+	m := lobby.NewManager(context.Background(), nil)
+	for i := range 20 {
+		leader := &player.Player{ID: fmt.Sprintf("h%d", i), DatabaseUser: testUser(uint(i+1), fmt.Sprintf("h%d", i))}
+		_, err := m.New(leader, lobby.WithPrivate(false), lobby.WithCardGame(&db.Game{Name: testGameName}))
+		require.NoError(b, err)
+	}
+	view, ok := NewJoin(benchGlobal(m)).(*joinModel)
+	require.True(b, ok)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = view.View()
+	}
+}
+
+// The in-lobby view redraws on every roster and settings event.
+func BenchmarkLobbyView_Render(b *testing.B) {
+	manager := lobby.NewManager(context.Background(), nil)
+	leader := &player.Player{ID: "1", DatabaseUser: testUser(1, "alice")}
+	l, err := manager.New(leader, lobby.WithMaxPlayers(4), lobby.WithPrivate(false),
+		lobby.WithCardGame(&db.Game{Name: testGameName}))
+	require.NoError(b, err)
+	for i := 2; i <= 4; i++ {
+		g := &player.Player{ID: fmt.Sprint(i), DatabaseUser: testUser(uint(i), fmt.Sprintf("p%d", i))}
+		require.NoError(b, manager.JoinLobbyByCode(l.Code(), g))
+	}
+
+	global := benchGlobal(manager)
+	global.User = testUser(1, "alice")
+	view, ok := New(global, l).(*model)
+	require.True(b, ok)
+	b.Cleanup(view.Close)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = view.View()
+	}
+}
+
+func BenchmarkCreateView_Render(b *testing.B) {
+	view, ok := NewCreate(benchGlobal(lobby.NewManager(context.Background(), nil))).(*createModel)
+	require.True(b, ok)
+
+	b.ReportAllocs()
+	for b.Loop() {
+		_ = view.View()
+	}
+}
