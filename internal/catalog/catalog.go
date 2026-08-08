@@ -8,8 +8,10 @@ import (
 
 	crazyeightrules "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
 	pokerrules "github.com/Pieczasz/terminal-card/internal/game/poker"
+	unorules "github.com/Pieczasz/terminal-card/internal/game/uno"
 	crazyeightview "github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
 	pokerview "github.com/Pieczasz/terminal-card/internal/tui/views/game/poker"
+	unoview "github.com/Pieczasz/terminal-card/internal/tui/views/game/uno"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -41,5 +43,11 @@ var All = []Entry{
 		Slug:  "poker",
 		Rules: func() game.Rules { return &pokerrules.Rules{} },
 		View:  pokerview.New,
+	},
+	{
+		Name:  "Uno",
+		Slug:  "uno",
+		Rules: func() game.Rules { return &unorules.Rules{} },
+		View:  unoview.New,
 	},
 }

@@ -65,6 +65,10 @@ func TestTheme_TextContrast(t *testing.T) {
 				"Selection": theme.Selection,
 				"SuitRed":   theme.SuitRed,
 				"SuitDark":  theme.SuitDark,
+				"UnoRed":    theme.UnoRed,
+				"UnoYellow": theme.UnoYellow,
+				"UnoGreen":  theme.UnoGreen,
+				"UnoBlue":   theme.UnoBlue,
 				"CardFace":  theme.CardFace,
 			}
 			for i, c := range theme.Placements {
