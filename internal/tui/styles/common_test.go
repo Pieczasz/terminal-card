@@ -9,6 +9,7 @@ import (
 
 	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Router.Global.Width/Height are zero until the first WindowSizeMsg, so every
@@ -157,4 +158,38 @@ func TestBoxSizes_ExactInsets(t *testing.T) {
 	assert.Equal(t, 46, styles.BoxWidth(50), "two cells of border and one of padding each side")
 	assert.Equal(t, 28, styles.BoxHeight(30))
 	assert.Equal(t, 40, styles.InnerWidth(50))
+}
+
+// One caller banners the player's own username, and anyone may register one, so the
+// banner cache is keyed partly on attacker-supplied text. It has to stop growing.
+//
+//nolint:paralleltest // mutates the package-wide banner cache
+func TestRenderFigureASCII_CacheIsCapped(t *testing.T) {
+	styles.ResetFigureCacheForTest()
+
+	for i := range 2000 {
+		got := styles.RenderFigureASCII(fmt.Sprintf("user%d", i), 80)
+		require.NotEmpty(t, got)
+	}
+
+	assert.LessOrEqual(t, styles.FigureCacheLenForTest(), 512,
+		"a cache keyed on usernames must not grow with every account seen")
+}
+
+// Capped or not, the banner itself must stay correct: a cache that starts returning
+// something different once it is full is worse than no cache.
+//
+//nolint:paralleltest // mutates the package-wide banner cache
+func TestRenderFigureASCII_StaysCorrectPastTheCap(t *testing.T) {
+	styles.ResetFigureCacheForTest()
+
+	want := styles.RenderFigureASCII("Terminal Cards", 80)
+	for i := range 1000 {
+		styles.RenderFigureASCII(fmt.Sprintf("filler%d", i), 80)
+	}
+
+	assert.Equal(t, want, styles.RenderFigureASCII("Terminal Cards", 80), "cached entry")
+	uncached := styles.RenderFigureASCII("Join Game", 80)
+	assert.Equal(t, uncached, styles.RenderFigureASCII("Join Game", 80),
+		"and one past the cap still renders consistently")
 }
