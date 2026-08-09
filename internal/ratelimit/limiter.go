@@ -56,9 +56,7 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 	_, exists := s.logs[ip]
 	if !exists && len(s.logs) >= s.maxKeys {
 		s.evictExpiredLocked(threshold)
-		if len(s.logs) >= s.maxKeys {
-			return false
-		}
+		s.evictLeastRecentLocked()
 	}
 
 	s.logs[ip] = append(timestamps, now)
@@ -91,6 +89,24 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 		} else {
 			s.logs[ip] = valid
 		}
+	}
+}
+
+func (s *SlidingWindowLimiter) evictLeastRecentLocked() {
+	var victim string
+	var oldest time.Time
+	for ip, timestamps := range s.logs {
+		if len(timestamps) == 0 {
+			delete(s.logs, ip)
+			continue
+		}
+		last := timestamps[len(timestamps)-1]
+		if victim == "" || last.Before(oldest) {
+			victim, oldest = ip, last
+		}
+	}
+	if len(s.logs) >= s.maxKeys && victim != "" {
+		delete(s.logs, victim)
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/hearts"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	"github.com/stretchr/testify/assert"
@@ -21,11 +20,11 @@ func testUser(id uint, name string) *db.User {
 
 func startedTable(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
-	players := []*player.Player{
-		{ID: "1", DatabaseUser: testUser(1, "alice")},
-		{ID: "2", DatabaseUser: testUser(2, "bob")},
-		{ID: "3", DatabaseUser: testUser(3, "carol")},
-		{ID: "4", DatabaseUser: testUser(4, "dave")},
+	players := []*game.Player{
+		{ID: "1", UserID: 1, Name: "alice"},
+		{ID: "2", UserID: 2, Name: "bob"},
+		{ID: "3", UserID: 3, Name: "carol"},
+		{ID: "4", UserID: 4, Name: "dave"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +15,7 @@ import (
 
 func createTestState() *game.State {
 	rules := &Rules{}
-	players := []*player.Player{{ID: "p1", Cards: []deck.Card{
+	players := []*game.Player{{ID: "p1", Cards: []deck.Card{
 		{Rank: deck.Two, Suit: deck.Spades},
 		{Rank: deck.King, Suit: deck.Hearts},
 		{Rank: deck.Eight, Suit: deck.Diamonds},
@@ -56,7 +55,12 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}}
+		// An eight matches neither the suit nor the rank on the pile; naming a suit
+		// is what makes it playable.
+		action := ActionPlayCard{
+			Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}},
+			Suit:  deck.Clubs,
+		}
 
 		err := rules.ValidateAction(state, action)
 		require.NoError(t, err)
@@ -268,11 +272,11 @@ func createMultiplayerState(t *testing.T, hands ...int) *game.State {
 	rules := &Rules{}
 	stock := deck.New(deck.StandardDeck())
 
-	players := make([]*player.Player, 0, len(hands))
+	players := make([]*game.Player, 0, len(hands))
 	for i, n := range hands {
 		cards, ok := stock.DrawNCards(n)
 		require.True(t, ok, "fixture deck must hold %d cards", n)
-		players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards})
+		players = append(players, &game.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards})
 	}
 
 	top, ok := stock.Draw()
@@ -386,7 +390,7 @@ func TestRules_CheckWinCondition_EmptyHandWins(t *testing.T) {
 func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
@@ -462,6 +466,56 @@ func TestRules_CheckWinCondition_EmptyTableIsNotADeadlock(t *testing.T) {
 	extra.Passes = 3
 
 	assert.False(t, (&Rules{}).CheckWinCondition(state), "no seats means no hand to deadlock")
+}
+
+// Passes is counted against the number of seats, so a leaver who arrives with the
+// count part-way up leaves a table that reads as deadlocked without a single seat
+// having passed. Their returned cards also refill the stock the count was measuring.
+func TestRules_OnPlayerLeave_ClearsStalePasses(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createMultiplayerState(t, 3, 3, 3)
+	extra, ok := state.Extra.(*State)
+	require.True(t, ok)
+
+	extra.Passes = 2
+	rules.OnPlayerLeave(state, "p3")
+	state.Players = state.Players[:2] // the engine drops the seat after the hook
+
+	assert.Zero(t, extra.Passes, "the count measured a table that no longer exists")
+	assert.False(t, rules.CheckWinCondition(state), "nobody passed, so nothing is deadlocked")
+}
+
+// The stock is rebuilt from the discard on a failed shuffle, and the pile has to go
+// back exactly as it was: Peek reads the end, so the card in play must stay last.
+func TestRestoreDiscard_KeepsTheCardInPlayOnTop(t *testing.T) {
+	t.Parallel()
+	top := deck.Card{Rank: deck.Nine, Suit: deck.Spades}
+	rest := []deck.Card{
+		{Rank: deck.Three, Suit: deck.Hearts},
+		{Rank: deck.Jack, Suit: deck.Clubs},
+	}
+
+	restored := restoreDiscard(rest, top)
+
+	peeked, ok := restored.Peek()
+	require.True(t, ok)
+	assert.Equal(t, top, peeked, "a rotated pile puts a card nobody played into play")
+	assert.Equal(t, len(rest)+1, restored.Size(), "every card comes back")
+}
+
+// Playing a card sheds one copy of it. A hand can legitimately hold two of the same
+// card once the discard has been reshuffled back through a multi-deck table, and
+// shedding both would destroy one.
+func TestRules_ApplyAction_ShedsOneCopyOfADuplicate(t *testing.T) {
+	t.Parallel()
+	state := createTestState()
+	card := deck.Card{Rank: deck.Two, Suit: deck.Spades}
+	state.Players[0].Cards = []deck.Card{card, card, {Rank: deck.King, Suit: deck.Hearts}}
+
+	(&Rules{}).ApplyAction(state, ActionPlayCard{Cards: []deck.Card{card}})
+
+	assert.Equal(t, []deck.Card{card, {Rank: deck.King, Suit: deck.Hearts}}, state.Players[0].Cards)
 }
 
 // The leave path returns cards and reshuffles. An ordinary leave is not a failure, so

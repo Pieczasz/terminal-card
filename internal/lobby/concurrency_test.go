@@ -11,7 +11,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"github.com/stretchr/testify/assert"
@@ -43,7 +42,7 @@ func runWithTimeout(t *testing.T, d time.Duration, fn func()) {
 
 // guestRef pairs a joiner with the per-goroutine outcome of its join attempt.
 type guestRef struct {
-	p      *player.Player
+	p      *game.Player
 	joined bool
 }
 
@@ -139,7 +138,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame(&db.Game{Name: "TestGame"}))
 	require.NoError(t, err)
 
-	all := []*player.Player{leader}
+	all := []*game.Player{leader}
 	for i := 1; i < players; i++ {
 		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
@@ -153,7 +152,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 	)
 	for _, p := range all {
 		wg.Add(1)
-		go func(p *player.Player) {
+		go func(p *game.Player) {
 			defer wg.Done()
 			<-start
 			m.LeaveLobby(p)
@@ -258,7 +257,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame(&db.Game{Name: "NeverStarts"}))
 	require.NoError(t, err)
 
-	roster := []*player.Player{leader}
+	roster := []*game.Player{leader}
 	for i := 1; i < members; i++ {
 		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
@@ -279,7 +278,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 	for g := range togglers {
 		target := roster[g%len(roster)]
 		wg.Add(1)
-		go func(p *player.Player) {
+		go func(p *game.Player) {
 			defer wg.Done()
 			<-start
 			for range perGoTurns {

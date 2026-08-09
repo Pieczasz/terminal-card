@@ -7,66 +7,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
-// rankOrder is Ace-low (1..13). Q-K-A is not a run.
-func rankOrder(r deck.Rank) int {
-	switch r {
-	case deck.Ace:
-		return 1
-	case deck.Two:
-		return 2
-	case deck.Three:
-		return 3
-	case deck.Four:
-		return 4
-	case deck.Five:
-		return 5
-	case deck.Six:
-		return 6
-	case deck.Seven:
-		return 7
-	case deck.Eight:
-		return 8
-	case deck.Nine:
-		return 9
-	case deck.Ten:
-		return 10
-	case deck.Jack:
-		return 11
-	case deck.Queen:
-		return 12
-	case deck.King:
-		return 13
-	default:
-		return 0
-	}
-}
-
-func deadwoodPoints(c deck.Card) int {
-	switch c.Rank {
-	case deck.Ace:
-		return 1
-	case deck.Two:
-		return 2
-	case deck.Three:
-		return 3
-	case deck.Four:
-		return 4
-	case deck.Five:
-		return 5
-	case deck.Six:
-		return 6
-	case deck.Seven:
-		return 7
-	case deck.Eight:
-		return 8
-	case deck.Nine:
-		return 9
-	case deck.Ten, deck.Jack, deck.Queen, deck.King:
-		return 10
-	default:
-		return 0
-	}
-}
+func deadwoodPoints(c deck.Card) int { return deck.PipValue(c.Rank) }
 
 func sumDeadwood(cards []deck.Card) int {
 	total := 0
@@ -135,7 +76,12 @@ func BestMeldSplit(hand []deck.Card) (melds [][]deck.Card, deadwood []deck.Card,
 }
 
 func generateMeldMasks(cards []deck.Card) []uint16 {
-	return append(setMasks(cards), runMasks(cards)...)
+	masks := append(setMasks(cards), runMasks(cards)...)
+	// setMasks and runMasks walk maps, and BestMeldSplit keeps the first split it
+	// finds at the best score. Without an order the melds a knock is scored on
+	// change between runs on the same hand.
+	slices.Sort(masks)
+	return masks
 }
 
 func setMasks(cards []deck.Card) []uint16 {
@@ -169,7 +115,7 @@ func runMasks(cards []deck.Card) []uint16 {
 	out := make([]uint16, 0, len(cards))
 	for _, idxs := range bySuit {
 		slices.SortFunc(idxs, func(a, b int) int {
-			return rankOrder(cards[a].Rank) - rankOrder(cards[b].Rank)
+			return deck.RunOrder(cards[a].Rank) - deck.RunOrder(cards[b].Rank)
 		})
 		out = append(out, runMasksInSuit(cards, idxs)...)
 	}
@@ -182,7 +128,7 @@ func runMasksInSuit(cards []deck.Card, idxs []int) []uint16 {
 	for start < len(idxs) {
 		end := start + 1
 		for end < len(idxs) &&
-			rankOrder(cards[idxs[end]].Rank) == rankOrder(cards[idxs[end-1]].Rank)+1 {
+			deck.RunOrder(cards[idxs[end]].Rank) == deck.RunOrder(cards[idxs[end-1]].Rank)+1 {
 			end++
 		}
 		out = append(out, subRunMasks(idxs[start:end])...)
@@ -227,19 +173,6 @@ func combinations(items []int, k int) [][]int {
 	return out
 }
 
-func removeOne(hand []deck.Card, card deck.Card) []deck.Card {
-	out := make([]deck.Card, 0, len(hand)-1)
-	removed := false
-	for _, c := range hand {
-		if c == card && !removed {
-			removed = true
-			continue
-		}
-		out = append(out, c)
-	}
-	return out
-}
-
 func highestPointCard(cards []deck.Card) deck.Card {
 	best := cards[0]
 	bestPts := deadwoodPoints(best)
@@ -271,14 +204,14 @@ func isRun(meld []deck.Card) bool {
 	}
 	sorted := slices.Clone(meld)
 	slices.SortFunc(sorted, func(a, b deck.Card) int {
-		return rankOrder(a.Rank) - rankOrder(b.Rank)
+		return deck.RunOrder(a.Rank) - deck.RunOrder(b.Rank)
 	})
 	suit := sorted[0].Suit
 	for i := 1; i < len(sorted); i++ {
 		if sorted[i].Suit != suit {
 			return false
 		}
-		if rankOrder(sorted[i].Rank) != rankOrder(sorted[i-1].Rank)+1 {
+		if deck.RunOrder(sorted[i].Rank) != deck.RunOrder(sorted[i-1].Rank)+1 {
 			return false
 		}
 	}

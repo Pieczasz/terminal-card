@@ -66,8 +66,6 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	assert.Len(t, b.subscribers, 1)
 	b.mu.RUnlock()
 
-	// A bare receive here would hang forever if Unsubscribe closed somebody else's
-	// channel, turning a wrong-channel bug into a suite that never finishes.
 	select {
 	case _, ok := <-ch1:
 		assert.False(t, ok, "the unsubscribed channel must be closed")
@@ -93,8 +91,6 @@ func TestBroadcaster_SubscribeAfterClose(t *testing.T) {
 	ch, err := b.Subscribe()
 	require.ErrorIs(t, err, ErrClosed, "a closed broadcaster must say so, not hand back a dead channel")
 	assert.Nil(t, ch)
-
-	// Double close is safe.
 	b.Close()
 }
 
@@ -128,7 +124,6 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 		b.Broadcast(i)
 	}
 
-	// This should not block even though the channel is full
 	done := make(chan bool)
 	go func() {
 		b.Broadcast(1001)
@@ -141,8 +136,6 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 		t.Fatal("Broadcast blocked on a full channel")
 	}
 
-	// Latest-wins: the newest message must still be observable even though the
-	// buffer was full, so the oldest value (0) has been evicted instead.
 	var last int
 	for {
 		select {
@@ -162,9 +155,6 @@ func TestBroadcaster_LatestWins(t *testing.T) {
 
 	ch := mustSubscribe(t, b)
 
-	// Overfill the subscriber buffer (256) without ever draining it. Under
-	// latest-wins the oldest messages get evicted, but the final value must
-	// remain enqueued.
 	const total = 512
 	for i := range total {
 		b.Broadcast(i)
@@ -199,7 +189,6 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	// Broadcasters hammer the broadcaster concurrently.
 	for range broadcasters {
 		wg.Go(func() {
 			for i := range iterations {
@@ -208,12 +197,9 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 		})
 	}
 
-	// Subscribers repeatedly subscribe, drain, and unsubscribe.
 	for range subscribers {
 		wg.Go(func() {
 			for range iterations {
-				// require is illegal off the test goroutine, and Close racing in is an
-				// expected outcome here rather than a failure.
 				ch, err := b.Subscribe()
 				if err != nil {
 					continue
@@ -227,8 +213,6 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 		})
 	}
 
-	// Close concurrently once broadcasts are in flight; the broadcaster must
-	// stay panic- and deadlock-free.
 	go func() {
 		time.Sleep(time.Millisecond)
 		b.Close()
@@ -271,8 +255,6 @@ func TestBroadcaster_MaxSubscribers(t *testing.T) {
 	_ = ch2
 }
 
-// A caller that asks for no capacity gets the default rather than a broadcaster that
-// refuses its very first subscriber.
 func TestBroadcaster_NonPositiveCapacityGetsTheDefault(t *testing.T) {
 	t.Parallel()
 
@@ -286,16 +268,12 @@ func TestBroadcaster_NonPositiveCapacityGetsTheDefault(t *testing.T) {
 	}
 }
 
-// Broadcast is on the per-event fan-out path: every engine action reaches every
-// subscribed player, so its cost scales with table size.
 func BenchmarkBroadcast(b *testing.B) {
 	for _, subs := range []int{1, 4, 9} {
 		b.Run(fmt.Sprintf("subscribers=%d", subs), func(b *testing.B) {
 			bc := New[int](subs + 8)
 			defer bc.Close()
 
-			// Drain in the background so Broadcast measures fan-out, not queue-full
-			// drop handling.
 			done := make(chan struct{})
 			var wg sync.WaitGroup
 			for range subs {

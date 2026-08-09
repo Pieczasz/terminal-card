@@ -46,11 +46,15 @@ type State struct {
 	PendingPasses map[string][]deck.Card
 	Passed        map[string]bool
 
-	LedSuit      deck.Suit
-	TrickCards   map[string]deck.Card
-	TrickLeader  int
-	HeartsBroken bool
-	TricksPlayed int
+	LedSuit    deck.Suit
+	TrickCards map[string]deck.Card
+	// TrickComplete marks TrickCards as a trick that is already won. Clearing it the
+	// moment the fourth card lands would empty the table before the engine
+	// broadcasts the play, so the cards stay up until somebody leads the next trick.
+	TrickComplete bool
+	TrickLeader   int
+	HeartsBroken  bool
+	TricksPlayed  int
 
 	HandPoints       map[string]int
 	CumulativeScores map[string]int
@@ -63,6 +67,23 @@ type State struct {
 	LastTrickWinner string
 }
 
+// leadingTrick reports whether the next card played opens a trick. A won trick
+// still sitting on the table is not one in progress.
+func (s *State) leadingTrick() bool {
+	return s.TrickComplete || len(s.TrickCards) == 0
+}
+
+// startTrick sweeps a won trick off the table. It runs when the next card is
+// played, which is the first moment every client has had the chance to see it.
+func (s *State) startTrick() {
+	if !s.TrickComplete {
+		return
+	}
+	clear(s.TrickCards)
+	s.LedSuit = deck.NoSuit
+	s.TrickComplete = false
+}
+
 func resetHandState(extra *State) {
 	extra.Stage = StagePassing
 	extra.PassDirection = PassLeft
@@ -70,6 +91,7 @@ func resetHandState(extra *State) {
 	extra.Passed = nil
 	extra.LedSuit = deck.NoSuit
 	extra.TrickCards = make(map[string]deck.Card, playerCount)
+	extra.TrickComplete = false
 	extra.TrickLeader = 0
 	extra.HeartsBroken = false
 	extra.TricksPlayed = 0

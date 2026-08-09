@@ -28,8 +28,12 @@ import (
 	"golang.org/x/net/netutil"
 )
 
-// finalizeDrainTimeout matches the per-finalizer deadline.
-const finalizeDrainTimeout = 15 * time.Second
+const (
+	finalizeDrainTimeout = 15 * time.Second
+	// sshDrainTimeout plus finalizeDrainTimeout is what compose's stop_grace_period
+	// (50s) is sized for, so the two must be read together when either changes.
+	sshDrainTimeout = 30 * time.Second
+)
 
 func main() {
 	if err := run(); err != nil {
@@ -59,10 +63,6 @@ func run() (err error) {
 			slog.Error("failed to shutdown OpenTelemetry", "error", err)
 		}
 	}()
-
-	// Report the exit cause here rather than in main: this defer is registered
-	// after the OTel shutdown above, so LIFO runs it first and the record still
-	// reaches the logger provider instead of a torn-down one.
 	defer func() {
 		if err != nil {
 			slog.Error("server exited with error", "error", err)
@@ -94,10 +94,7 @@ func run() (err error) {
 	defer waitForFinalizers(lobbyManager)
 
 	gameRegistry := buildRegistry()
-
-	// Shared so the stats endpoint can read the live session count.
 	tracker := ssh.NewSessionTracker()
-
 	deps := ssh.ServerDependencies{
 		Config:          cfg,
 		UserRepository:  userRepo,
@@ -118,9 +115,10 @@ func run() (err error) {
 }
 
 // installLogging fans slog output to stderr and to the OTel logger provider, so a
-// line is both visible to the container runtime and exported.
+// line is both visible to the container runtime and exported. MultiHandler clones
+// the record per sink and joins their errors, so one broken sink never hides another.
 func installLogging() {
-	slog.SetDefault(slog.New(observability.NewFanoutHandler(
+	slog.SetDefault(slog.New(slog.NewMultiHandler(
 		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
 		otelslog.NewHandler("terminal-card"),
 	)))
@@ -136,9 +134,6 @@ func buildRegistry() *game.Registry {
 	return registry
 }
 
-// startStatsAPI runs the read-only JSON feed the website reads. It is intentionally
-// best-effort: the game is the product, so a failure to bind the stats port logs and
-// carries on rather than refusing to start the server.
 func startStatsAPI(
 	cfg *config.Config,
 	tracker *ssh.SessionTracker,
@@ -178,17 +173,12 @@ func waitForFinalizers(lobbyManager *lobby.Manager) {
 	}
 }
 
-// sshServer is the part of the wish server that serve drives. It exists as a test
-// seam: the accept-loop failure paths below cannot be exercised through a real
-// *charmssh.Server, whose Serve blocks on a live listener. That is the only
-// production implementation.
 type sshServer interface {
 	Serve(net.Listener) error
 	Shutdown(context.Context) error
+	Close() error
 }
 
-// serve accepts connections until a shutdown signal arrives, then drains in-flight
-// sessions. Returning unwinds run's deferred cleanup, so telemetry still flushes.
 func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort)
 	lc := net.ListenConfig{}
@@ -199,8 +189,6 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
 	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
 	defer func() {
-		// Serve closes the listener on its own way out, so a second close is
-		// expected and only the unexpected kind is worth reporting.
 		if err := proxyListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
 			slog.Warn("failed to close listener", "error", err)
 		}
@@ -208,8 +196,6 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-	// Without Stop the handler outlives serve. That is invisible in production (the
-	// process is exiting) but in a test binary it swallows Ctrl-C for good.
 	defer signal.Stop(done)
 
 	slog.Info("starting ssh server",
@@ -236,11 +222,25 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	case <-done:
 	}
 
-	slog.Info("stopping server")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer shutdownCancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("stop server gracefully: %w", err)
-	}
+	stopServer(server)
 	return nil
+}
+
+// stopServer drains in-flight sessions, then closes whatever is left.
+//
+// A table still playing when the deploy lands is the normal case, not a failed
+// shutdown: treating the drain deadline as an error reported a healthy redeploy as a
+// failure and, worse, returned without ever closing the server, so every session
+// stayed open until the runtime killed the process.
+func stopServer(server sshServer) {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), sshDrainTimeout)
+	defer cancel()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("sessions outlasted the drain window; closing them",
+			"error", err, "timeout", sshDrainTimeout)
+	}
+	// Shutdown waits, Close is what lets go, so it runs on both paths.
+	if err := server.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		slog.Warn("failed to close ssh server", "error", err)
+	}
 }

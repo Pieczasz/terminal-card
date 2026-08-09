@@ -46,10 +46,6 @@ func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUser
 	return user, nil
 }
 
-// mapRegisterError passes through the registration failures a user can act on and
-// collapses everything else into a generic failure. The repository sentinels are
-// returned unchanged rather than translated into ssh-local copies, so errors.Is
-// still matches at the caller and the underlying cause survives for logging.
 func mapRegisterError(err error) error {
 	switch {
 	case errors.Is(err, repository.ErrUsernameTaken),

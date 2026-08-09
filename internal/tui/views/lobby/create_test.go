@@ -89,6 +89,40 @@ func TestCreate_ClampLeavesValidValueAlone(t *testing.T) {
 	assert.Equal(t, 4, m.maxPlayers)
 }
 
+// The form used to fall back to a hardcoded "Crazy Eights" when the registry came
+// back empty, which made this a second place a game was declared and offered a
+// game the registry could not build. An empty registry now offers nothing.
+func TestCreate_OffersOnlyWhatTheRegistryHas(t *testing.T) {
+	t.Parallel()
+
+	global := router.GlobalContext{
+		User:         testUser(1, "alice"),
+		GameRegistry: game.NewRegistry(),
+		Width:        120,
+		Height:       40,
+	}
+	m, ok := NewCreate(global).(*createModel)
+	require.True(t, ok)
+
+	assert.Empty(t, m.gameOptions, "no registered game means no game on the form")
+	assert.Empty(t, m.selectedGame())
+
+	require.NotPanics(t, func() { m.View() }, "an empty form still has to render")
+
+	m.cursor = createCursorSubmit
+	_, cmd := m.handleKey(keyMsg("enter"))
+	assert.Nil(t, cmd, "there is nothing to create, so nowhere to navigate")
+	assert.ErrorIs(t, m.err, errNoGames)
+}
+
+// Every registered game must be on the form, in the registry's order.
+func TestCreate_OffersEveryRegisteredGame(t *testing.T) {
+	t.Parallel()
+	m := newCreateModel(t)
+
+	assert.ElementsMatch(t, m.global.GameRegistry.GameNames(), m.gameOptions)
+}
+
 func TestCreate_NavigationKeys(t *testing.T) {
 	t.Parallel()
 

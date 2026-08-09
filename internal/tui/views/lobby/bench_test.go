@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
@@ -27,7 +27,7 @@ func benchGlobal(m *lobby.Manager) router.GlobalContext {
 func BenchmarkJoinView_Render(b *testing.B) {
 	m := lobby.NewManager(context.Background(), nil)
 	for i := range 20 {
-		leader := &player.Player{ID: fmt.Sprintf("h%d", i), DatabaseUser: testUser(uint(i+1), fmt.Sprintf("h%d", i))}
+		leader := &game.Player{ID: fmt.Sprintf("h%d", i), UserID: uint(i + 1), Name: fmt.Sprintf("h%d", i)}
 		_, err := m.New(leader, lobby.WithPrivate(false), lobby.WithCardGame(&db.Game{Name: testGameName}))
 		require.NoError(b, err)
 	}
@@ -43,12 +43,12 @@ func BenchmarkJoinView_Render(b *testing.B) {
 // The in-lobby view redraws on every roster and settings event.
 func BenchmarkLobbyView_Render(b *testing.B) {
 	manager := lobby.NewManager(context.Background(), nil)
-	leader := &player.Player{ID: "1", DatabaseUser: testUser(1, "alice")}
+	leader := &game.Player{ID: "1", UserID: 1, Name: "alice"}
 	l, err := manager.New(leader, lobby.WithMaxPlayers(4), lobby.WithPrivate(false),
 		lobby.WithCardGame(&db.Game{Name: testGameName}))
 	require.NoError(b, err)
 	for i := 2; i <= 4; i++ {
-		g := &player.Player{ID: fmt.Sprint(i), DatabaseUser: testUser(uint(i), fmt.Sprintf("p%d", i))}
+		g := &game.Player{ID: fmt.Sprint(i), UserID: uint(i), Name: fmt.Sprintf("p%d", i)}
 		require.NoError(b, manager.JoinLobbyByCode(l.Code(), g))
 	}
 
