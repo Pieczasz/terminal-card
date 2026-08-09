@@ -17,7 +17,7 @@ func openTable(t *testing.T, m *Manager, id string, dbID uint, gameName string, 
 	t.Helper()
 	leader := mockPlayer(id, dbID)
 	if rating > 0 {
-		leader.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: gameName}, Elo: rating}}
+		leader.Ratings = map[string]uint32{gameName: rating}
 	}
 	opts = append([]Option{WithPrivate(false), WithCardGame(&db.Game{Name: gameName})}, opts...)
 	l, err := m.New(leader, opts...)
@@ -46,16 +46,16 @@ func TestBrowseLobbies_CapsToTheClosestTables(t *testing.T) {
 	}
 
 	browser := mockPlayer("browser", 999)
-	browser.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Poker"}, Elo: 1500}}
+	browser.Ratings = map[string]uint32{"Poker": 1500}
 
 	entries := m.BrowseLobbies(browser, BrowseFilter{})
 
 	require.Len(t, entries, DefaultBrowseLimit, "the list is capped")
-	assert.LessOrEqual(t, entries[0].EloDistance, entries[len(entries)-1].EloDistance,
+	assert.LessOrEqual(t, entries[0].EloDelta, entries[len(entries)-1].EloDelta,
 		"closest rating first")
 	for _, e := range entries {
-		assert.LessOrEqual(t, e.EloDistance, 500,
-			"a table %d away survived the cap while nearer ones were dropped", e.EloDistance)
+		assert.LessOrEqual(t, e.EloDelta, 500,
+			"a table %d away survived the cap while nearer ones were dropped", e.EloDelta)
 	}
 }
 
@@ -68,6 +68,17 @@ func TestBrowseLobbies_LimitIsConfigurable(t *testing.T) {
 
 	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{Limit: 2}), 2)
 	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{Limit: -1}), 5, "a nonsense limit falls back to the default")
+}
+
+func TestBrowseLobbies_LimitIsHardCapped(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	for i := range MaxBrowseLimit + 10 {
+		openTable(t, m, fmt.Sprintf("p%d", i), uint(i+1), "Poker", 1500)
+	}
+
+	entries := m.BrowseLobbies(nil, BrowseFilter{Limit: MaxBrowseLimit * 2})
+	assert.Len(t, entries, MaxBrowseLimit)
 }
 
 func TestBrowseLobbies_Filters(t *testing.T) {
@@ -163,7 +174,7 @@ func TestBrowseLobbies_UnratedPlayerIsMatchedAtTheStartingRating(t *testing.T) {
 
 	require.Len(t, entries, 2)
 	assert.Equal(t, near.Code(), entries[0].Code)
-	assert.Zero(t, entries[0].EloDistance)
+	assert.Zero(t, entries[0].EloDelta)
 }
 
 // The list re-reads every two seconds under a cursor the player is aiming with.
@@ -195,6 +206,21 @@ func TestManager_GameNames(t *testing.T) {
 
 	assert.Equal(t, []string{"CrazyEights", "Poker"}, m.GameNames(),
 		"sorted, deduplicated, and public only")
+}
+
+// Visibility is access control, not decoration: a table the leader just hid must
+// leave the browse at once rather than whenever the cache window happens to lapse.
+func TestBrowseLobbies_VisibilityChangeShowsUpImmediately(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	l := openTable(t, m, "leader", 1, "Poker", 1500)
+	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1, "the list is now cached")
+
+	require.NoError(t, l.SetPrivate(l.Leader(), true))
+	assert.Empty(t, m.BrowseLobbies(nil, BrowseFilter{}), "a private table is not on offer")
+
+	require.NoError(t, l.SetPrivate(l.Leader(), false))
+	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1, "and is back the moment it reopens")
 }
 
 func TestBrowse_NilManagerIsSafe(t *testing.T) {

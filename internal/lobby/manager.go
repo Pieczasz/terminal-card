@@ -15,7 +15,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/db"
-	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 )
 
@@ -24,6 +24,13 @@ const (
 	rankedFinalizeTimeout = 15 * time.Second
 	joinRateLimitCount    = 10
 	joinRateLimitWindow   = time.Second
+	// maxLobbySubscribers is deliberately not maxPlayers: that setting is raised by
+	// SetMaxPlayers long after the broadcaster exists, and a reconnecting player
+	// briefly holds two subscriptions, so a table sized to its seats hands
+	// ErrAtCapacity - a lobby view that never updates - to a player who joined
+	// legitimately. This is the largest roster any game allows plus the same
+	// headroom the engine keeps, which no raise can outgrow.
+	maxLobbySubscribers = 10 + 8
 )
 
 var lobbyCodePattern = regexp.MustCompile(`^[A-Z0-9]{8}$`)
@@ -92,7 +99,7 @@ func ValidLobbyCode(code string) bool {
 	return lobbyCodePattern.MatchString(code)
 }
 
-func (m *Manager) playerInLobbyLocked(p *player.Player) bool {
+func (m *Manager) playerInLobbyLocked(p *game.Player) bool {
 	lobby, exists := m.playerLobby[p.ID]
 	if !exists {
 		return false
@@ -104,7 +111,7 @@ func (m *Manager) playerInLobbyLocked(p *player.Player) bool {
 	return false
 }
 
-func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
+func (m *Manager) New(leader *game.Player, opts ...Option) (*Lobby, error) {
 	options := setupDefaultOptions()
 	for _, opt := range opts {
 		opt(options)
@@ -136,7 +143,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 		options:     options,
 		code:        code,
 		ready:       make(map[string]bool),
-		broadcaster: broadcaster.New[Event](options.maxPlayers),
+		broadcaster: broadcaster.New[Event](maxLobbySubscribers),
 		playerSubs:  make(map[string][]<-chan Event),
 	}
 
@@ -146,7 +153,7 @@ func (m *Manager) New(leader *player.Player, opts ...Option) (*Lobby, error) {
 	return lobby, nil
 }
 
-func (m *Manager) JoinLobbyByCode(code string, p *player.Player) error {
+func (m *Manager) JoinLobbyByCode(code string, p *game.Player) error {
 	if !ValidLobbyCode(code) {
 		return errors.New("invalid lobby code")
 	}
@@ -173,7 +180,7 @@ func (m *Manager) JoinLobbyByCode(code string, p *player.Player) error {
 	return nil
 }
 
-func (m *Manager) FindLobbyByPlayer(p *player.Player) *Lobby {
+func (m *Manager) FindLobbyByPlayer(p *game.Player) *Lobby {
 	m.mu.RLock()
 	lobby, exists := m.playerLobby[p.ID]
 	m.mu.RUnlock()
@@ -206,7 +213,7 @@ func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
 	return lobby, nil
 }
 
-func (m *Manager) LeaveLobby(p *player.Player) {
+func (m *Manager) LeaveLobby(p *game.Player) {
 	l := m.FindLobbyByPlayer(p)
 	if l == nil {
 		return
@@ -299,7 +306,7 @@ func (m *Manager) Stats() (inGame, waiting int) {
 }
 
 // Kick removes a guest from the lobby. Only the current leader may kick guests.
-func (m *Manager) Kick(host, target *player.Player) error {
+func (m *Manager) Kick(host, target *game.Player) error {
 	if host == nil || target == nil {
 		return errors.New("host and target are required")
 	}
@@ -330,7 +337,7 @@ func (m *Manager) Kick(host, target *player.Player) error {
 		m.mu.Unlock()
 		return errors.New("cannot kick the lobby leader")
 	}
-	idx := slices.IndexFunc(l.guests, func(g *player.Player) bool { return g.Equal(target) })
+	idx := slices.IndexFunc(l.guests, func(g *game.Player) bool { return g.Equal(target) })
 	if idx == -1 {
 		l.mu.Unlock()
 		m.mu.Unlock()

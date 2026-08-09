@@ -16,7 +16,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/observability"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 	"github.com/Pieczasz/terminal-card/internal/tui"
 
@@ -55,6 +54,20 @@ const handshakeTimeout = 20 * time.Second
 // gameplay rule. A game exempts itself from the TUI check, so anything tighter
 // here would drop players waiting on a slow table.
 const connIdleTimeout = 30 * time.Minute
+
+// maxTerminalWidth and maxTerminalHeight bound the geometry a client may claim its
+// terminal has. Both numbers arrive from the client as uint32s in pty-req and
+// window-change, and every frame the TUI lays out is allocated from them, so one
+// request for four billion columns is a remote out-of-memory.
+//
+// The two differ because the plausible extremes do. A very wide display at a very
+// small font can genuinely exceed a thousand columns; nothing has close to a
+// thousand rows. Bounding them separately keeps the worst-case buffer near what a
+// single square limit already allowed while refusing no real terminal.
+const (
+	maxTerminalWidth  = 2000
+	maxTerminalHeight = 600
+)
 
 type SessionTracker struct {
 	mu     sync.Mutex
@@ -136,10 +149,11 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
 		})),
+		boundedPty(),
 		// wish runs the LAST middleware first, so this slice is in reverse execution
 		// order. sessionLifecycle is listed last to be outermost; see its doc.
 		wish.WithMiddleware(
-			bm.Middleware(sessionModel(deps, tracker)),
+			bm.MiddlewareWithProgramHandler(sessionProgram(deps, tracker)),
 			activeterm.Middleware(),
 			logging.StructuredMiddleware(),
 			sessionLifecycle(deps, tracker),
@@ -234,10 +248,64 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 	}
 }
 
+// boundedPty refuses a pty-req claiming a geometry no terminal has. Rejecting is the
+// only lever the callback has: it is handed the request by value, so it cannot
+// rewrite it.
+//
+// It must stay a rejection rather than becoming a clamp in clampWindowSize, which
+// looks like the tidier fix and is not. bubbletea seeds the renderer by calling
+// renderer.resize() directly with the initial size (tea.Program.Run), and only the
+// copy it *also* sends as a WindowSizeMsg goes through tea.WithFilter. So the first
+// allocation happens from the client's raw numbers no matter what the filter does,
+// and this callback is the last place they can still be refused.
+func boundedPty() ssh.Option {
+	return func(srv *ssh.Server) error {
+		srv.PtyCallback = func(_ ssh.Context, req ssh.Pty) bool {
+			return req.Window.Width <= maxTerminalWidth && req.Window.Height <= maxTerminalHeight
+		}
+		return nil
+	}
+}
+
+// sessionProgram builds the session's program itself so the window-size filter is
+// installed last: bm.MakeOptions ends with a filter of its own and tea keeps only
+// the final one, so bm.Middleware would silently drop ours.
+func sessionProgram(deps ServerDependencies, tracker *SessionTracker) bm.ProgramHandler {
+	newModel := sessionModel(deps, tracker)
+	return func(s ssh.Session) *tea.Program {
+		model, opts := newModel(s)
+		if model == nil {
+			return nil
+		}
+		opts = append(opts, bm.MakeOptions(s)...)
+		return tea.NewProgram(model, append(opts, tea.WithFilter(clampWindowSize))...)
+	}
+}
+
+// clampWindowSize bounds a resize before any view lays out from it. It also answers
+// SuspendMsg, which is the job of the filter it replaces: there is no shell behind an
+// ssh session to suspend into.
+func clampWindowSize(_ tea.Model, msg tea.Msg) tea.Msg {
+	switch msg := msg.(type) {
+	case tea.SuspendMsg:
+		return tea.ResumeMsg{}
+	case tea.WindowSizeMsg:
+		msg.Width = min(msg.Width, maxTerminalWidth)
+		msg.Height = min(msg.Height, maxTerminalHeight)
+		return msg
+	}
+	return msg
+}
+
 // sessionLifecycle spans the session, recovers panics, and releases everything the
-// session held. It is the outermost middleware so it wraps the bubbletea program:
-// charm.land/ssh runs the handler in a goroutine with no recover, so an escaped
-// panic would crash the whole process, and cleanup must run on every disconnect.
+// session held. It is the outermost middleware so it wraps the bubbletea program,
+// and cleanup must run on every disconnect.
+//
+// The three defers below are separate on purpose and all direct, because recover only
+// sees a panic unwinding the function it was deferred from. Registration order is
+// reverse execution order, so the model is closed first, the session is released next
+// - even while a panic from that close is unwinding - and recoverSession catches
+// whatever is left before it reaches the handler goroutine.
 func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Middleware {
 	return func(sh ssh.Handler) ssh.Handler {
 		return func(s ssh.Session) {
@@ -250,39 +318,51 @@ func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Mid
 				}
 				span.End()
 			}()
+			defer recoverSession(s)
 			defer releaseSession(s, deps, tracker)
+			defer closeSessionModel(s)
 
 			sh(s)
 		}
 	}
 }
 
-// releaseSession runs on every disconnect, panic or not.
-//
-// It must stay deferred directly (defer releaseSession(...)): recover only stops a
-// panic when called by the deferred function itself, so wrapping this in another
-// helper would silently let panics escape and take the process down.
-func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
-	if r := recover(); r != nil {
-		slog.Error("critical panic recovered during ssh session",
-			"panic", r,
-			"remote_addr", s.RemoteAddr().String(),
-		)
-		wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+// recoverSession contains a panic from the session, whether it came from the program
+// or from the cleanup deferred after it. It must stay deferred directly
+// (defer recoverSession(s)): recover only stops a panic when it is called by the
+// deferred function itself.
+func recoverSession(s ssh.Session) {
+	r := recover()
+	if r == nil {
+		return
 	}
+	slog.Error("critical panic recovered during ssh session",
+		"panic", r,
+		"remote_addr", s.RemoteAddr().String(),
+	)
+	wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+}
 
-	// Release event subscriptions the active view still holds, or a mid-game
-	// disconnect parks its listener goroutine and keeps a broadcaster slot until
-	// the engine itself closes.
+// closeSessionModel releases event subscriptions the active view still holds, or a
+// mid-game disconnect parks its listener goroutine and keeps a broadcaster slot until
+// the engine itself closes.
+//
+// It is its own defer so that a view whose Close panics still cannot cost the player
+// the release below: that is what refuses their next login.
+func closeSessionModel(s ssh.Session) {
 	if c, ok := s.Context().Value(ctxKeyModel).(interface{ Close() }); ok {
 		c.Close()
 	}
+}
 
+// releaseSession hands back the session slot and the lobby seat on every disconnect,
+// panic or not.
+func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
 	if s.Context().Value(ctxKeyOwnsConnection) != true {
 		return
 	}
 	if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
 		tracker.Disconnect(u.ID)
-		deps.LobbyManager.LeaveLobby(&player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u})
+		deps.LobbyManager.LeaveLobby(lobby.NewPlayer(u))
 	}
 }
