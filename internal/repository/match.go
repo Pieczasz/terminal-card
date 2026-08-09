@@ -56,7 +56,8 @@ func (q *gormMatchRepository) RecordMatch(
 	}
 
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		return q.recordMatchTx(tx, gameID, orderedUserIDs, eloDeltas, ranked)
+		// A casual result carries no placements, so history records the finish order.
+		return q.recordMatchTx(tx, gameID, orderedUserIDs, nil, eloDeltas, ranked)
 	}); err != nil {
 		return fmt.Errorf("failed to record match transaction: %w", err)
 	}
@@ -65,7 +66,9 @@ func (q *gormMatchRepository) RecordMatch(
 
 // FinalizeRankedMatch creates/looks up the game, updates rankings, and records the match
 // in a single database transaction so ELO and history cannot diverge.
-func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
+func (q *gormMatchRepository) FinalizeRankedMatch(
+	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+) error {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
@@ -80,11 +83,11 @@ func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 			return err
 		}
 
-		deltas, err := q.updateRankingsTx(tx, game.ID, orderedUserIDs)
+		deltas, err := q.updateRankingsTx(tx, game.ID, orderedUserIDs, places)
 		if err != nil {
 			return err
 		}
-		return q.recordMatchTx(tx, game.ID, orderedUserIDs, deltas, true)
+		return q.recordMatchTx(tx, game.ID, orderedUserIDs, places, deltas, true)
 	}); err != nil {
 		span.RecordError(err)
 		return fmt.Errorf("finalize ranked match: %w", err)
@@ -92,7 +95,9 @@ func (q *gormMatchRepository) FinalizeRankedMatch(ctx context.Context, gameName 
 	return nil
 }
 
-func (q *gormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, orderedUserIDs []uint) (map[uint]int, error) {
+func (q *gormMatchRepository) updateRankingsTx(
+	tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
+) (map[uint]int, error) {
 	deltas := make(map[uint]int)
 
 	rankingMap, err := q.fetchRankings(tx, gameID, orderedUserIDs)
@@ -100,7 +105,7 @@ func (q *gormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, ordered
 		return nil, fmt.Errorf("fetch rankings: %w", err)
 	}
 
-	newRatings := q.calculateNewElos(orderedUserIDs, rankingMap)
+	newRatings := q.calculateNewElos(orderedUserIDs, places, rankingMap)
 
 	for _, userID := range orderedUserIDs {
 		userIDStr := strconv.FormatUint(uint64(userID), 10)
@@ -138,7 +143,7 @@ func (q *gormMatchRepository) updateRankingsTx(tx *gorm.DB, gameID uint, ordered
 }
 
 func (q *gormMatchRepository) recordMatchTx(
-	tx *gorm.DB, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
+	tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int, eloDeltas map[uint]int, ranked bool,
 ) error {
 	match, err := q.recordNewMatch(tx, gameID, ranked)
 	if err != nil {
@@ -149,7 +154,7 @@ func (q *gormMatchRepository) recordMatchTx(
 		participant := db.MatchParticipant{
 			MatchID:   match.ID,
 			UserID:    userID,
-			Placement: i + 1,
+			Placement: placeAt(places, i),
 			EloDelta:  eloDeltas[userID],
 		}
 		if err := tx.Create(&participant).Error; err != nil {
@@ -174,9 +179,11 @@ func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []
 	return rankingMap, nil
 }
 
-func (q *gormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) map[string]float64 {
+func (q *gormMatchRepository) calculateNewElos(
+	orderedUserIDs []uint, places []int, rankingMap map[uint]*db.Ranking,
+) map[string]float64 {
 	players := make([]elo.Player, 0, len(orderedUserIDs))
-	for _, userID := range orderedUserIDs {
+	for i, userID := range orderedUserIDs {
 		rating := elo.DefaultRating
 		if r, ok := rankingMap[userID]; ok {
 			rating = float64(r.Elo)
@@ -184,9 +191,19 @@ func (q *gormMatchRepository) calculateNewElos(orderedUserIDs []uint, rankingMap
 		players = append(players, elo.Player{
 			ID:     strconv.FormatUint(uint64(userID), 10),
 			Rating: rating,
+			Place:  placeAt(places, i),
 		})
 	}
 	return elo.Calculate(players)
+}
+
+// placeAt is the finishing place of the i-th standing. Callers that have no tie
+// information pass nil, which is the strict order the slice already carries.
+func placeAt(places []int, i int) int {
+	if i < len(places) && places[i] > 0 {
+		return places[i]
+	}
+	return i + 1
 }
 
 func (q *gormMatchRepository) recordNewMatch(tx *gorm.DB, gameID uint, ranked bool) (*db.Match, error) {
