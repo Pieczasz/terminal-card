@@ -8,7 +8,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	"github.com/stretchr/testify/require"
@@ -19,11 +18,11 @@ import (
 // games actually support.
 func benchTable(b *testing.B, n int) *Model {
 	b.Helper()
-	players := make([]*player.Player, 0, n)
+	players := make([]*game.Player, 0, n)
 	for i := range n {
-		players = append(players, &player.Player{
-			ID:           fmt.Sprint(i + 1),
-			DatabaseUser: testUser(uint(i+1), fmt.Sprintf("player%d", i+1)),
+		players = append(players, &game.Player{
+			ID:     fmt.Sprint(i + 1),
+			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
@@ -80,11 +79,11 @@ func BenchmarkPokerView_Frame(b *testing.B) {
 //
 //nolint:paralleltest // measures process-wide heap, so it cannot share the process
 func TestCapacity_FrameBytesAndSessionMemory(t *testing.T) {
-	players := make([]*player.Player, 0, 6)
+	players := make([]*game.Player, 0, 6)
 	for i := range 6 {
-		players = append(players, &player.Player{
-			ID:           fmt.Sprint(i + 1),
-			DatabaseUser: testUser(uint(i+1), fmt.Sprintf("player%d", i+1)),
+		players = append(players, &game.Player{
+			ID:     fmt.Sprint(i + 1),
+			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
@@ -143,11 +142,11 @@ func BenchmarkPokerView_RenderParallel(b *testing.B) {
 //
 //nolint:thelper // runs on a parallel worker, so it must not register as a helper
 func benchParallelTable(b *testing.B, n int) *Model {
-	players := make([]*player.Player, 0, n)
+	players := make([]*game.Player, 0, n)
 	for i := range n {
-		players = append(players, &player.Player{
-			ID:           fmt.Sprint(i + 1),
-			DatabaseUser: testUser(uint(i+1), fmt.Sprintf("player%d", i+1)),
+		players = append(players, &game.Player{
+			ID:     fmt.Sprint(i + 1),
+			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())

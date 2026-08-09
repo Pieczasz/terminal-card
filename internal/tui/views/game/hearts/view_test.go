@@ -17,12 +17,14 @@ import (
 func TestView_HandOverShowsScores(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		global: router.GlobalContext{
-			Theme:  styles.NewTheme(true),
-			Width:  80,
-			Height: 24,
+		Session: gameview.Session{
+			Global: router.GlobalContext{
+				Theme:  styles.NewTheme(true),
+				Width:  80,
+				Height: 24,
+			},
+			Base: gameview.BaseState{Phase: game.Playing},
 		},
-		baseState:    gameview.BaseState{Phase: game.Playing},
 		stage:        logic.StageHandOver,
 		handComplete: true,
 		handNumber:   2,
@@ -44,8 +46,8 @@ func TestView_HandOverShowsScores(t *testing.T) {
 func TestView_HeartsBrokenIndicator(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		global: router.GlobalContext{
-			Theme: styles.NewTheme(true),
+		Session: gameview.Session{
+			Global: router.GlobalContext{Theme: styles.NewTheme(true)},
 		},
 		heartsBroken: true,
 		trickCards:   map[string]deck.Card{},

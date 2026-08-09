@@ -11,50 +11,45 @@ import (
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
 		return m, cmd
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-	case gameMsg:
-		if m.idleRemoved(game.Event(msg)) {
+	case gameview.EventMsg:
+		if m.IdleRemoved(game.Event(msg)) {
+			// The engine took this seat for repeated missed turns; quitting ends the
+			// bubbletea program, which tears the ssh session down the ordinary way.
 			return m, tea.Quit
 		}
 		m.syncState()
-		return m, listenForEvents(m.events)
+		return m, m.Listen()
 	case gameview.ClockTickMsg:
 		m.syncState()
-		if m.baseState.Phase != game.Playing {
+		if m.Base.Phase != game.Playing {
 			return m, nil
 		}
-		return m, gameview.ClockTickFor(m.baseState.TurnRemaining, m.baseState.MyTurn)
+		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
 	}
 
 	return m, nil
 }
 
-func (m *Model) idleRemoved(ev game.Event) bool {
-	return ev.Type == game.EventPlayerIdle && m.bound != nil && ev.PlayerID == m.bound.PlayerID()
-}
-
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		return m.handleEscape()
+		return m, m.Leave()
 	case "left", "h":
-		if m.selectedCardIdx > 0 {
-			m.selectedCardIdx--
-		}
+		m.MoveCursor(-1)
 		return m, nil
 	case "right", "l":
-		if m.selectedCardIdx < len(m.baseState.Hand)-1 {
-			m.selectedCardIdx++
-		}
+		m.MoveCursor(1)
 		return m, nil
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
-		return m.handleNumberSelection(msg.String())
+		m.SelectDigit(msg.String())
+		return m, nil
 	case "s":
 		return m.submitIfTurn(logic.ActionDrawStock{})
 	case "t":
@@ -67,91 +62,46 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) unsubscribe() {
-	if m.bound != nil && m.events != nil {
-		if b := m.bound.Broadcaster(); b != nil {
-			b.Unsubscribe(m.events)
-		}
-		m.events = nil
-	}
-}
-
-func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
-	p := views.SessionPlayer(m.global)
-
-	if m.baseState.Phase == game.Finished {
-		m.unsubscribe()
-		if p == nil {
-			return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
-		}
-		l := m.global.LobbyManager.FindLobbyByPlayer(p)
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
-	}
-
-	if p != nil {
-		m.global.LobbyManager.LeaveLobby(p)
-	}
-	m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
-}
-
-func (m *Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
-	if len(m.baseState.Hand) == 0 {
-		return m, nil
-	}
-	idx := int(key[0] - '0')
-	if idx < len(m.baseState.Hand) {
-		m.selectedCardIdx = idx
-	}
-	return m, nil
-}
-
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
-	if m.baseState.Phase == game.Finished {
-		return m.handleEscape()
+	if m.Base.Phase == game.Finished {
+		return m, m.Leave()
 	}
 
 	if m.handComplete && !m.matchComplete {
-		if m.baseState.MyTurn {
+		if m.Base.MyTurn {
 			return m.submit(logic.ActionNextHand{})
 		}
 		return m, nil
 	}
 
-	if !m.baseState.MyTurn || len(m.baseState.Hand) == 0 {
+	if !m.Base.MyTurn || len(m.Base.Hand) == 0 {
 		return m, nil
 	}
-	if m.handPhase != logic.AwaitingDiscard {
+	card, ok := m.SelectedCard()
+	if !ok || m.handPhase != logic.AwaitingDiscard {
 		return m, nil
 	}
-	card := m.baseState.Hand[m.selectedCardIdx]
 	return m.submit(logic.ActionDiscard{Card: card})
 }
 
 func (m *Model) handleKnock() (tea.Model, tea.Cmd) {
-	if !m.baseState.MyTurn || m.handPhase != logic.AwaitingDiscard || len(m.baseState.Hand) == 0 {
+	card, ok := m.SelectedCard()
+	if !m.Base.MyTurn || !ok || m.handPhase != logic.AwaitingDiscard {
 		return m, nil
 	}
-	card := m.baseState.Hand[m.selectedCardIdx]
 	return m.submit(logic.ActionKnock{Discard: card})
 }
 
 func (m *Model) submitIfTurn(action game.Action) (tea.Model, tea.Cmd) {
-	if !m.baseState.MyTurn {
+	if !m.Base.MyTurn {
 		return m, nil
 	}
 	return m.submit(action)
 }
 
 func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
-	if err := m.bound.Submit(action); err != nil {
-		m.lastActionErr = err
-	} else {
-		m.lastActionErr = nil
-	}
+	m.lastActionErr = m.Submit(action)
 	return m, nil
 }
 
-func (m *Model) Close() {
-	m.unsubscribe()
-}
+var _ router.Closer = (*Model)(nil)

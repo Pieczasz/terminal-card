@@ -30,14 +30,15 @@ func widestLabel(labels []string) int {
 }
 
 func (m *Model) View() tea.View {
-	if m.baseState.Phase != game.Playing {
-		return tea.NewView(gameview.RenderWaitingScreen(m.global, m.baseState.Phase, m.baseState.Winner))
+	if m.Base.Phase != game.Playing {
+		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
 
-	compactMode := m.global.Height < 30
-	superCompact := m.global.Height < 24
+	compactMode := m.Global.Height < 30
+	superCompact := m.Global.Height < 24
 
-	topSection := m.renderTopOpponent(superCompact)
+	opponents := gameview.RenderOpponentEdges(m.Global.Theme, m.Base, superCompact)
+	topSection := opponents.Top
 	var topAreaContent string
 	if superCompact {
 		topAreaContent = topSection
@@ -50,27 +51,24 @@ func (m *Model) View() tea.View {
 	if superCompact {
 		fullPlayerArea = mySection
 	} else if compactMode {
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.global.Theme.Dim.Render(keyHints))
+		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.Render(keyHints))
 	} else {
-		hints := m.global.Theme.Dim.MarginTop(1).Render(keyHints)
+		hints := m.Global.Theme.Dim.MarginTop(1).Render(keyHints)
 		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
 	}
 
 	topHeight := lg.Height(topAreaContent)
 	botHeight := lg.Height(fullPlayerArea)
-	midHeight := max(m.global.Height-topHeight-botHeight, 0)
+	midHeight := max(m.Global.Height-topHeight-botHeight, 0)
 
-	topArea := styles.PadCenter(m.global.Width, topAreaContent)
-	midArea := m.renderMiddleLayer(midHeight, superCompact)
-	botArea := styles.PadCenter(m.global.Width, fullPlayerArea)
+	topArea := styles.PadCenter(m.Global.Width, topAreaContent)
+	midArea := m.renderMiddleLayer(midHeight, opponents)
+	botArea := styles.PadCenter(m.Global.Width, fullPlayerArea)
 
 	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
 }
 
-func (m *Model) renderMiddleLayer(height int, superCompact bool) string {
-	leftOpponent := m.renderLeftOpponent(superCompact)
-	rightOpponent := m.renderRightOpponent(superCompact)
-
+func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) string {
 	var centerStack string
 	if m.pickingColor {
 		centerStack = m.renderColorPicker()
@@ -78,66 +76,19 @@ func (m *Model) renderMiddleLayer(height int, superCompact bool) string {
 		centerStack = m.renderCenterTable()
 	}
 
-	w1 := m.global.Width / 3
-	w2 := m.global.Width / 3
-	w3 := m.global.Width - w1 - w2
+	w1 := m.Global.Width / 3
+	w2 := m.Global.Width / 3
+	w3 := m.Global.Width - w1 - w2
 
-	leftArea := styles.Place(w1, height, lg.Left, lg.Center, leftOpponent)
+	leftArea := styles.Place(w1, height, lg.Left, lg.Center, opponents.Left)
 	centerArea := styles.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
-	rightArea := styles.Place(w3, height, lg.Right, lg.Center, rightOpponent)
+	rightArea := styles.Place(w3, height, lg.Right, lg.Center, opponents.Right)
 
 	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
 }
 
-func (m *Model) renderTopOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) == 1 || len(m.baseState.Opponents) >= 3 {
-		idx := 0
-		if len(m.baseState.Opponents) >= 3 {
-			idx = 1
-		}
-		o := m.baseState.Opponents[idx]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
-		}
-		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationTop, m.baseState.TurnRemaining)
-	}
-	return ""
-}
-
-func (m *Model) renderLeftOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) >= 2 {
-		o := m.baseState.Opponents[0]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
-		}
-		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationLeft, m.baseState.TurnRemaining)
-	}
-	return ""
-}
-
-func (m *Model) renderRightOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) == 2 {
-		o := m.baseState.Opponents[1]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
-		}
-		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationRight, m.baseState.TurnRemaining)
-	} else if len(m.baseState.Opponents) >= 3 {
-		o := m.baseState.Opponents[2]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(m.global.Theme, o, isTurn)
-		}
-		return gameview.RenderOpponent(m.global.Theme, o, isTurn, gameview.OrientationRight, m.baseState.TurnRemaining)
-	}
-	return ""
-}
-
 func (m *Model) renderCenterTable() string {
-	discardView := components.RenderCard(m.global.Theme, m.baseState.TopDiscard, false)
+	discardView := components.RenderCard(m.Global.Theme, m.Base.TopDiscard, false)
 	return lg.JoinVertical(lg.Center,
 		discardView,
 		m.renderCurrentColorIndicator(),
@@ -146,11 +97,11 @@ func (m *Model) renderCenterTable() string {
 }
 
 func (m *Model) renderCurrentColorIndicator() string {
-	label, fg := colorLabel(m.global.Theme, m.currentColor)
+	label, fg := colorLabel(m.Global.Theme, m.currentColor)
 	if label == "" {
 		return ""
 	}
-	return m.global.Theme.Muted.Render("Color: ") +
+	return m.Global.Theme.Muted.Render("Color: ") +
 		lg.NewStyle().Bold(true).Foreground(fg).Render(label)
 }
 
@@ -159,7 +110,7 @@ func (m *Model) renderDirectionIndicator() string {
 	if m.direction < 0 {
 		dir = "⟲ Counterclockwise"
 	}
-	return m.global.Theme.Dim.Render(dir)
+	return m.Global.Theme.Dim.Render(dir)
 }
 
 func colorLabel(t styles.Theme, s deck.Suit) (string, color.Color) {
@@ -178,22 +129,17 @@ func colorLabel(t styles.Theme, s deck.Suit) (string, color.Color) {
 }
 
 func (m *Model) renderPlayerSection() string {
-	statusView := gameview.RenderStatus(m.global.Theme, m.baseState.CurrentPlayer, m.baseState.MyTurn)
+	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
 	colorRow := m.renderHandColorRow()
-	handView := gameview.RenderHand(m.global.Theme, m.baseState.Hand, m.selectedCardIdx, m.pickingColor)
+	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor)
 
 	sections := []string{statusView}
 	if colorRow != "" {
 		sections = append(sections, colorRow)
 	}
 	sections = append(sections, handView)
-	if m.baseState.MyTurn {
-		if clock := gameview.RenderTurnClock(m.global.Theme, m.baseState.TurnRemaining, true); clock != "" {
-			sections = append(sections, clock)
-		}
-	}
 	if m.lastActionErr != nil {
-		sections = append(sections, m.global.Theme.ErrorText.Render(m.lastActionErr.Error()))
+		sections = append(sections, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
 	}
 	return lg.JoinVertical(lg.Center, sections...)
 }
@@ -201,19 +147,19 @@ func (m *Model) renderPlayerSection() string {
 // renderHandColorRow paints a Uno color glyph above each card so four colors stay
 // distinct without changing shared suitStyle (which only has red/dark).
 func (m *Model) renderHandColorRow() string {
-	hand := m.baseState.Hand
+	hand := m.Base.Hand
 	n := len(hand)
 	if n == 0 {
 		return ""
 	}
-	selected := m.selectedCardIdx
+	selected := m.Selected
 	if m.pickingColor {
 		selected = -1
 	}
 	parts := make([]string, 0, n)
 	for i, c := range hand {
 		w := components.CardSlotWidth(i, n, selected)
-		glyph, fg := colorGlyph(m.global.Theme, c)
+		glyph, fg := colorGlyph(m.Global.Theme, c)
 		cell := lg.NewStyle().Foreground(fg).Width(w).Align(lg.Center).Render(glyph)
 		parts = append(parts, cell)
 	}
@@ -243,7 +189,7 @@ func (m *Model) renderColorPicker() string {
 		return ""
 	}
 
-	t := m.global.Theme
+	t := m.Global.Theme
 	colors := []color.Color{t.UnoRed, t.UnoYellow, t.UnoGreen, t.UnoBlue}
 	rendered := make([]string, 0, len(colorLabels))
 	for i, name := range colorLabels {
