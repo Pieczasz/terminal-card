@@ -48,6 +48,33 @@ func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelect
 	return lg.JoinVertical(lg.Left, fan, labels.String())
 }
 
+// RenderHandMulti is RenderHand for multi-select (Hearts pass phase). selected marks
+// which cards are currently staged for the pass; cursor highlights the focused index.
+func RenderHandMulti(t styles.Theme, hand []deck.Card, selected map[int]struct{}, cursor int) string {
+	if len(hand) == 0 {
+		return ""
+	}
+	fan := components.RenderFanMulti(t, hand, selected)
+
+	var labels strings.Builder
+	for i := range hand {
+		slot := components.CardSlotWidthMulti(i, len(hand), selected)
+		label := " "
+		if i < 10 {
+			style := t.Dim
+			if _, ok := selected[i]; ok {
+				style = t.PlayerItemSelected.Bold(true)
+			} else if i == cursor {
+				style = t.PlayerItemSelected
+			}
+			label = style.Render(strconv.Itoa(i))
+		}
+		labels.WriteString(styles.PadCenter(slot, label))
+	}
+
+	return lg.JoinVertical(lg.Left, fan, labels.String())
+}
+
 type Orientation int
 
 const (
@@ -194,15 +221,18 @@ func RenderCardBacks(t styles.Theme, count int, orientation Orientation) string 
 	}
 }
 
-// RenderStatus names whose turn it is. The countdown itself is not here: it is drawn
-// on the seat it belongs to, so a player reads the number next to the cards rather
-// than having to look somewhere else on the table.
-func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool) string {
+// RenderStatus names whose turn it is. When it is the hero's turn the countdown sits
+// on the same line as the banner: a second row under the hand would grow botHeight and
+// shove the discard pile every time the clock arms.
+func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining time.Duration) string {
 	statusStyle := t.Dim.MarginTop(1).MarginBottom(1)
 	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)
 	if isMyTurn {
 		statusStyle = statusStyle.Foreground(t.Success).Bold(true)
 		statusStr = "> YOUR TURN <"
+		if clock := RenderTurnClock(t, remaining, true); clock != "" {
+			statusStr += "  " + clock
+		}
 	}
 	return statusStyle.Render(statusStr)
 }

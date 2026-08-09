@@ -19,10 +19,12 @@ full-screen Bubble Tea app: a home screen, a lobby browser, and card games playe
 against other people connected to the same process. Identity is your SSH key.
 Results persist to Postgres with Elo ratings.
 
-Two games ship today: **Crazy Eights** and **Texas Hold'em poker**.
+Five games ship today: **Crazy Eights**, **Uno**, **Hearts**, **Gin Rummy**, and
+**Texas Hold'em poker**.
 
-Single process, single node. ~17k lines of Go across ~70 source files and ~50 test
-files. No HTTP API, no frontend build, no message broker.
+Single process, single node. ~29k lines of Go across ~85 source files plus tests.
+A read-only stats/leaderboard HTTP API (`internal/httpapi`) feeds the marketing
+site; no frontend build, no message broker.
 
 The whole thing is built around one idea: **the terminal is the client, the SSH
 session is the transport, and the process holds all live state in memory.** The
@@ -225,16 +227,16 @@ keypress → view.Update → BoundEngine.Submit(action)
                         └─ broadcast EventTurnAdvanced
 ```
 
-Every subscriber's `listenForEvents` command wakes with a `gameMsg`, the view calls
-`syncState()`, re-reads the engine under the state lock, and re-renders.
+Every subscriber's `Session.Listen` command wakes with a `gameview.EventMsg`, the
+view calls `syncState()`, re-reads the engine under the state lock, and re-renders.
 
 ### 3.7 Finishing - persistence
 
 `Lobby.handleBroadcasterEvents` is parked on the engine broadcaster for the life of
 the match. On `EventGameEnded` it calls `finalizeFinishedGame(engine)`:
 
-1. `engine.Standings()` → ordered `[]*player.Player`, 1st place first.
-2. Map to DB user IDs; bail out (logged) if any player has no `DatabaseUser`.
+1. `engine.Standings()` → ordered `[]*game.Player`, 1st place first.
+2. Map to DB user IDs; bail out (logged) if any player has `UserID == 0`.
 3. Snapshot `isRanked` + `gameName` under the lobby read lock.
 4. `manager.registerFinalizer()` - refuses if shutdown has begun; otherwise
    `finalizing.Add(1)`, released by `defer`.
@@ -265,7 +267,7 @@ ValidateAction(state, action) error
 ApplyAction(state, action)
 AfterAction(state, action) error
 CheckWinCondition(state) bool
-Standings(state) []*player.Player
+Standings(state) []*game.Player
 ```
 
 Optional: `game.PlayerLeaveHandler` - `OnPlayerLeave` (before removal),
@@ -307,12 +309,47 @@ a rule that needs a specific next seat, you must set `OverrideNextTurn` - settin
 - `Hand()` only returns that player's cards (defensive copy),
 - `Snapshot()` returns public table state and hand *sizes*, never other hands.
 
-Views use `BoundEngine` + `gameview.SyncBaseState`. `Engine.WithState` and
-`Engine.SubmitAction` are for the server side. A view reaching for the raw engine is
-how you leak another player's hand.
+Views use `BoundEngine` + `gameview.SyncBaseState`, both reached through the embedded
+`gameview.Session` (§4.3a). `Engine.WithState` and `Engine.SubmitAction` are for the
+server side.
 
-`Engine.SnapshotFor(viewer)` currently ignores `viewer` - the parameter is reserved
-for per-viewer redaction. Poker does its own redaction in `buildSeats`.
+`BoundEngine` is a **façade, not a capability**. `Engine()` hands back whole-table
+state, and poker calls it: rendering a table means rendering every seat, which no
+per-player handle can express. What `Bind` buys is that the *default* path is the safe
+one - `Hand()` clones only the bound player's cards, `Submit()` cannot act as anyone
+else - so leaking another hand takes a visible detour through `Engine()`, and the
+redaction that follows is the view's own job (see poker's `buildSeats`).
+
+There is no `Engine.SnapshotFor`. Public table state is `Engine.Snapshot()` /
+`BoundEngine.Snapshot()`; poker does its own hole-card redaction in `buildSeats`.
+
+### 4.3a gameview.Session - the shared view baseline
+
+`internal/tui/views/game/session.go`. Every game view embeds it, so the parts that are
+identical in all five games exist once:
+
+| Concern | Session |
+| --- | --- |
+| Bind + subscribe | `NewSession(global, engine, name)` |
+| Read the feed | `Listen()` → `EventMsg` |
+| Own seat lost to the idle clock | `IdleRemoved(ev)` |
+| Refresh cached state | `SyncBase()`, `WithHiddenState(fn)` |
+| Hand cursor | `MoveCursor`, `SelectDigit`, `SelectedCard` |
+| Act | `Submit(action)` |
+| Leave the table | `Leave()` |
+| Release the subscription | `Unsubscribe()`, `Close()` (satisfies `router.Closer`) |
+
+A new game therefore writes rules rendering and its own key handling, nothing else.
+
+Seat order, display names and stock size come off `BaseState` - `Seats`, `SeatOrder()`,
+`SeatNames()`, `DeckSize` - rather than a second trip through `Engine().WithState`.
+`PlayerSnapshot.Username` already falls back to the player ID, so views do not repeat
+that fallback either.
+
+Anything a view keeps after the engine lock is released must be **copied**, not
+aliased: `maps.Clone` for the score/trick maps, `HandResult.Clone()` for Gin Rummy's
+settle-up summary. Handing out a pointer into `State.Extra` is a race waiting for the
+first rules change that mutates it in place.
 
 ### 4.4 Subscription lifecycle
 
@@ -320,15 +357,16 @@ for per-viewer redaction. Poker does its own redaction in `buildSeats`.
 - per-subscriber buffered channel, **256** deep,
 - **latest-wins**: on a full buffer it drops the oldest and enqueues the newest, so a
   slow client sees current state rather than a backlog,
-- at capacity it hands back a **closed channel** rather than blocking - engines size
-  themselves `len(players)+8` to leave room for the ranked-finalize watcher and brief
-  reconnect overlap. Size it too tightly and a real player's view freezes on a closed
-  channel.
+- at capacity `Subscribe` returns `ErrAtCapacity` (or `ErrClosed`) rather than a
+  pre-closed channel - a closed channel is indistinguishable from "the stream ended".
+  Engines size themselves `len(players)+8` to leave room for the ranked-finalize
+  watcher and brief reconnect overlap.
 
 **Any view holding a subscription must implement `router.Closer`.** The router closes
 the active view on navigation; `ssh.releaseSession` closes the whole model on
 disconnect. Skipping `Close()` parks a listener goroutine and burns a subscriber slot
-until the engine itself closes. Both game views have a `goleak_test.go` guarding this.
+until the engine itself closes. Nine packages run `goleak` (`broadcaster`, `lobby`,
+`systemtest`, lobby view, and all five game views).
 
 ### 4.4b The theme is per session, not global
 
@@ -394,24 +432,26 @@ Two identifiers with two consumers: `Module.Name` is the registry key and what
 | `games.go` | `Game{Name uniqueIndex}`. |
 | `matches.go` | `Match{GameID, Ranked}`, `MatchParticipant{MatchID, UserID, Placement, EloDelta}`. |
 | `repository.go` | `UserRepository` and `MatchRepository` **interfaces**. This package defines the contract; everything depends on these, never on `internal/repository`. |
-| `migrations/000001_init.{up,down}.sql` | The whole schema, including `matches.ranked`. |
+| `migrations/000001_init.{up,down}.sql` | The whole schema: `matches.ranked`, `users.username` NOT NULL, indexes on `match_participants.user_id`, `public_keys.user_id`, `rankings.elo`. |
 
 ### `internal/repository` - the GORM implementations
 | File | What |
 |---|---|
-| `user.go` | Fingerprint lookup, transactional registration (checks username + fingerprint, maps unique violations to `ErrUsernameTaken`/`ErrKeyAlreadyRegistered` so a lost race reads correctly), `BestPlayers` with a **5-minute cache** over a top-100 query, `UserProfile`, `UserMatchHistory` (preloads Match→Game→Participants→User). |
+| `user.go` | Fingerprint lookup, transactional registration (checks username + fingerprint, maps unique violations to `ErrUsernameTaken`/`ErrKeyAlreadyRegistered` so a lost race reads correctly), `BestPlayers` with a **5-minute cache** over a top-100 query, `UserProfile`, `UserMatchHistory` (preloads Match→Game only - the profile is its one caller and reads nothing else). |
 | `match.go` | `FinalizeRankedMatch` = one transaction: `getOrCreateGame` (ON CONFLICT DO NOTHING + read-back) → `updateRankingsTx` (`SELECT … FOR UPDATE` on rankings so concurrent finalizes can't lose an Elo update) → `recordMatchTx`. `RecordMatch(..., ranked bool)` is the casual path. |
 
-Only `internal/ssh` imports this package, and only for its error sentinels.
+`cmd/server` (composition root) and `internal/ssh` (error sentinels) are the only
+packages that import the implementations.
 
 ### `internal/game` - engine core, no DB, no TUI, no routes
 | File | What |
 |---|---|
 | `rules.go` | The `Rules` and `PlayerLeaveHandler` interfaces. |
-| `state.go` | `State`: players, left players, turn cursor, override, phase, winner, deck, discard, rules, `Extra`. `Phase`: Waiting→Dealing→Playing→Finished. |
-| `engine.go` | `Start`, `SubmitAction`, `RemovePlayer`, `Standings`, `SnapshotFor`, `WithState`, `finishGameLocked`, `applyNextTurnLocked`, `Close`. |
-| `turns.go` | `TurnManager` - forward-only cursor with `RemovePlayer` reindexing and `clampCurrent`. |
-| `bound.go` | `BoundEngine` - the per-session capability. |
+| `player.go` | Seat scalars (`ID`, `UserID`, `Name`, `Ratings`, `Cards`) - keeps this package free of `internal/db`. |
+| `state.go` | `State`: players, left players, turn cursor, override, phase, winner, deck, discard, rules, `Extra`. `Phase`: Waiting→Playing→Finished. |
+| `engine.go` | `Start`, `SubmitAction`, `RemovePlayer`, `Standings`, `Snapshot`, `WithState`, `finishGameLocked`, `applyNextTurnLocked`, `Close`. |
+| `turnclock.go` | Per-turn timer, idle kick (`MaxMissedTurns`), `TurnTimeoutHandler` / `TurnDurationHandler` wiring. |
+| `bound.go` | `BoundEngine` - the per-session capability (`Subscribe`/`Unsubscribe`, not the raw broadcaster). |
 | `registry.go` | `Module` + `Registry`; `RegisterModule` **panics** on a malformed module (programmer error at boot, not runtime). |
 | `action.go` | `Action` interface, `Event`/`EventType`, `PlayerSnapshot`, `StateSnapshot`. |
 
@@ -424,11 +464,44 @@ from standings (falling back to the given player, then to seat 0), broadcasts
 `EventGameEnded`. Used by the win path, the `AfterAction`-error path and
 `RemovePlayer`, so a game can never end silently.
 
+### `internal/deck` - cards and the helpers every game shares
+| File | What |
+|---|---|
+| `card.go` | `Card`, `Rank`, `Suit`. Standard ranks are **1-based** (`Ace`=1 … `King`=13, `Joker`=14) so a zero `Rank` is never a real card and `int(rank)` is the pip value. Uno's extra ranks live in a separate block at 20+, clear of the playing-card ordering. `AllRanks` makes exhaustiveness testable; `RankValue` (Ace high, 14), `RunOrder` (Ace low 1..13, courts distinct) and `PipValue` (courts count 10) are three different questions and must not be swapped. `RemoveOne`/`RemoveEach` remove cards from a hand without aliasing it. |
+| `deck.go` | `Pile` - shuffle (crypto/rand), `Draw`/`Peek` from the top, `AddCard`, `DrawNCards`. |
+| `builder.go` | `StandardDeck()` - 52 cards, no jokers. |
+
+`RunOrder` vs `PipValue` is the one to keep straight: J, Q and K all *count* 10 but sit
+at three different *positions*, so a run detector built on `PipValue` would decide
+9-10-J is not consecutive.
+
 ### `internal/game/crazyeight`
 | File | What |
 |---|---|
 | `state.go` | `CurrentSuit`, `Passes`. |
-| `rules.go` | 2–6 players, 7 cards each, one card face up to start. Play matches suit or rank; an eight is wild and **must** carry a chosen suit in the same action (`ActionPickSuit` alone is rejected - one action, one state change). Drawing is always legal: with an empty stock it reshuffles the discard (keeping the top card), and if that fails it **fails closed** by incrementing `Passes` rather than dealing from an unshuffled pile. `Passes >= len(players)` ends a deadlocked hand, scored by fewest cards. `OnPlayerLeave` returns the leaver's cards to the stock and reshuffles, so the deck stays whole. |
+| `rules.go` | 2–6 players, 7 cards each, one card face up to start. Play matches suit or rank; an eight is wild and **must** carry a chosen suit in the same action - one action, one state change. Drawing is always legal: with an empty stock it reshuffles the discard (keeping the top card), and if that fails it **fails closed** by incrementing `Passes` rather than dealing from an unshuffled pile. `Passes >= len(players)` ends a deadlocked hand, scored by fewest cards. `OnPlayerLeave` returns the leaver's cards to the stock and reshuffles, so the deck stays whole. |
+
+### `internal/game/uno`
+| File | What |
+|---|---|
+| `deck.go` | The 108-card deck, and the colour/rank aliases (`ColorRed` = `deck.Hearts`, and so on) that keep the rules readable. |
+| `state.go` | `CurrentColor`, `Direction` (+1/-1), `Passes`. |
+| `rules.go` | 2–10 players, 7 cards each. Play matches colour, number or symbol; a Wild is always legal, a Wild Draw Four only when the hand holds no card of the current colour. Skip advances two seats, Reverse flips `Direction` (and acts as Skip heads-up), the draw cards make the next seat draw and lose their turn. **Every action sets `OverrideNextTurn`** so a reversed table is honoured. Opening action cards apply their effect. Never opens on a wild. `Passes >= len(players)` ends a deadlocked hand. |
+
+### `internal/game/hearts`
+| File | What |
+|---|---|
+| `state.go` | `Stage` (passing → trick play → hand over), `PassDirection`, trick and score maps, `TargetScore`. |
+| `trick.go` | Trick winner, trick points, the pass cycle, shoot-the-moon scoring. |
+| `rules.go` | Exactly 4 players, 13 cards each. Pass cycle left/right/across/none by hand number; passing is **sequential**, one seat at a time. 2♣ leads trick one; follow suit if you can; no points on trick one; hearts must be broken before they can be led (unless that is all you hold). Shooting the moon (all 26) scores the shooter 0 and everyone else 26. `TurnDurationHandler` gives passing and the between-hands prompt longer clocks than a trick. Any disconnect ends the match - the rules are only defined at four hands. |
+
+### `internal/game/ginrummy`
+| File | What |
+|---|---|
+| `state.go` | `HandPhase`, `TakenUpcard`, `TurnsThisHand`, cumulative scores, `HandResult` (+ `Clone` for views). |
+| `melds.go` | `BestMeldSplit` - exhaustive search over set/run candidate bitmasks (`uint16`, so ≤16 cards) minimising deadwood. |
+| `layoffs.go` | `ApplyLayoffs` - opponent deadwood attaches to the knocker's melds, repeated until nothing more fits. |
+| `rules.go` | Exactly 2 players, 10 cards each, draw then discard. Knock at ≤10 deadwood, gin at 0 (+25), undercut on **≤** (a tie goes to the opponent, +25). The card just taken from the discard **cannot be laid straight back** (`TakenUpcard`), and `MaxHandTurns` bounds a hand that would otherwise never reach the wall - discard draws never touch the stock. |
 
 ### `internal/game/poker`
 | File | What |
@@ -477,7 +550,7 @@ into a `HandValue{Rank, Kickers[5]}` packed into one comparable int by `Score()`
 - `kickers` pads with zeros to the requested count, so `k[0]`/`k[1]` are always in
   range even for degenerate input. (CodeRabbit flagged an out-of-range panic here; it
   can't happen, and 437k fuzz executions agree.)
-- `rankValue` maps `deck.Joker` onto 14, i.e. an ace. Unreachable today -
+- `deck.RankValue` maps `deck.Joker` onto 14, i.e. an ace. Unreachable today -
   `StandardDeck()` stops at King.
 
 ### `internal/lobby`
@@ -505,7 +578,8 @@ them **outside** it.
 | `views/leaderboard/leaderboard.go` | Top players from the cached `BestPlayers`. |
 | `views/profile/profile.go` | Rankings + recent matches; `resultLabel` prints the Elo delta for ranked rows and `casual game` for casual ones. |
 | `views/game/layout.go` | Shared card-table rendering: hand with selection lift, opponent card backs per table edge, turn status, waiting/finished screen. |
-| `views/game/state.go` | `BaseState` + `SyncBaseState` - the redacted per-view snapshot every game view starts from. |
+| `views/game/state.go` | `BaseState` + `SyncBaseState` - the redacted per-view snapshot every game view starts from, including `Seats`/`SeatOrder()`/`SeatNames()`/`DeckSize`. |
+| `views/game/session.go` | `Session` - the subscribe/listen/cursor/leave plumbing every game view embeds (§4.3a). |
 | `views/game/crazyeight/{model,update,view}.go` | Hand cursor, suit picker (2×2, cell width derived from the widest label so `♦ Diamonds` can't wrap), spring animation. |
 | `views/game/poker/{model,update,view,chips}.go` | Seat snapshots + redaction, action bar, raise prompt with chip denominations (100/50/25/10 on keys 1–4), chip stacks drawn per seat and under the pot, hand-over/match-over screen. |
 | `components/card.go` | One card face. |
@@ -518,20 +592,18 @@ them **outside** it.
 |---|---|
 | `otel.go` | `SetupOTel` - resource, propagators, logger/tracer/meter providers over OTLP gRPC, runtime instrumentation, app metrics. Every early-return path tears down already-started providers via the deferred `cleanup` (the named return is nil on exactly those paths, which is why the closure calls `cleanup` explicitly). |
 | `metrics.go` | Three atomics: `SSHSessionsActive`, `GamesStartedTotal`, `RateLimitRejectsTotal`. |
-| `loghandler.go` | `fanoutHandler` - writes each record to every sink, `errors.Join`s failures so one broken sink never hides the others. |
-
 Metrics are **observable instruments** read from atomics on each collection cycle, so
 the hot paths only do an atomic add.
 
 ### Supporting packages
 | Package | What |
 |---|---|
-| `deck` | `Card{Rank,Suit}`, `Pile` (crypto/rand shuffle, Draw/DrawNCards/Add/Peek/Size), `StandardDeck()` = 52 cards, no jokers. `DrawNCards` rejects a negative count - a bad `InitialDealCount` used to panic the server. |
-| `player` | `Player{ID, DatabaseUser, Cards}`; `Equal` prefers DB ID, falls back to string ID; `Username()` falls back to ID. |
-| `elo` | Simple Multiplayer Elo: each player scored against **immediate neighbours only** (win vs. the one below, loss to the one above), K=32, clamped to [100, 4000], NaN logged and reset to default. |
-| `ratelimit` | Sliding-window limiter, per-key timestamp log, `maxKeys` 10k with periodic eviction (every 64 ops) to bound memory under abuse. |
+| `deck` | `Card{Rank,Suit}`, `Pile` (crypto/rand shuffle, Draw/DrawNCards/Add/Peek/Size), `StandardDeck()` = 52 cards, no jokers. `Suit` zero is `NoSuit`; `Rank` is 1-based. `DrawNCards` rejects a negative count. |
+| `elo` | Multiplayer Elo against **immediate neighbours**; tied neighbours score 0.5/0.5. Deltas are capped by each neighbour's headroom so the floor/ceiling cannot mint or destroy rating. K=32, bounds [100, 4000]. |
+| `ratelimit` | Sliding-window limiter, per-key timestamp log, `maxKeys` 10k. When full it evicts (expired first, else a random live key) rather than refusing new clients. |
+| `httpapi` | Read-only JSON on `API_PORT`: `/v1/stats`, `/v1/leaderboard`. CORS + per-network rate limit (including OPTIONS); mounted only behind the proxy's `/api/` location. |
 | `broadcaster` | §4.4. |
-| `testutil` | `SetupTestDB` - testcontainers Postgres + `AutoMigrate`. `//go:build integration`; skips on `-short` or when Docker is absent. |
+| `testutil` | `SetupTestDB` - testcontainers Postgres + the production `.up.sql` migrations. `//go:build integration`; skips on `-short` or when Docker is absent (`RequireContainer`). |
 | `systemtest` | Black-box tests over the real manager/registry/engine, plus DB-backed persistence tests. |
 
 ---
@@ -550,8 +622,8 @@ users ──< public_keys        (fingerprint uniqueIndex → identity)
 Every model uses `gorm.Model` (soft deletes via `deleted_at`).
 
 **Production schema changes are SQL migrations** in `internal/db/migrations/`, up
-**and** down. `AutoMigrate` is test-only (`internal/testutil/db.go`). The `migrate`
-compose service runs migrations to completion before the backend starts.
+**and** down, embedded as `db.Migrations` and replayed by `internal/testutil/db.go`.
+The `migrate` compose service runs migrations to completion before the backend starts.
 
 Rating flow: standings order → `elo.Calculate` → deltas per user → `rankings.elo`
 updated and `match_participants.elo_delta` recorded, all in one transaction.
@@ -594,8 +666,9 @@ wrapped with `%w` and lowercase messages, `paralleltest`/`tparallel`/`thelper`/
 `testifylint`/`usetesting` enforced by the linter.
 
 **Techniques in use:**
-- **goleak** - `TestMain` in `broadcaster`, `lobby`, `systemtest`, and both game view
-  packages. This is what stops a missing `Close()` from silently parking goroutines.
+- **goleak** - `TestMain` in `broadcaster`, `lobby`, `systemtest`, the lobby view, and
+  all five game view packages. This is what stops a missing `Close()` from silently
+  parking goroutines.
 - **rapid** property tests - e.g. `TestChipsAreConservedAcrossRandomHands`: chips only
   move between stacks and the pool, so the total is invariant across any legal
   sequence of actions.
@@ -665,10 +738,10 @@ go test -race -run 'TestX/subtest_name' ./internal/lobby/
 | Catalog as the single registration point | Rules and view are declared together, so they cannot drift. One test enforces it. | Adding a game touches one file - but that file imports both layers. |
 | Engine holds both locks across Rules calls | Rules authors never think about concurrency and can mutate state freely. | Rules must never call back into the engine. Long rules work blocks the table. |
 | `Extra any` for per-game state | The engine stays game-agnostic. | Type assertions at every access; no compile-time guarantee. |
-| BoundEngine capability object | Redaction is structural, not a convention a view can forget. | One more indirection in every view. |
+| BoundEngine façade | The default path is the safe one: `Hand()` clones only your cards, `Submit()` cannot spoof a player ID, and every method is nil-safe so a view without an engine still renders. | Not a security boundary - `Engine()` is right there, and poker needs it. Reaching past it is a deliberate, greppable act, not something the type prevents. |
 | Latest-wins broadcaster | A slow terminal sees current state, not a backlog of stale frames. | Dropped intermediate events; views must be able to render from a full snapshot, and they do (`syncState`). |
 | Interfaces in `internal/db`, impls in `internal/repository` | Dependency inversion - nothing depends on GORM except the implementations. | Two files to touch when a method changes. |
-| SQL migrations for prod, AutoMigrate for tests | Reviewable, reversible schema changes; zero-friction tests. | The migration files aren't exercised by the test suite - verify them against a scratch DB by hand. |
+| The same SQL migrations in prod and in tests | Reviewable, reversible schema changes, and a broken migration fails the suite rather than production. | Test setup costs a replay of every migration, and a `down` file is still only verified by hand. |
 | Elo = Simple Multiplayer Elo | Neighbour-only comparison is defensible for N-player games and trivially explainable. | Not calibrated for wildly mixed fields. |
 | PROXY protocol behind nginx | Real client IP for rate limiting, logs and traces. | Publishing 6969 would let clients forge it - the compose file warns about this. |
 | Any SSH key accepted, first connection claims the username | Zero-friction signup; no passwords to store. | Username squatting; a lost key is a lost account. See §14. |
@@ -691,8 +764,8 @@ Ordered by how much they hurt when broken.
 7. **Never publish port 6969.**
 8. **Poker: count funded seats before posting blinds.**
 9. **Poker: reveal cards on `ReachedShowdown`, never on `HandComplete`.**
-10. **Sizing the engine broadcaster below `len(players)+8`** hands a real player a
-    closed channel and freezes their view.
+10. **Sizing the engine broadcaster below `len(players)+8`** returns `ErrAtCapacity`
+    to a real player and freezes their view.
 11. **Placement ordering feeds Elo.** Any change to `Standings` silently changes
     ratings. `rankPlayers` needs a non-degenerate key for every group it can produce.
 
@@ -702,17 +775,22 @@ Ordered by how much they hurt when broken.
 
 **Add a game.**
 1. `internal/game/<name>/{rules.go,state.go}` implementing `game.Rules` (+
-   `PlayerLeaveHandler` if a mid-hand disconnect needs handling).
-2. `internal/tui/views/game/<name>/{model,update,view}.go`, a `New(GlobalContext,
-   *game.Engine) tea.Model` that binds and subscribes, plus `Close()`.
+   `PlayerLeaveHandler` if a mid-hand disconnect needs handling, `TurnTimeoutHandler`
+   to opt into the turn clock, `TurnDurationHandler` if some turns deserve longer).
+2. `internal/tui/views/game/<name>/{model,update,view}.go`. Embed `gameview.Session`
+   and build it with `gameview.NewSession(global, engine, name)` - that is the
+   binding, the subscription, the cursor, `Leave()` and `Close()`. Write the rules
+   rendering and the key handling; do not re-implement the plumbing.
 3. One entry in `catalog.All`. Registry and routes follow automatically.
 4. `goleak_test.go` in the view package.
+5. Copy anything you lift out of `State.Extra` (`maps.Clone`, or a `Clone` method) -
+   the view reads it after the engine lock is gone.
 
 **Add a persisted field.**
 1. Field on the model in `internal/db`.
-2. `make migrate-create`, write **both** up and down.
-3. Apply both against a scratch database by hand - the suite uses AutoMigrate and will
-   not catch a broken migration.
+2. `make migrate-create`, write **both** up and down. The integration suite replays the
+   up files, so a broken one fails the tests; apply the down against a scratch database
+   by hand.
 4. Interface change in `internal/db/repository.go` if the write path changes, then the
    impl in `internal/repository`, then the mocks in `lobby_test.go` and
    `systemtest/`.
@@ -733,10 +811,10 @@ attribute; the DB spans hang off it. Logs in Loki carry the same fields.
 
 Not bugs - deliberate or unfinished, worth knowing before you open it to strangers.
 
-- **No turn timer during a hand, and no SSH idle timeout.** The idle-quit tick
-  explicitly skips game routes, so one player who walks away mid-hand - or one
-  half-dead TCP connection - stalls the table indefinitely. Everyone else's only exit
-  is esc, which forfeits. This is the single biggest griefing surface.
+- **No SSH idle timeout.** The per-turn clock now covers a player who walks away
+  mid-hand (`DefaultTurnTimeout`, 30s; the rules supply the safe move, and the seat
+  goes after `MaxMissedTurns`), but a half-dead TCP connection outside a game still
+  sits there. Rules with no `TurnTimeoutHandler` get no clock at all, by design.
 - **No bankroll between matches.** Chips reset to `DefaultStack` at `OnGameStart` and
   carry only across the 10 hands of one match. Deliberate.
 - **Auth has no recovery.** Any key is accepted, the first connection claims the
@@ -744,7 +822,7 @@ Not bugs - deliberate or unfinished, worth knowing before you open it to strange
 - **A busted poker player keeps their seat** for the rest of the match, folded and
   unable to act. They're told so on screen; there's no spectator mode or early exit
   short of leaving.
-- **Migrations aren't covered by the test suite.** AutoMigrate builds the test schema.
+- **Down migrations aren't covered by the test suite.** Only the up files are replayed.
 - **Single node.** Restart = every live lobby and game is gone, with no warning to
   connected players.
 - **Unverified operationally:** database backups, container restart behaviour under

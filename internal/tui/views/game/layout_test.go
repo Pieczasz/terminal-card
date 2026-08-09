@@ -58,8 +58,10 @@ func TestFormatTurnClock(t *testing.T) {
 func TestRenderStatus_NamesTheSeatOnTurn(t *testing.T) {
 	t.Parallel()
 
-	assert.Contains(t, RenderStatus(testTheme(), "alice", false), "alice")
-	assert.Contains(t, RenderStatus(testTheme(), "alice", true), "YOUR TURN")
+	assert.Contains(t, RenderStatus(testTheme(), "alice", false, 0), "alice")
+	assert.Contains(t, RenderStatus(testTheme(), "alice", true, 25*time.Second), "YOUR TURN")
+	assert.Contains(t, RenderStatus(testTheme(), "alice", true, 25*time.Second), "0:25",
+		"the hero clock shares the status line so the hand height stays put")
 }
 
 // The countdown is the only thing telling a player their clock is running, so it has to

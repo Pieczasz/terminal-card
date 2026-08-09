@@ -19,16 +19,6 @@ const (
 	cardRows = FaceHeight + 2
 )
 
-// FanWidth is the printed width of a fan of n cards, which is what a caller needs to
-// line anything up underneath it.
-func FanWidth(n, selected int) int {
-	total := 0
-	for i := range n {
-		total += CardSlotWidth(i, n, selected)
-	}
-	return total
-}
-
 // CardSlotWidth is the visible width of card i in a fan of n, where selected is the
 // picked-out index or -1. A closed card is wider, so anything lined up under the fan
 // has to ask rather than assume.
@@ -50,26 +40,52 @@ func CardSlotWidth(i, n, selected int) int {
 // fan. There is no vertical lift: raising one card would break the shared top edge that
 // makes the rest read as a single hand.
 func RenderFan(t styles.Theme, cards []deck.Card, selected int) string {
+	sel := map[int]struct{}{}
+	if selected >= 0 {
+		sel[selected] = struct{}{}
+	}
+	return renderFanCore(t, cards, sel)
+}
+
+// RenderFanMulti is RenderFan for multi-select: every index in selected is drawn as
+// picked out. Used by Hearts' pass phase.
+func RenderFanMulti(t styles.Theme, cards []deck.Card, selected map[int]struct{}) string {
+	return renderFanCore(t, cards, selected)
+}
+
+func renderFanCore(t styles.Theme, cards []deck.Card, selected map[int]struct{}) string {
 	if len(cards) == 0 {
 		return ""
 	}
 
 	rows := make([]string, cardRows)
 	for i, card := range cards {
-		// A card is closed when nothing covers it: the rightmost one, and the picked-out
+		_, isSel := selected[i]
+		// A card is closed when nothing covers it: the rightmost one, and any picked-out
 		// one, which sits over its neighbour.
-		closed := i == len(cards)-1 || i == selected
+		closed := i == len(cards)-1 || isSel
 
 		width := overlapWidth
 		if closed {
 			width = FaceWidth
 		}
 
-		for r, line := range fanColumn(t, card, i == selected, width, closed) {
+		for r, line := range fanColumn(t, card, isSel, width, closed) {
 			rows[r] += line
 		}
 	}
 	return strings.Join(rows, "\n")
+}
+
+// CardSlotWidthMulti is CardSlotWidth for a multi-select fan.
+func CardSlotWidthMulti(i, n int, selected map[int]struct{}) int {
+	if i == n-1 {
+		return 1 + FaceWidth + 1
+	}
+	if _, ok := selected[i]; ok {
+		return 1 + FaceWidth + 1
+	}
+	return 1 + overlapWidth
 }
 
 // columnKey is everything a fan column depends on; width follows from closed.

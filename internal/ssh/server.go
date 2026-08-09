@@ -16,7 +16,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/observability"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 	"github.com/Pieczasz/terminal-card/internal/tui"
 
@@ -42,19 +41,12 @@ const (
 	ctxKeyModel
 )
 
-// handshakeTimeout bounds how long a connection may stay unauthenticated.
-//
-// Until a client attempts auth it is invisible to rateLimitAuth, yet it already
-// holds one of the MAX_CONNECTIONS listener slots - so without this, opening that
-// many sockets and never speaking again locks every real player out. charm.land/ssh
-// drops the deadline once the handshake succeeds and idleTimeout takes over.
-const handshakeTimeout = 20 * time.Second
-
-// connIdleTimeout is deliberately far looser than the router's five-minute TUI
-// idle check: it reaps connections that went away without a FIN, and is not the
-// gameplay rule. A game exempts itself from the TUI check, so anything tighter
-// here would drop players waiting on a slow table.
-const connIdleTimeout = 30 * time.Minute
+const (
+	handshakeTimeout  = 20 * time.Second
+	connIdleTimeout   = 30 * time.Minute
+	maxTerminalWidth  = 2000
+	maxTerminalHeight = 600
+)
 
 type SessionTracker struct {
 	mu     sync.Mutex
@@ -78,8 +70,6 @@ func (t *SessionTracker) Connect(userID uint) bool {
 	return true
 }
 
-// Count reports how many distinct users hold a live session. Read by the public
-// stats endpoint, so it must not block a connect or disconnect.
 func (t *SessionTracker) Count() int {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -101,10 +91,7 @@ type ServerDependencies struct {
 	MatchRepository db.MatchRepository
 	LobbyManager    *lobby.Manager
 	GameRegistry    *game.Registry
-	// Tracker is optional. Supply one when something outside the ssh server needs
-	// to read the live session count (the stats endpoint does); leave it nil and
-	// SetupServer owns a private one.
-	Tracker *SessionTracker
+	Tracker         *SessionTracker
 }
 
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
@@ -132,14 +119,14 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 		wish.WithIdleTimeout(connIdleTimeout),
-		// Any key is accepted; identity is bound to its fingerprint in LoadOrRegisterUser.
 		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
 			return true
 		})),
-		// wish runs the LAST middleware first, so this slice is in reverse execution
-		// order. sessionLifecycle is listed last to be outermost; see its doc.
+		boundedPty(),
+		// wish runs the last middleware first, so this slice is in reverse execution
+		// order.
 		wish.WithMiddleware(
-			bm.Middleware(sessionModel(deps, tracker)),
+			bm.MiddlewareWithProgramHandler(sessionProgram(deps, tracker)),
 			activeterm.Middleware(),
 			logging.StructuredMiddleware(),
 			sessionLifecycle(deps, tracker),
@@ -148,7 +135,6 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("error while setting up wish ssh server: %w", err)
 	}
-	// wish exposes no option for this one, and it has to be set before Serve.
 	server.HandshakeTimeout = handshakeTimeout
 
 	return server, nil
@@ -174,8 +160,6 @@ func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHa
 		if err != nil {
 			host = ctx.RemoteAddr().String()
 		}
-		// Budgets are held against the client's network, not its exact address:
-		// see ratelimit.NetKey for why a per-address limit is meaningless over IPv6.
 		if !limiter.Allow(ratelimit.NetKey(host)) {
 			observability.RateLimitRejectsTotal.Add(1)
 			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String(), "session_id", ctx.SessionID())
@@ -185,8 +169,6 @@ func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHa
 	}
 }
 
-// sessionTraceContext returns the context carrying the session span (set by the
-// outer middleware), so downstream DB calls and logs join the session trace.
 func sessionTraceContext(s ssh.Session) context.Context {
 	if ctx, ok := s.Context().Value(ctxKeyTraceCtx).(context.Context); ok {
 		return ctx
@@ -194,9 +176,6 @@ func sessionTraceContext(s ssh.Session) context.Context {
 	return s.Context()
 }
 
-// sessionModel authenticates the session and builds the TUI for it, rejecting the
-// connection if the user is already connected elsewhere. Returning a nil model
-// after wish.Fatalf is how this middleware refuses a session.
 func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
 	return func(s ssh.Session) (tea.Model, []tea.ProgramOption) {
 		traceCtx := sessionTraceContext(s)
@@ -218,8 +197,6 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 		s.Context().SetValue(ctxKeyOwnsConnection, true)
 		s.Context().SetValue(ctxKeyUser, user)
 
-		// Stash the model so sessionLifecycle can tear it down once the program
-		// returns; a disconnect never runs the views' own exit paths.
 		model := tui.Model(tui.ModelDependencies{
 			SessionCtx:   traceCtx,
 			User:         *user,
@@ -234,10 +211,39 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 	}
 }
 
-// sessionLifecycle spans the session, recovers panics, and releases everything the
-// session held. It is the outermost middleware so it wraps the bubbletea program:
-// charm.land/ssh runs the handler in a goroutine with no recover, so an escaped
-// panic would crash the whole process, and cleanup must run on every disconnect.
+func boundedPty() ssh.Option {
+	return func(srv *ssh.Server) error {
+		srv.PtyCallback = func(_ ssh.Context, req ssh.Pty) bool {
+			return req.Window.Width <= maxTerminalWidth && req.Window.Height <= maxTerminalHeight
+		}
+		return nil
+	}
+}
+
+func sessionProgram(deps ServerDependencies, tracker *SessionTracker) bm.ProgramHandler {
+	newModel := sessionModel(deps, tracker)
+	return func(s ssh.Session) *tea.Program {
+		model, opts := newModel(s)
+		if model == nil {
+			return nil
+		}
+		opts = append(opts, bm.MakeOptions(s)...)
+		return tea.NewProgram(model, append(opts, tea.WithFilter(clampWindowSize))...)
+	}
+}
+
+func clampWindowSize(_ tea.Model, msg tea.Msg) tea.Msg {
+	switch msg := msg.(type) {
+	case tea.SuspendMsg:
+		return tea.ResumeMsg{}
+	case tea.WindowSizeMsg:
+		msg.Width = min(msg.Width, maxTerminalWidth)
+		msg.Height = min(msg.Height, maxTerminalHeight)
+		return msg
+	}
+	return msg
+}
+
 func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Middleware {
 	return func(sh ssh.Handler) ssh.Handler {
 		return func(s ssh.Session) {
@@ -250,39 +256,39 @@ func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Mid
 				}
 				span.End()
 			}()
+			defer recoverSession(s)
 			defer releaseSession(s, deps, tracker)
+			defer closeSessionModel(s)
 
 			sh(s)
 		}
 	}
 }
 
-// releaseSession runs on every disconnect, panic or not.
-//
-// It must stay deferred directly (defer releaseSession(...)): recover only stops a
-// panic when called by the deferred function itself, so wrapping this in another
-// helper would silently let panics escape and take the process down.
-func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
-	if r := recover(); r != nil {
-		slog.Error("critical panic recovered during ssh session",
-			"panic", r,
-			"remote_addr", s.RemoteAddr().String(),
-		)
-		wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+func recoverSession(s ssh.Session) {
+	r := recover()
+	if r == nil {
+		return
 	}
+	slog.Error("critical panic recovered during ssh session",
+		"panic", r,
+		"remote_addr", s.RemoteAddr().String(),
+	)
+	wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+}
 
-	// Release event subscriptions the active view still holds, or a mid-game
-	// disconnect parks its listener goroutine and keeps a broadcaster slot until
-	// the engine itself closes.
+func closeSessionModel(s ssh.Session) {
 	if c, ok := s.Context().Value(ctxKeyModel).(interface{ Close() }); ok {
 		c.Close()
 	}
+}
 
+func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
 	if s.Context().Value(ctxKeyOwnsConnection) != true {
 		return
 	}
 	if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
 		tracker.Disconnect(u.ID)
-		deps.LobbyManager.LeaveLobby(&player.Player{ID: fmt.Sprint(u.ID), DatabaseUser: u})
+		deps.LobbyManager.LeaveLobby(lobby.NewPlayer(u))
 	}
 }

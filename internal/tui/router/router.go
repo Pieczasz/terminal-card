@@ -36,11 +36,10 @@ type ChangeViewMsg struct {
 }
 
 type GlobalContext struct {
-	User            *db.User
-	UserRepository  db.UserRepository
-	MatchRepository db.MatchRepository
-	LobbyManager    *lobby.Manager
-	GameRegistry    *game.Registry
+	User           *db.User
+	UserRepository db.UserRepository
+	LobbyManager   *lobby.Manager
+	GameRegistry   *game.Registry
 	// SessionCtx is canceled when the SSH session ends.
 	SessionCtx context.Context
 	Width      int

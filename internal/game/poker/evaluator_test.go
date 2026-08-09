@@ -478,7 +478,7 @@ func FuzzClassifyHand(f *testing.F) {
 		for _, b := range raw {
 			cards = append(cards, deck.Card{
 				Rank: deck.Rank(b % 14),     // Ace..Joker
-				Suit: deck.Suit(b / 14 % 5), // Spades..NoSuit
+				Suit: deck.Suit(b / 14 % 5), // NoSuit..Clubs
 			})
 		}
 

@@ -86,8 +86,18 @@ func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 
 	require.True(t, limiter.Allow("a"))
 	require.True(t, limiter.Allow("b"))
-	require.False(t, limiter.Allow("c"), "new key should be rejected when at capacity")
-	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
+	require.True(t, limiter.Allow("c"), "a caller the table has no room for is still served")
+	assert.LessOrEqual(t, limiter.Size(), 2, "and the table stays bounded")
+}
+
+func TestSlidingWindowLimiter_EvictionKeepsTheTableBounded(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(64)
+
+	for i := range 1_000 {
+		require.True(t, limiter.Allow(strconv.Itoa(i)), "every first request is within budget")
+		require.LessOrEqual(t, limiter.Size(), 64)
+	}
 }
 
 func BenchmarkAllow(b *testing.B) {
@@ -108,8 +118,6 @@ func BenchmarkAllow(b *testing.B) {
 	}
 }
 
-// A non-positive cap would refuse every caller the limiter has not seen before, so it has
-// to be ignored rather than applied.
 func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -120,12 +128,8 @@ func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
 	}
 }
 
-// Entries for callers who have gone quiet are swept periodically, not only when the key cap
-// is reached: without it a burst of one-off addresses stays resident for as long as the process runs.
 func TestSlidingWindowLimiter_SweepsExpiredKeysPeriodically(t *testing.T) {
 	t.Parallel()
-	// The sweep runs every 64th call, so the window has to be short enough that the
-	// first 63 callers have expired by the time the 64th arrives.
 	const window = 20 * time.Millisecond
 	limiter := ratelimit.NewSlidingWindowLimiter(1, window)
 

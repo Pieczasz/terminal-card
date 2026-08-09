@@ -10,14 +10,8 @@ import (
 )
 
 const defaultMaxSubscribers = 64
-
-// subscriberBuffer is how many events a slow subscriber may fall behind before
-// Broadcast starts dropping its oldest.
 const subscriberBuffer = 256
 
-// Subscribe reports these rather than handing back a channel that is already
-// closed. A closed channel is indistinguishable from a finished game, so a caller
-// given one silently stops receiving events and has no way to tell why.
 var (
 	ErrClosed     = errors.New("broadcaster is closed")
 	ErrAtCapacity = errors.New("broadcaster is at subscriber capacity")
