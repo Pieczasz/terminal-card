@@ -16,27 +16,18 @@ const (
 )
 
 const (
-	KnockThreshold = 10
-	GinBonus       = 25
-	UndercutBonus  = 25
-	TargetScore    = 100
-	WallStockSize  = 2
-	dealCount      = 10
-
-	// MaxHandTurns bounds a hand that would otherwise never end. Drawing from the
-	// discard pile never touches the stock, so two players who only ever take the
-	// upcard can trade cards forever and never reach the wall. An honest hand ends
-	// within ~31 turns (the stock size), so this only fires on a table that is
-	// refusing to make progress; it settles as a wall, scoring nobody.
-	MaxHandTurns = 100
-
+	KnockThreshold  = 10
+	GinBonus        = 25
+	UndercutBonus   = 25
+	TargetScore     = 100
+	WallStockSize   = 2
+	dealCount       = 10
+	MaxHandTurns    = 100
 	HandOverTimeout = time.Minute
 )
 
-// State is Gin Rummy match state stored in game.State.Extra.
 type State struct {
 	HandPhase Phase
-
 	// TakenUpcard is the card drawn from the discard pile this turn, which may not
 	// be discarded straight back. Without it two players can trade the same upcard
 	// forever: discard draws never touch the stock, so the wall never arrives and
