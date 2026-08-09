@@ -7,7 +7,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 const (
@@ -119,7 +118,22 @@ func (r *Rules) OnGameStart(state *game.State) error {
 	}
 	state.Extra = extra
 
-	return r.beginHand(state, extra, extra.DealerIndex)
+	return r.beginHandOrFinish(state, extra, extra.DealerIndex)
+}
+
+// beginHandOrFinish deals a hand and closes it out when the deal already finished
+// it: blinds big enough to put every funded seat all-in run the board out inside
+// beginHand, before anybody acts. Both the opening deal and every ActionNextHand go
+// through here, because a hand left complete but unfinished parks nobody on turn
+// and the match stops on a result screen nobody can dismiss.
+func (r *Rules) beginHandOrFinish(state *game.State, extra *State, dealer int) error {
+	if err := r.beginHand(state, extra, dealer); err != nil {
+		return err
+	}
+	if extra.HandComplete {
+		finishHand(state, extra)
+	}
+	return nil
 }
 
 // beginHand deals the next hand of the match: fresh shuffled deck, hole cards for
@@ -281,7 +295,7 @@ func finishHand(state *game.State, extra *State) {
 	state.OverrideNextTurn = &next
 }
 
-func postBlind(extra *State, p *player.Player, amount uint) {
+func postBlind(extra *State, p *game.Player, amount uint) {
 	pay := min(amount, extra.PlayerChips[p.ID])
 	extra.PlayerChips[p.ID] -= pay
 	extra.PlayerBets[p.ID] += pay
@@ -300,7 +314,7 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return extra.MatchComplete
 }
 
-func (r *Rules) Standings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*game.Player {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return nil
@@ -479,13 +493,32 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		if extra.PlayerChips[p.ID] == 0 {
 			return errors.New("no chips to go all-in")
 		}
+		// A shove that lands above the current bet is a raise, and a player who is
+		// only owed the difference from a sub-minimum all-in has no raise to make.
+		if extra.PlayerBets[p.ID]+extra.PlayerChips[p.ID] > extra.CurrentBet {
+			return checkBettingReopened(extra, p)
+		}
 		return nil
 	default:
 		return errors.New("action not allowed in poker")
 	}
 }
 
-func validateRaiseTo(extra *State, p *player.Player, amount uint) error {
+// checkBettingReopened refuses a raise from a player who has already acted this
+// round. Only a full-size raise clears ActedThisRound (see applyBetIncrease), so a
+// player still on turn with it set is facing the uncalled part of a sub-minimum
+// all-in: they owe the difference and may only call or fold.
+func checkBettingReopened(extra *State, p *game.Player) error {
+	if extra.ActedThisRound[p.ID] {
+		return errors.New("betting is not reopened, you may only call or fold")
+	}
+	return nil
+}
+
+func validateRaiseTo(extra *State, p *game.Player, amount uint) error {
+	if err := checkBettingReopened(extra, p); err != nil {
+		return err
+	}
 	if amount <= extra.CurrentBet {
 		return errors.New("raise must be above current bet")
 	}
@@ -536,7 +569,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	extra.LastAction = action
 }
 
-func callTo(extra *State, p *player.Player, target uint) {
+func callTo(extra *State, p *game.Player, target uint) {
 	if target < extra.PlayerBets[p.ID] {
 		return
 	}
@@ -544,7 +577,7 @@ func callTo(extra *State, p *player.Player, target uint) {
 	commitTo(extra, p, extra.PlayerBets[p.ID]+needed)
 }
 
-func commitTo(extra *State, p *player.Player, streetTotal uint) {
+func commitTo(extra *State, p *game.Player, streetTotal uint) {
 	if streetTotal < extra.PlayerBets[p.ID] {
 		return
 	}
@@ -565,7 +598,7 @@ func commitTo(extra *State, p *player.Player, streetTotal uint) {
 // applyBetIncrease raises CurrentBet to newBet. Only a full-size raise
 // (>= MinRaise) reopens the round; a sub-minimum all-in advances the amount
 // owed without granting already-acted players fresh action.
-func applyBetIncrease(extra *State, state *game.State, raiser *player.Player, newBet uint) {
+func applyBetIncrease(extra *State, state *game.State, raiser *game.Player, newBet uint) {
 	if newBet <= extra.CurrentBet {
 		return
 	}
@@ -593,13 +626,7 @@ func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 		return errors.New("invalid state type")
 	}
 	if _, isNextHand := action.(ActionNextHand); isNextHand {
-		if err := r.beginHand(state, extra, nextFundedSeat(state, extra, extra.DealerIndex)); err != nil {
-			return err
-		}
-		if extra.HandComplete {
-			finishHand(state, extra)
-		}
-		return nil
+		return r.beginHandOrFinish(state, extra, nextFundedSeat(state, extra, extra.DealerIndex))
 	}
 	return r.afterBettingAction(state, extra)
 }
@@ -612,7 +639,7 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 	active := activePlayers(state, extra)
 	if len(active) == 1 {
 		awardUncontested(extra, active[0])
-		extra.Winners = []*player.Player{active[0]}
+		extra.Winners = []*game.Player{active[0]}
 		finishHand(state, extra)
 		return nil
 	}
@@ -652,8 +679,8 @@ func isFolded(extra *State, playerID string) bool {
 	return extra.Folded[playerID]
 }
 
-func activePlayers(state *game.State, extra *State) []*player.Player {
-	out := make([]*player.Player, 0, len(state.Players))
+func activePlayers(state *game.State, extra *State) []*game.Player {
+	out := make([]*game.Player, 0, len(state.Players))
 	for _, p := range state.Players {
 		if !isFolded(extra, p.ID) {
 			out = append(out, p)

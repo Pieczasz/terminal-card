@@ -9,7 +9,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	"github.com/stretchr/testify/assert"
@@ -24,9 +23,9 @@ func testUser(id uint, name string) *db.User {
 // startedTable returns a two-handed table mid-hand plus the view bound to seat 1.
 func startedTable(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
-	players := []*player.Player{
-		{ID: "1", DatabaseUser: testUser(1, "alice")},
-		{ID: "2", DatabaseUser: testUser(2, "bob")},
+	players := []*game.Player{
+		{ID: "1", UserID: 1, Name: "alice"},
+		{ID: "2", UserID: 2, Name: "bob"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
@@ -126,6 +125,59 @@ func TestClampRaise_BoundsToLegalRange(t *testing.T) {
 	assert.Equal(t, uint(500), m.clampRaise(500), "an in-range amount passes through")
 }
 
+// tableOnTurn seats the view as whichever player the engine put on turn, so the
+// test does not depend on where the button landed.
+func tableOnTurn(t *testing.T, seats int) (*game.Engine, *Model) {
+	t.Helper()
+	players := make([]*game.Player, 0, seats)
+	for i := range seats {
+		players = append(players, &game.Player{
+			ID:     strconv.Itoa(i + 1),
+			UserID: uint(i + 1),
+			Name:   fmt.Sprintf("p%d", i+1),
+		})
+	}
+	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
+	require.NoError(t, err)
+
+	m, ok := New(router.GlobalContext{User: testUser(uint(id), "hero")}, engine).(*Model)
+	require.True(t, ok)
+	require.True(t, m.Base.MyTurn, "the view has to be bound to the seat on turn")
+	return engine, m
+}
+
+// A raise being built belongs to the turn it is being built on. It used to survive
+// the action moving on, so the prompt stayed up over a table the player could no
+// longer bet into, and enter submitted into somebody else's turn.
+func TestSyncState_ClosesTheRaisePromptWhenTheTurnIsLost(t *testing.T) {
+	t.Parallel()
+	engine, m := tableOnTurn(t, 3)
+
+	m.raising = true
+	m.raiseAmount = 500
+	require.NoError(t, engine.SubmitAction(m.Bound.PlayerID(), logic.ActionFold{}))
+	m.syncState()
+
+	require.False(t, m.Base.MyTurn, "folding passes the action on")
+	assert.False(t, m.raising, "a half-built raise cannot outlive the turn it belongs to")
+}
+
+func TestSyncState_KeepsTheRaisePromptWhileTheTurnIsStillYours(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t, 3)
+
+	m.raising = true
+	m.raiseAmount = 500
+	m.syncState()
+
+	assert.True(t, m.raising, "a refresh mid-turn must not close the prompt")
+	assert.Equal(t, uint(500), m.raiseAmount, "and must not lose the amount built so far")
+}
+
 func TestSyncState_NilBoundIsInert(t *testing.T) {
 	t.Parallel()
 	m, ok := New(router.GlobalContext{}, nil).(*Model)
@@ -144,11 +196,11 @@ func TestSyncState_NilBoundIsInert(t *testing.T) {
 func BenchmarkSyncState(b *testing.B) {
 	for _, seats := range []int{2, 6, 9} {
 		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
-			players := make([]*player.Player, 0, seats)
+			players := make([]*game.Player, 0, seats)
 			for i := range seats {
-				players = append(players, &player.Player{
-					ID:           strconv.Itoa(i + 1),
-					DatabaseUser: testUser(uint(i+1), fmt.Sprintf("p%d", i+1)),
+				players = append(players, &game.Player{
+					ID:     strconv.Itoa(i + 1),
+					UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
 				})
 			}
 			engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())

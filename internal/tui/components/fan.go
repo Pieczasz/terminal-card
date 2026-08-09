@@ -19,16 +19,6 @@ const (
 	cardRows = FaceHeight + 2
 )
 
-// FanWidth is the printed width of a fan of n cards, which is what a caller needs to
-// line anything up underneath it.
-func FanWidth(n, selected int) int {
-	total := 0
-	for i := range n {
-		total += CardSlotWidth(i, n, selected)
-	}
-	return total
-}
-
 // CardSlotWidth is the visible width of card i in a fan of n, where selected is the
 // picked-out index or -1. A closed card is wider, so anything lined up under the fan
 // has to ask rather than assume.

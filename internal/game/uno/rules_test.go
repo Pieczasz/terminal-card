@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +15,7 @@ import (
 
 func createTestState() *game.State {
 	rules := &Rules{}
-	players := []*player.Player{{ID: "p1", Cards: []deck.Card{
+	players := []*game.Player{{ID: "p1", Cards: []deck.Card{
 		{Rank: deck.Two, Suit: ColorRed},
 		{Rank: deck.Five, Suit: ColorBlue},
 		{Rank: Skip, Suit: ColorYellow},
@@ -35,11 +34,11 @@ func createMultiplayerState(t *testing.T, hands ...int) *game.State {
 	stock := deck.New(InitialDeck())
 	require.NoError(t, stock.Shuffle())
 
-	players := make([]*player.Player, 0, len(hands))
+	players := make([]*game.Player, 0, len(hands))
 	for i, n := range hands {
 		cards, ok := stock.DrawNCards(n)
 		require.True(t, ok, "fixture deck must hold %d cards", n)
-		players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards})
+		players = append(players, &game.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards})
 	}
 
 	top, ok := stock.Draw()
@@ -124,6 +123,137 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		state := createTestState()
 		err := rules.ValidateAction(state, ActionPlayCard{Card: deck.Card{Rank: deck.Nine, Suit: ColorRed}})
 		require.ErrorContains(t, err, "you don't have that card")
+	})
+}
+
+// A Wild Draw Four is the one card whose legality depends on the rest of the hand:
+// it may only be played by someone with nothing of the current colour to play. Left
+// unchecked it is simply the strongest card in the deck and there is no reason ever
+// to play anything else.
+func TestRules_ValidateAction_WildDrawFourNeedsNoCurrentColor(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	wd4 := deck.Card{Rank: WildDrawFour, Suit: ColorWild}
+
+	t.Run("rejected while a card of the current color is held", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		state.Players[0].Cards = []deck.Card{wd4, {Rank: deck.Two, Suit: ColorRed}}
+		state.Extra.(*State).CurrentColor = ColorRed
+
+		err := rules.ValidateAction(state, ActionPlayCard{Card: wd4, ChosenColor: ColorBlue})
+		require.ErrorContains(t, err, "no card of the current color")
+	})
+
+	t.Run("allowed once nothing matches the current color", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		state.Players[0].Cards = []deck.Card{wd4, {Rank: deck.Two, Suit: ColorGreen}}
+		state.Extra.(*State).CurrentColor = ColorRed
+
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: wd4, ChosenColor: ColorBlue}))
+	})
+
+	t.Run("a matching number or symbol does not block it", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		// Playable on rank alone, but the gate is on colour, not on playability.
+		state.Discard = deck.New([]deck.Card{{Rank: deck.Two, Suit: ColorRed}})
+		state.Players[0].Cards = []deck.Card{wd4, {Rank: deck.Two, Suit: ColorGreen}}
+		state.Extra.(*State).CurrentColor = ColorRed
+
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: wd4, ChosenColor: ColorBlue}))
+	})
+
+	t.Run("a held wild is not a card of the current color", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		state.Players[0].Cards = []deck.Card{wd4, {Rank: Wild, Suit: ColorWild}}
+		state.Extra.(*State).CurrentColor = ColorRed
+
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: wd4, ChosenColor: ColorBlue}))
+	})
+
+	t.Run("a plain wild is still unconditional", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		state.Players[0].Cards = []deck.Card{{Rank: Wild, Suit: ColorWild}, {Rank: deck.Two, Suit: ColorRed}}
+		state.Extra.(*State).CurrentColor = ColorRed
+
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{
+			Card:        deck.Card{Rank: Wild, Suit: ColorWild},
+			ChosenColor: ColorBlue,
+		}))
+	})
+}
+
+// The card that starts the discard pile is played by the deck, and its action still
+// happens: it lands on the seat the engine put on turn. Ignoring it lets the first
+// player play on a Skip or a Draw Two as though it were a plain number.
+func TestRules_OnGameStart_OpeningCardActsOnTheFirstPlayer(t *testing.T) {
+	t.Parallel()
+
+	// Draw takes from the end, so the last card is the one that opens the pile.
+	openOn := func(t *testing.T, seats int, card deck.Card) (*game.State, *State) {
+		t.Helper()
+		players := make([]*game.Player, seats)
+		for i := range players {
+			players[i] = &game.Player{ID: fmt.Sprintf("p%d", i+1)}
+		}
+		stock := make([]deck.Card, 0, 12)
+		for range 10 {
+			stock = append(stock, deck.Card{Rank: deck.Seven, Suit: ColorGreen})
+		}
+		stock = append(stock, card)
+
+		state := game.NewState(&Rules{}, players, nil)
+		state.Deck = deck.New(stock)
+		state.CurrentTurn = 0
+		require.NoError(t, (&Rules{}).OnGameStart(state))
+		return state, state.Extra.(*State)
+	}
+
+	t.Run("skip costs the first player their turn", func(t *testing.T) {
+		t.Parallel()
+		state, _ := openOn(t, 3, deck.Card{Rank: Skip, Suit: ColorRed})
+
+		assert.Equal(t, 1, state.CurrentTurn)
+		require.NotNil(t, state.OverrideNextTurn)
+		assert.Equal(t, 1, *state.OverrideNextTurn, "the engine settles the cursor after OnGameStart")
+	})
+
+	t.Run("draw two is drawn by the first player, who is then skipped", func(t *testing.T) {
+		t.Parallel()
+		state, _ := openOn(t, 3, deck.Card{Rank: DrawTwo, Suit: ColorRed})
+
+		assert.Len(t, state.Players[0].Cards, 2, "the seat on turn pays the penalty")
+		assert.Empty(t, state.Players[1].Cards)
+		assert.Equal(t, 1, state.CurrentTurn)
+	})
+
+	t.Run("reverse turns the table around before the first play", func(t *testing.T) {
+		t.Parallel()
+		state, extra := openOn(t, 3, deck.Card{Rank: Reverse, Suit: ColorRed})
+
+		assert.Equal(t, int8(-1), extra.Direction)
+		assert.Equal(t, 0, state.CurrentTurn, "a reverse skips nobody")
+	})
+
+	t.Run("heads-up a reverse is a skip", func(t *testing.T) {
+		t.Parallel()
+		state, extra := openOn(t, 2, deck.Card{Rank: Reverse, Suit: ColorRed})
+
+		assert.Equal(t, int8(1), extra.Direction, "with two seats there is nothing to reverse")
+		assert.Equal(t, 1, state.CurrentTurn)
+	})
+
+	t.Run("a number card leaves the first player on turn", func(t *testing.T) {
+		t.Parallel()
+		state, extra := openOn(t, 3, deck.Card{Rank: deck.Five, Suit: ColorRed})
+
+		assert.Equal(t, 0, state.CurrentTurn)
+		assert.Equal(t, int8(1), extra.Direction)
+		assert.Empty(t, state.Players[0].Cards)
 	})
 }
 
@@ -294,6 +424,59 @@ func TestRules_CheckWinCondition(t *testing.T) {
 		extra.Passes = 3
 		assert.False(t, rules.CheckWinCondition(state))
 	})
+
+	// The negative case: while every seat still holds cards the hand carries on.
+	// Without it, "any player has no cards" and "any player has cards" both pass.
+	t.Run("a live hand has no winner", func(t *testing.T) {
+		t.Parallel()
+		state := createMultiplayerState(t, 3, 5, 1)
+		assert.False(t, rules.CheckWinCondition(state))
+	})
+}
+
+// Official Uno never starts on a Wild, so OnGameStart keeps flipping until a coloured
+// card surfaces and shuffles the skipped wilds back into the stock.
+func TestRules_OnGameStart_NeverOpensOnAWild(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}}
+
+	// Draw takes from the end, so these are flipped right-to-left: two wilds first.
+	stacked := []deck.Card{
+		{Rank: deck.Seven, Suit: ColorGreen},
+		{Rank: deck.Four, Suit: ColorBlue},
+		{Rank: WildDrawFour, Suit: ColorWild},
+		{Rank: Wild, Suit: ColorWild},
+	}
+	state := game.NewState(rules, players, nil)
+	state.Deck = deck.New(stacked)
+
+	require.NoError(t, rules.OnGameStart(state))
+
+	top, ok := state.Discard.Peek()
+	require.True(t, ok)
+	assert.False(t, isWild(top.Rank), "opened on %v", top)
+	assert.Equal(t, top.Suit, state.Extra.(*State).CurrentColor)
+	assert.Equal(t, len(stacked), state.Deck.Size()+state.Discard.Size(),
+		"the skipped wilds go back into the stock")
+}
+
+// Passes counts consecutive fruitless turns and ends a deadlocked hand. A draw that
+// actually yielded a card has to clear it, or a live hand can still time itself out.
+func TestRules_DrawCard_SuccessfulDrawClearsThePassCount(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createMultiplayerState(t, 3, 3)
+	extra := state.Extra.(*State)
+	extra.Passes = 1
+	stockBefore := state.Deck.Size()
+
+	rules.ApplyAction(state, ActionDrawCard{})
+
+	assert.Zero(t, extra.Passes, "a card was drawn, so the hand is not stalled")
+	assert.Len(t, state.Players[0].Cards, 4)
+	assert.Equal(t, stockBefore-1, state.Deck.Size())
+	assert.False(t, rules.CheckWinCondition(state))
 }
 
 func TestRules_Standings_RanksByFewestCards(t *testing.T) {
@@ -318,14 +501,18 @@ func TestRules_Standings_TiesAreStable(t *testing.T) {
 
 func TestRules_OnPlayerLeave_ReturnsCardsToTheStock(t *testing.T) {
 	t.Parallel()
-	state := createMultiplayerState(t, 4, 4)
+	// Deliberately uneven hands: with equal ones, returning the wrong player's cards
+	// still balances the deck and the leak goes unnoticed.
+	state := createMultiplayerState(t, 3, 6)
 	before := cardsInPlay(state)
 	stockBefore := state.Deck.Size()
 
 	(&Rules{}).OnPlayerLeave(state, "p2")
 
-	assert.Equal(t, before, cardsInPlay(state))
-	assert.Equal(t, stockBefore+4, state.Deck.Size())
+	assert.Equal(t, before, cardsInPlay(state), "cards are conserved")
+	assert.Equal(t, stockBefore+6, state.Deck.Size(), "the leaver's six cards go back")
+	assert.Empty(t, state.Players[1].Cards, "the leaver's hand is emptied")
+	assert.Len(t, state.Players[0].Cards, 3, "everyone else keeps their hand")
 }
 
 func TestRules_OnPlayerLeave_UnknownPlayerChangesNothing(t *testing.T) {
@@ -334,6 +521,41 @@ func TestRules_OnPlayerLeave_UnknownPlayerChangesNothing(t *testing.T) {
 	before := cardsInPlay(state)
 	(&Rules{}).OnPlayerLeave(state, "nobody")
 	assert.Equal(t, before, cardsInPlay(state))
+}
+
+// Passes is counted against the number of seats, so a leaver who arrives with the
+// count part-way up leaves a table that reads as deadlocked without a single seat
+// having passed. Their returned cards also refill the stock the count was measuring.
+func TestRules_OnPlayerLeave_ClearsStalePasses(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createMultiplayerState(t, 3, 3, 3)
+	extra := state.Extra.(*State)
+
+	extra.Passes = 2
+	rules.OnPlayerLeave(state, "p3")
+	state.Players = state.Players[:2] // the engine drops the seat after the hook
+
+	assert.Zero(t, extra.Passes, "the count measured a table that no longer exists")
+	assert.False(t, rules.CheckWinCondition(state), "nobody passed, so nothing is deadlocked")
+}
+
+// The stock is rebuilt from the discard on a failed shuffle, and the pile has to go
+// back exactly as it was: Peek reads the end, so the card in play must stay last.
+func TestRestoreDiscard_KeepsTheCardInPlayOnTop(t *testing.T) {
+	t.Parallel()
+	top := deck.Card{Rank: deck.Three, Suit: ColorRed}
+	rest := []deck.Card{
+		{Rank: deck.Four, Suit: ColorBlue},
+		{Rank: Skip, Suit: ColorGreen},
+	}
+
+	restored := restoreDiscard(rest, top)
+
+	peeked, ok := restored.Peek()
+	require.True(t, ok)
+	assert.Equal(t, top, peeked, "a rotated pile puts a card nobody played into play")
+	assert.Equal(t, len(rest)+1, restored.Size(), "every card comes back")
 }
 
 func TestRules_TimeoutAction_AlwaysDraws(t *testing.T) {
@@ -352,7 +574,7 @@ func TestRules_Init(t *testing.T) {
 
 	t.Run("opening wild redrawn", func(t *testing.T) {
 		t.Parallel()
-		players := []*player.Player{{ID: "a"}, {ID: "b"}}
+		players := []*game.Player{{ID: "a"}, {ID: "b"}}
 		// Stock top is a wild, then a colored card.
 		stock := []deck.Card{
 			{Rank: Wild, Suit: ColorWild},
@@ -374,7 +596,7 @@ func TestRules_Init(t *testing.T) {
 func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, InitialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)

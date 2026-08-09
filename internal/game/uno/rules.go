@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Rules struct{}
@@ -55,7 +54,39 @@ func (r *Rules) OnGameStart(state *game.State) error {
 			return fmt.Errorf("reshuffle wilds: %w", err)
 		}
 	}
+
+	top, ok := state.Discard.Peek()
+	if !ok {
+		return errors.New("no opening card on the discard pile")
+	}
+	r.applyOpeningCard(state, extra, top)
 	return nil
+}
+
+// applyOpeningCard plays the action printed on the card that starts the discard
+// pile. Nobody played it, so the effect lands on the seat the engine put on turn:
+// they lose the turn, draw, or find the table already running the other way. The
+// opening card is never a Wild, so there is no colour to choose.
+func (r *Rules) applyOpeningCard(state *game.State, extra *State, card deck.Card) {
+	first := state.CurrentTurn
+	switch card.Rank {
+	case Skip:
+		first = r.advance(state, extra, 1)
+	case DrawTwo:
+		if !drawCardsInto(state, state.CurrentTurn, 2) {
+			extra.Passes++
+		}
+		first = r.advance(state, extra, 1)
+	case Reverse:
+		if len(state.Players) == 2 {
+			// Heads-up a Reverse is a Skip, exactly as it is mid-hand.
+			first = r.advance(state, extra, 1)
+			break
+		}
+		extra.Direction = -1
+	}
+	state.CurrentTurn = first
+	state.OverrideNextTurn = &first
 }
 
 type ActionPlayCard struct {
@@ -81,12 +112,19 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 
 	switch a := action.(type) {
 	case ActionPlayCard:
-		if !slices.Contains(state.Players[state.CurrentTurn].Cards, a.Card) {
+		hand := state.Players[state.CurrentTurn].Cards
+		if !slices.Contains(hand, a.Card) {
 			return errors.New("you don't have that card")
 		}
 		if isWild(a.Card.Rank) {
 			if !validColor(a.ChosenColor) {
 				return errors.New("must choose a valid color")
+			}
+			// A Wild Draw Four is the one card the official rules gate on the hand
+			// behind it: it may only be played by someone with nothing of the
+			// current colour to play instead.
+			if a.Card.Rank == WildDrawFour && hasColor(hand, extra.CurrentColor) {
+				return errors.New("wild draw four needs a hand with no card of the current color")
 			}
 			return nil
 		}
@@ -111,7 +149,8 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	}
 	switch a := action.(type) {
 	case ActionPlayCard:
-		removeOneMatchingCard(state.Players[state.CurrentTurn], a.Card)
+		actor := state.Players[state.CurrentTurn]
+		actor.Cards = deck.RemoveOne(actor.Cards, a.Card)
 		state.Discard.AddCard(a.Card)
 		extra.Passes = 0
 
@@ -140,7 +179,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	}
 }
 
-// Every action sets OverrideNextTurn: TurnManager.Next only steps +1, so a
+// Every action sets OverrideNextTurn: the engine's own advance only steps +1, so a
 // reversed table would otherwise ignore Direction.
 func (r *Rules) advance(state *game.State, extra *State, steps int) int {
 	n := len(state.Players)
@@ -183,19 +222,6 @@ func (r *Rules) applyVoluntaryDraw(state *game.State, extra *State) {
 	state.OverrideNextTurn = &next
 }
 
-func removeOneMatchingCard(p *player.Player, card deck.Card) {
-	newHand := make([]deck.Card, 0, len(p.Cards))
-	removed := false
-	for _, c := range p.Cards {
-		if c == card && !removed {
-			removed = true
-			continue
-		}
-		newHand = append(newHand, c)
-	}
-	p.Cards = newHand
-}
-
 // drawCardsInto draws up to n cards into the seat, reshuffling discard→stock
 // when needed. Returns false only when zero cards were drawn (deadlock).
 func drawCardsInto(state *game.State, playerIdx, n int) bool {
@@ -230,11 +256,18 @@ func reshuffleDiscardIntoDeck(state *game.State) error {
 	state.Discard = deck.New([]deck.Card{top})
 	state.Deck.AddCard(rest...)
 	if err := state.Deck.Shuffle(); err != nil {
-		state.Discard.AddCard(rest...)
+		state.Discard = restoreDiscard(rest, top)
 		state.Deck = deck.New(nil)
 		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
 	}
 	return nil
+}
+
+// restoreDiscard puts the pile back the way it was found, top card last. Peek and
+// Draw read the end of the pile, so rebuilding it the other way round rotates the
+// discard and leaves a card nobody played sitting in play.
+func restoreDiscard(rest []deck.Card, top deck.Card) *deck.Pile {
+	return deck.New(append(rest, top))
 }
 
 func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
@@ -254,6 +287,12 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 }
 
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
+	// Passes counts turns a draw yielded nothing on, and the returned hand refills
+	// the stock, so the count is stale. Left alone it would also be measured against
+	// a table one seat smaller and read as a deadlock that never happened.
+	if extra, ok := state.Extra.(*State); ok {
+		extra.Passes = 0
+	}
 	for _, p := range state.Players {
 		if p.ID == playerID {
 			state.Deck.AddCard(p.Cards...)
@@ -268,10 +307,16 @@ func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
-func (r *Rules) Standings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*game.Player {
 	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *player.Player) int {
+	slices.SortStableFunc(standings, func(a, b *game.Player) int {
 		return len(a.Cards) - len(b.Cards)
 	})
 	return standings
+}
+
+// StandingScore is the value Standings sorted by, so two players left holding the
+// same number of cards are reported as the draw they are.
+func (r *Rules) StandingScore(_ *game.State, p *game.Player) int {
+	return len(p.Cards)
 }

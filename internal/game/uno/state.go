@@ -15,6 +15,17 @@ func isWild(r deck.Rank) bool {
 	return r == Wild || r == WildDrawFour
 }
 
+// hasColor reports whether the hand holds a playable card of the colour. Wilds sit
+// on NoSuit, so they never count: holding one is not holding the colour.
+func hasColor(hand []deck.Card, color deck.Suit) bool {
+	for _, c := range hand {
+		if !isWild(c.Rank) && c.Suit == color {
+			return true
+		}
+	}
+	return false
+}
+
 func validColor(s deck.Suit) bool {
 	switch s {
 	case ColorRed, ColorYellow, ColorGreen, ColorBlue:

@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Rules struct{}
@@ -154,12 +153,12 @@ func validatePlay(state *game.State, extra *State, action game.Action) error {
 	return validatePlayCard(state, extra, state.Players[state.CurrentTurn], a.Card)
 }
 
-func validatePlayCard(_ *game.State, extra *State, p *player.Player, card deck.Card) error {
+func validatePlayCard(_ *game.State, extra *State, p *game.Player, card deck.Card) error {
 	if !slices.Contains(p.Cards, card) {
 		return errors.New("you don't have that card")
 	}
 
-	leading := len(extra.TrickCards) == 0
+	leading := extra.leadingTrick()
 	if leading && extra.TricksPlayed == 0 && card != twoOfClubs {
 		return errors.New("must lead the 2 of clubs on trick 1")
 	}
@@ -183,12 +182,13 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	switch a := action.(type) {
 	case ActionPassCards:
 		p := state.Players[state.CurrentTurn]
-		p.Cards = removeCards(p.Cards, a.Cards)
+		p.Cards = deck.RemoveEach(p.Cards, a.Cards)
 		extra.PendingPasses[p.ID] = a.Cards
 		extra.Passed[p.ID] = true
 	case ActionPlayCard:
 		p := state.Players[state.CurrentTurn]
-		p.Cards = removeCard(p.Cards, a.Card)
+		extra.startTrick()
+		p.Cards = deck.RemoveOne(p.Cards, a.Card)
 		if len(extra.TrickCards) == 0 {
 			extra.LedSuit = a.Card.Suit
 			extra.TrickLeader = state.CurrentTurn
@@ -243,8 +243,9 @@ func (r *Rules) afterPlay(state *game.State, extra *State) error {
 	extra.HandPoints[winnerID] += trickPoints(extra.TrickCards)
 	extra.LastTrickWinner = winnerID
 	extra.TricksPlayed++
-	extra.TrickCards = make(map[string]deck.Card, len(state.Players))
-	extra.LedSuit = deck.NoSuit
+	// The cards stay on the table: the engine broadcasts this play next, and a
+	// trick swept here would never be seen by the three players who did not take it.
+	extra.TrickComplete = true
 
 	if extra.TricksPlayed < cardsPerHand {
 		state.CurrentTurn = winnerSeat
@@ -273,13 +274,13 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return ok && extra.MatchComplete
 }
 
-func (r *Rules) Standings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*game.Player {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return nil
 	}
 	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *player.Player) int {
+	slices.SortStableFunc(standings, func(a, b *game.Player) int {
 		return extra.CumulativeScores[a.ID] - extra.CumulativeScores[b.ID]
 	})
 	return standings
@@ -335,3 +336,13 @@ func (r *Rules) OnPlayerLeave(state *game.State, _ string) {
 }
 
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
+
+// StandingScore is the value Standings sorted by, so players who finished the match
+// on the same total are reported as the draw they are.
+func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return 0
+	}
+	return extra.CumulativeScores[p.ID]
+}

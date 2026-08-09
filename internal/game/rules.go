@@ -4,7 +4,6 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Rules interface {
@@ -20,41 +19,38 @@ type Rules interface {
 	AfterAction(state *State, action Action) error
 	ApplyAction(state *State, action Action)
 	CheckWinCondition(state *State) bool
-	Standings(state *State) []*player.Player
+	Standings(state *State) []*Player
 }
 
-// TurnTimeoutHandler is an optional Rules extension that supplies the move to play
-// for a player who let their turn clock run out. Rules that do not implement it get
-// no turn clock at all, so a game only gains one once it can say what a safe move is.
-//
-// The returned action must be one ValidateAction accepts for the player currently on
-// turn: the engine submits it through the ordinary path, so an illegal action is
-// refused like any other. Returning nil means there is no safe move, and the engine
-// takes the player's seat instead of guessing.
-//
-// Called with the engine and state locks held, under the same contract as Rules.
 type TurnTimeoutHandler interface {
 	TimeoutAction(state *State) Action
 }
-
-// TurnDurationHandler is an optional Rules extension that sets how long a particular
-// turn is worth. Returning zero, or not implementing it at all, leaves the engine's
-// configured timeout in place.
-//
-// It exists because not every turn asks the same thing of a player: a betting
-// decision under pressure is not the same as being asked whether to deal the next
-// hand, and holding both to one clock either rushes the first or stalls the table on
-// the second. It cannot resurrect a clock that WithTurnTimeout disabled.
-//
-// Called with the engine and state locks held, under the same contract as Rules.
 type TurnDurationHandler interface {
 	TurnTimeout(state *State) time.Duration
 }
 
-// PlayerLeaveHandler is an optional Rules extension for mid-hand disconnects.
-// OnPlayerLeave runs before the player is removed from state.Players.
-// AfterPlayerRemoved runs after removal (seat indices already shifted).
 type PlayerLeaveHandler interface {
 	OnPlayerLeave(state *State, playerID string)
 	AfterPlayerRemoved(state *State, removedIndex int)
+}
+
+// StandingScorer reports the value Standings ordered a player by. Equal scores are
+// a genuine draw, and Engine.StandingsWithPlaces turns them into equal finishing
+// places so the rating calculation can settle them as one - without it a tie is
+// separated by slice position and the seat that happened to sort first takes rating
+// off the seat that did not.
+//
+// Only equality is read, so the sign and direction do not matter: return whatever
+// the sort compares. A rules set whose ordering is already total can skip this.
+type StandingScorer interface {
+	StandingScore(state *State, p *Player) int
+}
+
+func AnyScoreAtLeast(scores map[string]int, target int) bool {
+	for _, score := range scores {
+		if score >= target {
+			return true
+		}
+	}
+	return false
 }

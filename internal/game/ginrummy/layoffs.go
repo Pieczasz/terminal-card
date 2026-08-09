@@ -9,10 +9,7 @@ import (
 // ApplyLayoffs extends knockerMelds with opponent deadwood cards that attach
 // legally. Repeats until no card attaches (an earlier layoff can open a new end).
 func ApplyLayoffs(opponentDeadwood []deck.Card, knockerMelds [][]deck.Card) (extended [][]deck.Card, remaining []deck.Card) {
-	extended = make([][]deck.Card, len(knockerMelds))
-	for i, m := range knockerMelds {
-		extended[i] = slices.Clone(m)
-	}
+	extended = cloneMelds(knockerMelds)
 	remaining = slices.Clone(opponentDeadwood)
 
 	for changed := true; changed; {
@@ -31,9 +28,18 @@ func ApplyLayoffs(opponentDeadwood []deck.Card, knockerMelds [][]deck.Card) (ext
 	return extended, remaining
 }
 
+// findAttach picks the meld a card lays off onto, runs before sets. A run has two
+// open ends and every attachment opens another, while a set stops dead at four:
+// spending a card on the set when it also fits a run can strand the deadwood that
+// would have extended the run behind it.
 func findAttach(card deck.Card, melds [][]deck.Card) (int, bool) {
 	for i, meld := range melds {
-		if canAttach(card, meld) {
+		if isRun(meld) && canAttach(card, meld) {
+			return i, true
+		}
+	}
+	for i, meld := range melds {
+		if isSet(meld) && canAttach(card, meld) {
 			return i, true
 		}
 	}
@@ -49,14 +55,14 @@ func canAttach(card deck.Card, meld []deck.Card) bool {
 	}
 	sorted := slices.Clone(meld)
 	slices.SortFunc(sorted, func(a, b deck.Card) int {
-		return rankOrder(a.Rank) - rankOrder(b.Rank)
+		return deck.RunOrder(a.Rank) - deck.RunOrder(b.Rank)
 	})
 	if card.Suit != sorted[0].Suit {
 		return false
 	}
-	lo := rankOrder(sorted[0].Rank)
-	hi := rankOrder(sorted[len(sorted)-1].Rank)
-	v := rankOrder(card.Rank)
+	lo := deck.RunOrder(sorted[0].Rank)
+	hi := deck.RunOrder(sorted[len(sorted)-1].Rank)
+	v := deck.RunOrder(card.Rank)
 	return v == lo-1 || v == hi+1
 }
 
@@ -65,7 +71,7 @@ func sortMeld(meld []deck.Card) {
 		return
 	}
 	slices.SortFunc(meld, func(a, b deck.Card) int {
-		return rankOrder(a.Rank) - rankOrder(b.Rank)
+		return deck.RunOrder(a.Rank) - deck.RunOrder(b.Rank)
 	})
 }
 

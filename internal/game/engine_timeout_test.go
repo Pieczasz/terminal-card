@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -18,19 +17,9 @@ type namedAction struct{ name string }
 
 func (a namedAction) Name() string { return a.name }
 
-// timeoutRules is the smallest Rules that opts into the turn clock. It accepts every
-// action and records who played what, so a test can tell an auto-played move from a
-// real one.
 type timeoutRules struct {
-	// safe is what TimeoutAction returns. A nil safe means the rules have no safe
-	// move, which is how the engine is told to take the seat instead.
-	safe Action
-	// reject makes ValidateAction refuse everything, standing in for rules that
-	// cannot accept their own safe move.
-	reject bool
-
-	// mu guards applied only against the test goroutine: the engine calls ApplyAction
-	// under its own locks, but the test reads the slice from outside them.
+	safe    Action
+	reject  bool
 	mu      sync.Mutex
 	applied []string
 }
@@ -56,7 +45,7 @@ func (r *timeoutRules) ApplyAction(state *State, action Action) {
 	r.applied = append(r.applied, state.Players[state.CurrentTurn].ID+":"+action.Name())
 }
 
-func (r *timeoutRules) Standings(state *State) []*player.Player { return state.Players }
+func (r *timeoutRules) Standings(state *State) []*Player { return state.Players }
 
 func (r *timeoutRules) TimeoutAction(*State) Action { return r.safe }
 
@@ -68,9 +57,6 @@ func (r *timeoutRules) appliedActions() []string {
 
 var _ TurnTimeoutHandler = (*timeoutRules)(nil)
 
-// fireTurnTimeout runs the expiry path synchronously with the sequence the armed
-// timer is holding. Driving it directly is what keeps these tests off the wall clock:
-// the real timer is covered separately by TestEngine_TurnTimeout_TimerActuallyFires.
 func fireTurnTimeout(t *testing.T, e *Engine) {
 	t.Helper()
 	e.mu.Lock()
@@ -81,11 +67,10 @@ func fireTurnTimeout(t *testing.T, e *Engine) {
 
 func newTimeoutEngine(t *testing.T, rules Rules, ids ...string) *Engine {
 	t.Helper()
-	players := make([]*player.Player, 0, len(ids))
+	players := make([]*Player, 0, len(ids))
 	for _, id := range ids {
-		players = append(players, &player.Player{ID: id})
+		players = append(players, &Player{ID: id})
 	}
-	// A long timeout so nothing fires on its own; the tests trigger expiry themselves.
 	engine := NewEngine(rules, players, deck.StandardDeck(), WithTurnTimeout(time.Hour))
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
@@ -157,7 +142,6 @@ func TestEngine_TurnTimeout_TakesTheSeatAfterMaxMissesInARow(t *testing.T) {
 	}
 	assert.Equal(t, firstToAct, idleFor, "the idle player must be named so their session can end")
 
-	// Only the misses before the limit are played out; the last one takes the seat.
 	assert.Len(t, rules.appliedActions(), (MaxMissedTurns-1)*2)
 }
 
@@ -180,6 +164,57 @@ func TestEngine_TurnTimeout_StaleTimerIsIgnored(t *testing.T) {
 	assert.Equal(t, []string{acted + ":real"}, rules.appliedActions(),
 		"a timeout for a turn that is over must not play anything")
 	assert.Zero(t, engine.MissedTurns(acted), "and must not be counted against them")
+}
+
+// The seat is decided under the engine lock but taken after it is dropped, because
+// RemovePlayer needs that lock itself. A player who moves in that window is at the
+// keyboard, so the decision has to be re-checked under the same lock that removes.
+func TestEngine_TurnTimeout_MovingBeforeRemovalKeepsTheSeat(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		act        bool
+		wantSeated bool
+	}{
+		{name: "nobody moved", act: false, wantSeated: false},
+		{name: "moved before removal", act: true, wantSeated: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rules := &timeoutRules{safe: namedAction{name: "safe"}}
+			engine := newTimeoutEngine(t, rules, "a", "b")
+
+			victim := engine.CurrentPlayerID()
+			engine.mu.Lock()
+			engine.missedTurns[victim] = MaxMissedTurns - 1
+			seq := engine.turnSeq
+			engine.mu.Unlock()
+
+			id, _, takeSeat := engine.resolveTurnTimeout(seq)
+			require.True(t, takeSeat, "one more miss reaches the limit")
+			require.Equal(t, victim, id)
+
+			if tt.act {
+				require.NoError(t, engine.SubmitAction(victim, namedAction{name: "real"}))
+			}
+
+			engine.removeIfStillIdle(seq, victim)
+
+			engine.WithState(func(state *State) {
+				seated := false
+				for _, p := range state.Players {
+					if p.ID == victim {
+						seated = true
+						break
+					}
+				}
+				assert.Equal(t, tt.wantSeated, seated)
+			})
+		})
+	}
 }
 
 func TestEngine_TurnTimeout_NoSafeMoveTakesTheSeat(t *testing.T) {
@@ -208,13 +243,10 @@ func TestEngine_TurnTimeout_RefusedSafeMoveRearmsRatherThanStalling(t *testing.T
 		"a fresh clock must be running, or this seat stalls the table forever")
 }
 
-// The rearm above is only observable through a real timer: driving onTurnTimeout directly
-// Only a real timer shows the rearm: driving onTurnTimeout directly supplies a fresh
-// sequence every call, so a seat that never got a new clock still looks charged.
 func TestEngine_TurnTimeout_RefusedSafeMoveStillLosesTheSeat(t *testing.T) {
 	t.Parallel()
 	rules := &timeoutRules{safe: namedAction{name: "safe"}, reject: true}
-	engine := NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}},
+	engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}},
 		deck.StandardDeck(), WithTurnTimeout(20*time.Millisecond))
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
@@ -231,7 +263,7 @@ func TestEngine_TurnTimeout_ClockLifecycle(t *testing.T) {
 		t.Parallel()
 		rules := setupMockRules()
 		rules.On("CheckWinCondition", mock.Anything).Return(false).Maybe()
-		engine := NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}}, deck.StandardDeck())
+		engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}}, deck.StandardDeck())
 		t.Cleanup(engine.Close)
 		require.NoError(t, engine.Start())
 
@@ -254,7 +286,7 @@ func TestEngine_TurnTimeout_ClockLifecycle(t *testing.T) {
 		engine := newTimeoutEngine(t, &timeoutRules{safe: nil}, "a", "b")
 		require.False(t, engine.TurnDeadline().IsZero())
 
-		fireTurnTimeout(t, engine) // no safe move, so this finishes the game
+		fireTurnTimeout(t, engine)
 		require.True(t, engine.IsFinished())
 
 		assert.True(t, engine.TurnDeadline().IsZero(),
@@ -264,7 +296,7 @@ func TestEngine_TurnTimeout_ClockLifecycle(t *testing.T) {
 	t.Run("a zero timeout disables the clock", func(t *testing.T) {
 		t.Parallel()
 		rules := &timeoutRules{safe: namedAction{name: "safe"}}
-		engine := NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}},
+		engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}},
 			deck.StandardDeck(), WithTurnTimeout(0))
 		t.Cleanup(engine.Close)
 		require.NoError(t, engine.Start())
@@ -273,12 +305,10 @@ func TestEngine_TurnTimeout_ClockLifecycle(t *testing.T) {
 	})
 }
 
-// Every other test here drives onTurnTimeout directly, which would keep passing even if the
-// timer were never armed.
 func TestEngine_TurnTimeout_TimerActuallyFires(t *testing.T) {
 	t.Parallel()
 	rules := &timeoutRules{safe: namedAction{name: "safe"}}
-	engine := NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}},
+	engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}},
 		deck.StandardDeck(), WithTurnTimeout(20*time.Millisecond))
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
@@ -286,4 +316,58 @@ func TestEngine_TurnTimeout_TimerActuallyFires(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return len(rules.appliedActions()) > 0
 	}, 2*time.Second, 5*time.Millisecond, "the armed timer must play the safe move on its own")
+}
+
+// A player's own action clears their miss count before the rules see it, because
+// someone sending a move is at the keyboard whether or not it was legal. But a
+// refused action returns without settling the cursor, so nothing on that path arms a
+// new clock - and the timer that got us here has already fired. removeIfStillIdle
+// finds the count cleared, declines to take the seat, and has to re-arm on its way
+// out or the table sits on this turn with a dead clock until someone else leaves.
+func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T) {
+	t.Parallel()
+
+	rules := &timeoutRules{safe: namedAction{name: "safe"}}
+	engine := newTimeoutEngine(t, rules, "a", "b")
+
+	victim := engine.CurrentPlayerID()
+	engine.mu.Lock()
+	engine.missedTurns[victim] = MaxMissedTurns - 1
+	seq := engine.turnSeq
+	engine.mu.Unlock()
+
+	_, _, takeSeat := engine.resolveTurnTimeout(seq)
+	require.True(t, takeSeat, "one more miss reaches the limit")
+
+	// The seat acts in the window resolveTurnTimeout had to drop the locks for, and
+	// the rules refuse the move.
+	rules.reject = true
+	require.Error(t, engine.SubmitAction(victim, namedAction{name: "refused"}))
+	require.Zero(t, engine.MissedTurns(victim), "acting at all clears the count")
+
+	engine.mu.Lock()
+	seqBefore := engine.turnSeq
+	engine.mu.Unlock()
+
+	engine.removeIfStillIdle(seq, victim)
+
+	engine.WithState(func(state *State) {
+		seated := false
+		for _, p := range state.Players {
+			if p.ID == victim {
+				seated = true
+				break
+			}
+		}
+		assert.True(t, seated, "they acted, so the seat is theirs")
+	})
+
+	// turnSeq is the signal, not the deadline: arming bumps it, and the deadline left
+	// behind by the timer that already fired still reads as a plausible future time.
+	engine.mu.Lock()
+	seqAfter := engine.turnSeq
+	engine.mu.Unlock()
+	assert.Greater(t, seqAfter, seqBefore,
+		"declining to take the seat must arm a new clock, or no expiry ever fires again")
+	assert.False(t, engine.TurnDeadline().IsZero(), "and that clock must be running")
 }

@@ -52,7 +52,7 @@ make build
 
 Schema changes live in `internal/db/migrations/` and are applied with [golang-migrate](https://github.com/golang-migrate/migrate).
 
-- Do **not** rely on GORM AutoMigrate for production (tests may still AutoMigrate for speed).
+- Do **not** rely on GORM AutoMigrate; the test suite replays these same files.
 - Add a new pair with `make migrate-create` when changing tables.
 - Compose runs migrations automatically before the backend starts.
 
@@ -88,7 +88,7 @@ Crazy Eights and Poker (NLHE) are registered reference implementations under `in
 
 Lobby create options and route names (`game_<slug>`) are derived from the registry – you should not hardcode game lists.
 
-> **Note:** Production uses SQL migrations under `internal/db/migrations/`. Tests may use GORM AutoMigrate for speed; do not rely on AutoMigrate in production.
+> **Note:** Both production and the integration suite build their schema from the SQL migrations under `internal/db/migrations/`; nothing relies on GORM AutoMigrate.
 
 ## Pull request process
 

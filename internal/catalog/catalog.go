@@ -20,8 +20,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// Entry is one playable game: its display name, route slug, rules factory, and
-// the TUI view bound to a started engine.
 type Entry struct {
 	Name  string
 	Slug  string
@@ -29,12 +27,11 @@ type Entry struct {
 	View  func(router.GlobalContext, *game.Engine) tea.Model
 }
 
-// Module returns the registry descriptor for this entry.
 func (e Entry) Module() game.Module {
 	return game.Module{Name: e.Name, Slug: e.Slug, Factory: e.Rules}
 }
 
-// All is every playable game. Adding a game means adding one entry here.
+// TODO: add every created game here.
 var All = []Entry{
 	{
 		Name:  "Crazy Eights",

@@ -23,17 +23,17 @@ type fakeLobbies struct{ inGame, waiting int }
 
 func (f fakeLobbies) Stats() (int, int) { return f.inGame, f.waiting }
 
-// stubUsers implements only what the handler calls; the rest panics so an accidental
-// new call site shows up as a test failure rather than a silent zero value.
 type stubUsers struct {
 	db.UserRepository
 	rankings []db.Ranking
 	err      error
 	gotLimit int
+	gotGame  string
 }
 
-func (s *stubUsers) BestPlayers(_ context.Context, limit int) ([]db.Ranking, error) {
+func (s *stubUsers) BestPlayers(_ context.Context, limit int, gameName string) ([]db.Ranking, error) {
 	s.gotLimit = limit
+	s.gotGame = gameName
 	return s.rankings, s.err
 }
 
@@ -71,8 +71,6 @@ func TestStats_ReportsLiveCounts(t *testing.T) {
 	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
 }
 
-// Nil dependencies must answer zeros rather than panic: the handler is mounted before
-// anything guarantees every collaborator exists.
 func TestStats_NilDepsDoNotPanic(t *testing.T) {
 	t.Parallel()
 	rec := get(t, Handler(Deps{}), "/v1/stats")
@@ -129,7 +127,6 @@ func TestLeaderboard_LimitIsClampedAndValidated(t *testing.T) {
 	}
 }
 
-// A database failure must not leak its message to an unauthenticated caller.
 func TestLeaderboard_RepositoryErrorIsOpaque(t *testing.T) {
 	t.Parallel()
 	users := &stubUsers{err: errors.New("pq: relation \"rankings\" does not exist")}
@@ -141,14 +138,22 @@ func TestLeaderboard_RepositoryErrorIsOpaque(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "unavailable")
 }
 
-func TestLeaderboard_EmptyIsAnArrayNotNull(t *testing.T) {
+func TestLeaderboard_GameFilterIsPassedThrough(t *testing.T) {
 	t.Parallel()
-	// `null` would make the site's rows.slice(0,5) throw; an empty array renders the
-	// "be first" message instead.
-	rec := get(t, Handler(Deps{Users: &stubUsers{}}), "/v1/leaderboard")
+	users := &stubUsers{}
+	rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard?game=Uno")
 
 	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "[]", rec.Body.String()[:2])
+	assert.Equal(t, "Uno", users.gotGame)
+}
+
+func TestLeaderboard_AbsentGameMeansAll(t *testing.T) {
+	t.Parallel()
+	users := &stubUsers{}
+	rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Empty(t, users.gotGame)
 }
 
 func TestUnknownRouteIs404(t *testing.T) {
@@ -173,15 +178,89 @@ func TestWriteMethodsAreRejected(t *testing.T) {
 	}
 }
 
-func TestPreflightIsAnswered(t *testing.T) {
-	t.Parallel()
+func options(t *testing.T, h http.Handler) *httptest.ResponseRecorder {
+	t.Helper()
 	req := httptest.NewRequest(http.MethodOptions, "/v1/stats", nil)
 	req.RemoteAddr = "203.0.113.11:2222"
 	rec := httptest.NewRecorder()
-	Handler(Deps{}).ServeHTTP(rec, req)
+	h.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestPreflightIsAnswered(t *testing.T) {
+	t.Parallel()
+	rec := options(t, Handler(Deps{}))
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Contains(t, rec.Header().Get("Access-Control-Allow-Methods"), "GET")
+}
+
+func TestPreflightIsRateLimited(t *testing.T) {
+	t.Parallel()
+	h := Handler(Deps{RequestsPerMinute: 2})
+
+	require.Equal(t, http.StatusNoContent, options(t, h).Code)
+	require.Equal(t, http.StatusNoContent, options(t, h).Code)
+	assert.Equal(t, http.StatusTooManyRequests, options(t, h).Code,
+		"a preflight flood must not be a free pass around the limiter")
+}
+
+func TestErrorsAreJSON(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		handler  http.Handler
+		target   string
+		wantCode int
+	}{
+		{
+			name:     "bad request",
+			handler:  Handler(Deps{Users: &stubUsers{}}),
+			target:   "/v1/leaderboard?limit=0",
+			wantCode: http.StatusBadRequest,
+		},
+		{
+			name:     "not found",
+			handler:  Handler(Deps{}),
+			target:   "/v1/secrets",
+			wantCode: http.StatusNotFound,
+		},
+		{
+			name:     "repository down",
+			handler:  Handler(Deps{Users: &stubUsers{err: errors.New("boom")}}),
+			target:   "/v1/leaderboard",
+			wantCode: http.StatusServiceUnavailable,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rec := get(t, tt.handler, tt.target)
+
+			require.Equal(t, tt.wantCode, rec.Code)
+			assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+			var got errorResponse
+			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+			assert.NotEmpty(t, got.Error)
+		})
+	}
+}
+
+func TestRateLimitErrorIsJSON(t *testing.T) {
+	t.Parallel()
+	h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 1})
+
+	require.Equal(t, http.StatusOK, get(t, h, "/v1/stats").Code)
+	rec := get(t, h, "/v1/stats")
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	assert.Contains(t, rec.Header().Get("Content-Type"), "application/json")
+	assert.Equal(t, "60", rec.Header().Get("Retry-After"))
+	var got errorResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &got))
+	assert.Equal(t, "too many requests", got.Error)
 }
 
 func TestRateLimitRejectsAFlood(t *testing.T) {
@@ -202,15 +281,13 @@ func TestAllowOriginCanBePinned(t *testing.T) {
 	assert.Equal(t, "https://tty.cards", rec.Header().Get("Access-Control-Allow-Origin"))
 }
 
-// Behind a proxy every socket address is the proxy's, so without TrustedProxy the
-// whole internet would share one bucket. With it, distinct clients get distinct ones.
 func TestRateLimit_TrustedProxySeparatesClients(t *testing.T) {
 	t.Parallel()
 	h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 2, TrustedProxy: true})
 
 	send := func(clientIP string) int {
 		req := httptest.NewRequest(http.MethodGet, "/v1/stats", nil)
-		req.RemoteAddr = "10.0.0.1:9999" // always the proxy
+		req.RemoteAddr = "10.0.0.1:9999"
 		req.Header.Set("X-Forwarded-For", clientIP)
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -223,8 +300,6 @@ func TestRateLimit_TrustedProxySeparatesClients(t *testing.T) {
 	assert.Equal(t, http.StatusOK, send("203.0.113.200"), "a different client has its own budget")
 }
 
-// The header must be ignored unless explicitly trusted, or a directly exposed server
-// could be evaded by forging it.
 func TestRateLimit_UntrustedProxyHeaderIsIgnored(t *testing.T) {
 	t.Parallel()
 	h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 2})
@@ -233,7 +308,6 @@ func TestRateLimit_UntrustedProxyHeaderIsIgnored(t *testing.T) {
 	for i := range 4 {
 		req := httptest.NewRequest(http.MethodGet, "/v1/stats", nil)
 		req.RemoteAddr = "198.51.100.9:1234"
-		// A fresh forged address every time would grant unlimited budget if trusted.
 		req.Header.Set("X-Forwarded-For", fmt.Sprintf("203.0.113.%d", i+1))
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, req)
@@ -243,7 +317,6 @@ func TestRateLimit_UntrustedProxyHeaderIsIgnored(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, last, "forged headers must not reset the budget")
 }
 
-// X-Forwarded-For is a chain; the client is leftmost.
 func TestTrustedProxy_UsesLeftmostForwardedAddress(t *testing.T) {
 	t.Parallel()
 	h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 1, TrustedProxy: true})
