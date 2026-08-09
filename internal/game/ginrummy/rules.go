@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Rules struct{}
@@ -17,6 +16,9 @@ var (
 	_ game.Rules               = (*Rules)(nil)
 	_ game.TurnTimeoutHandler  = (*Rules)(nil)
 	_ game.TurnDurationHandler = (*Rules)(nil)
+	// No PlayerLeaveHandler: gin is strictly 2-player (MinPlayers == MaxPlayers == 2).
+	// When a player leaves mid-hand, the match ends immediately via the engine's
+	// last-player-standing path. There is no shared state to clean up.
 )
 
 type ActionDrawStock struct{}
@@ -71,6 +73,8 @@ func (r *Rules) beginHand(state *game.State, extra *State) error {
 	extra.HandComplete = false
 	extra.LastHandResult = nil
 	extra.HandPhase = AwaitingDraw
+	extra.TakenUpcard = nil
+	extra.TurnsThisHand = 0
 
 	state.Deck = deck.New(deck.StandardDeck())
 	if err := state.Deck.Shuffle(); err != nil {
@@ -89,8 +93,11 @@ func (r *Rules) beginHand(state *game.State, extra *State) error {
 	}
 	state.Discard = deck.New([]deck.Card{upCard})
 
-	state.CurrentTurn = extra.FirstActor
-	state.OverrideNextTurn = &extra.FirstActor
+	// A local, never &extra.FirstActor: the engine holds this pointer until it settles
+	// the cursor, and a write to FirstActor in that window would silently redirect the turn.
+	first := extra.FirstActor
+	state.CurrentTurn = first
+	state.OverrideNextTurn = &first
 	return nil
 }
 
@@ -139,7 +146,7 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		if !slices.Contains(p.Cards, action.Card) {
 			return errors.New("you don't have that card")
 		}
-		return nil
+		return validateNotTakenUpcard(extra, action.Card)
 	case ActionKnock:
 		if extra.HandPhase != AwaitingDiscard {
 			return errors.New("must draw first")
@@ -147,7 +154,10 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		if !slices.Contains(p.Cards, action.Discard) {
 			return errors.New("you don't have that card")
 		}
-		remaining := removeOne(p.Cards, action.Discard)
+		if err := validateNotTakenUpcard(extra, action.Discard); err != nil {
+			return err
+		}
+		remaining := deck.RemoveOne(p.Cards, action.Discard)
 		_, _, deadwoodPts := BestMeldSplit(remaining)
 		if deadwoodPts > KnockThreshold {
 			return fmt.Errorf("deadwood %d exceeds limit %d", deadwoodPts, KnockThreshold)
@@ -156,6 +166,15 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	default:
 		return errors.New("unknown action")
 	}
+}
+
+// validateNotTakenUpcard enforces the standard rule that the card just drawn from
+// the discard pile cannot be laid straight back. See State.TakenUpcard.
+func validateNotTakenUpcard(extra *State, card deck.Card) error {
+	if extra.TakenUpcard != nil && *extra.TakenUpcard == card {
+		return errors.New("cannot discard the card you just took from the discard pile")
+	}
+	return nil
 }
 
 func (r *Rules) ApplyAction(state *game.State, action game.Action) {
@@ -167,23 +186,30 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 
 	switch action := action.(type) {
 	case ActionDrawStock:
+		// The phase only moves on a card that actually arrived; AfterAction turns a
+		// failed draw into an error rather than letting the player discard a card
+		// they never picked up.
 		if drawn, ok := state.Deck.Draw(); ok {
 			p.Cards = append(p.Cards, drawn)
+			extra.TakenUpcard = nil
+			extra.HandPhase = AwaitingDiscard
 		}
-		extra.HandPhase = AwaitingDiscard
 		// Draw then discard is one turn: keep the cursor on this seat.
 		cur := state.CurrentTurn
 		state.OverrideNextTurn = &cur
 	case ActionDrawDiscard:
 		if drawn, ok := state.Discard.Draw(); ok {
 			p.Cards = append(p.Cards, drawn)
+			extra.TakenUpcard = &drawn
+			extra.HandPhase = AwaitingDiscard
 		}
-		extra.HandPhase = AwaitingDiscard
 		cur := state.CurrentTurn
 		state.OverrideNextTurn = &cur
 	case ActionDiscard:
-		p.Cards = removeOne(p.Cards, action.Card)
+		p.Cards = deck.RemoveOne(p.Cards, action.Card)
 		state.Discard.AddCard(action.Card)
+		extra.TakenUpcard = nil
+		extra.TurnsThisHand++
 		extra.HandPhase = AwaitingDraw
 	case ActionKnock:
 		r.applyKnock(state, extra, action)
@@ -203,6 +229,7 @@ func (r *Rules) applyKnock(state *game.State, extra *State, action ActionKnock) 
 
 	state.Players[state.CurrentTurn].Cards = remaining
 	state.Discard = deck.New([]deck.Card{})
+	extra.TakenUpcard = nil
 	extra.HandPhase = HandOver
 	extra.HandComplete = true
 	extra.LastHandResult = result
@@ -225,7 +252,7 @@ func computeKnockOutcome(
 	knockerHand, opponentHand []deck.Card,
 	discard deck.Card,
 ) (*HandResult, []deck.Card) {
-	remaining := removeOne(knockerHand, discard)
+	remaining := deck.RemoveOne(knockerHand, discard)
 	knockerMelds, knockerDW, knockerPts := BestMeldSplit(remaining)
 	oppMelds, oppDW, oppPts := BestMeldSplit(opponentHand)
 
@@ -265,12 +292,7 @@ func computeKnockOutcome(
 }
 
 func handTargetReached(extra *State) bool {
-	for _, score := range extra.CumulativeScores {
-		if score >= TargetScore {
-			return true
-		}
-	}
-	return false
+	return game.AnyScoreAtLeast(extra.CumulativeScores, TargetScore)
 }
 
 func (r *Rules) AfterAction(state *game.State, action game.Action) error {
@@ -279,20 +301,31 @@ func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 		return errors.New("invalid state type")
 	}
 
-	if _, isNext := action.(ActionNextHand); isNext {
+	switch action.(type) {
+	case ActionNextHand:
 		return r.beginHand(state, extra)
-	}
-
-	if _, isDiscard := action.(ActionDiscard); isDiscard && state.Deck.Size() <= WallStockSize {
-		extra.HandComplete = true
-		extra.HandPhase = HandOver
-		extra.LastHandResult = &HandResult{Wall: true}
-		nextFirst := 1 - extra.FirstActor
-		extra.FirstActor = nextFirst
-		state.CurrentTurn = nextFirst
-		state.OverrideNextTurn = &nextFirst
+	case ActionDrawStock, ActionDrawDiscard:
+		if extra.HandPhase != AwaitingDiscard {
+			return errors.New("draw failed: the pile came up empty")
+		}
+	case ActionDiscard:
+		if handHitTheWall(state, extra) {
+			extra.HandComplete = true
+			extra.HandPhase = HandOver
+			extra.LastHandResult = &HandResult{Wall: true}
+			nextFirst := 1 - extra.FirstActor
+			extra.FirstActor = nextFirst
+			state.CurrentTurn = nextFirst
+			state.OverrideNextTurn = &nextFirst
+		}
 	}
 	return nil
+}
+
+// handHitTheWall reports whether the hand is out of road: the stock is down to its
+// reserve, or the table has spent MaxHandTurns without anyone knocking.
+func handHitTheWall(state *game.State, extra *State) bool {
+	return state.Deck.Size() <= WallStockSize || extra.TurnsThisHand >= MaxHandTurns
 }
 
 func (r *Rules) CheckWinCondition(state *game.State) bool {
@@ -300,13 +333,13 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return ok && extra.MatchComplete
 }
 
-func (r *Rules) Standings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*game.Player {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return nil
 	}
 	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *player.Player) int {
+	slices.SortStableFunc(standings, func(a, b *game.Player) int {
 		return extra.CumulativeScores[b.ID] - extra.CumulativeScores[a.ID]
 	})
 	return standings
@@ -334,14 +367,33 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 		}
 		return ActionDrawDiscard{}
 	case AwaitingDiscard:
-		_, deadwood, _ := BestMeldSplit(p.Cards)
-		if len(deadwood) == 0 {
-			return ActionDiscard{Card: p.Cards[0]}
+		card, ok := autoDiscard(p.Cards, extra.TakenUpcard)
+		if !ok {
+			return nil
 		}
-		return ActionDiscard{Card: highestPointCard(deadwood)}
+		return ActionDiscard{Card: card}
 	default:
 		return nil
 	}
+}
+
+// autoDiscard picks the move TimeoutAction plays for an absent player: the priciest
+// deadwood card, skipping the one they may not discard back. It must return something
+// ValidateAction accepts, or the engine re-arms and takes the seat on the next expiry.
+func autoDiscard(hand []deck.Card, forbidden *deck.Card) (deck.Card, bool) {
+	allowed := func(c deck.Card) bool { return forbidden == nil || c != *forbidden }
+
+	// Split the real hand, then choose among its deadwood: splitting a pre-filtered
+	// hand would optimise melds the player does not actually hold.
+	_, deadwood, _ := BestMeldSplit(hand)
+	if shed := slices.DeleteFunc(deadwood, func(c deck.Card) bool { return !allowed(c) }); len(shed) > 0 {
+		return highestPointCard(shed), true
+	}
+	// Gin, or every deadwood card is the one card they may not lay back: break a meld.
+	if i := slices.IndexFunc(hand, allowed); i >= 0 {
+		return hand[i], true
+	}
+	return deck.Card{}, false
 }
 
 func (r *Rules) TurnTimeout(state *game.State) time.Duration {
@@ -350,4 +402,14 @@ func (r *Rules) TurnTimeout(state *game.State) time.Duration {
 		return 0
 	}
 	return HandOverTimeout
+}
+
+// StandingScore is the value Standings sorted by. Only equality is read, so the
+// descending order Standings applies does not need repeating here.
+func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return 0
+	}
+	return extra.CumulativeScores[p.ID]
 }

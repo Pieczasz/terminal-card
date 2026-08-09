@@ -5,7 +5,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -44,6 +43,42 @@ func TestMatch_ScoresCarryIntoNextHand(t *testing.T) {
 	assert.Equal(t, 2, extra.HandNumber)
 	assert.False(t, extra.HandComplete)
 	assert.Equal(t, AwaitingDraw, extra.HandPhase)
+}
+
+// Two players who only ever take the upcard never touch the stock, so the ordinary
+// wall is unreachable. Before TakenUpcard + MaxHandTurns this ran forever: each player
+// laid the card they had just picked up straight back and nothing in the hand changed.
+func TestMatch_UpcardTradingCannotStallTheHand(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state, extra := startedState(t)
+	openingStock := state.Deck.Size()
+
+	for turn := range MaxHandTurns * 2 {
+		if extra.HandComplete {
+			require.NotNil(t, extra.LastHandResult)
+			assert.True(t, extra.LastHandResult.Wall, "a stalled hand settles as a wall")
+			assert.Equal(t, openingStock, state.Deck.Size(), "no stock was ever drawn")
+			assert.Equal(t, MaxHandTurns, extra.TurnsThisHand)
+			return
+		}
+
+		up, ok := state.Discard.Peek()
+		require.True(t, ok)
+		require.NoError(t, rules.ValidateAction(state, ActionDrawDiscard{}))
+		rules.ApplyAction(state, ActionDrawDiscard{})
+
+		require.ErrorContains(t, rules.ValidateAction(state, ActionDiscard{Card: up}),
+			"just took from the discard pile", "turn %d laid the upcard straight back", turn)
+
+		shed, ok := autoDiscard(state.Players[state.CurrentTurn].Cards, extra.TakenUpcard)
+		require.True(t, ok)
+		require.NoError(t, rules.ValidateAction(state, ActionDiscard{Card: shed}))
+		rules.ApplyAction(state, ActionDiscard{Card: shed})
+		require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: shed}))
+		state.CurrentTurn = 1 - state.CurrentTurn
+	}
+	t.Fatalf("hand never terminated after %d turns", MaxHandTurns*2)
 }
 
 func TestMatch_NextHandRejectedWhileHandLive(t *testing.T) {
@@ -86,9 +121,9 @@ func TestMatch_EndsOnceCumulativeScoreCrossesTarget(t *testing.T) {
 func TestStandings_LeavingForfeitsScoresStay(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{
-		{ID: "p1", DatabaseUser: nil},
-		{ID: "p2", DatabaseUser: nil},
+	players := []*game.Player{
+		{ID: "p1"},
+		{ID: "p2"},
 	}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
