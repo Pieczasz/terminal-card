@@ -13,8 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// heapInUse settles the heap and reports what is live, so a before/after pair
-// measures retained memory rather than allocation churn.
 func heapInUse() uint64 {
 	for range 3 {
 		runtime.GC()
@@ -24,12 +22,9 @@ func heapInUse() uint64 {
 	return ms.HeapAlloc
 }
 
-// TestCapacity_MemoryPerTable reports the retained cost of a live table: the lobby,
-// its broadcaster, the engine, the deck and every seat. It is a measurement, not an
-// assertion about a threshold - the bound is generous purely so a runaway regression
-// fails rather than being quietly reported.
+// Reads the heap, so it must have the process to itself.
 //
-//nolint:paralleltest // measures process-wide heap, so it cannot share the process
+//nolint:paralleltest // a shared heap measurement cannot run alongside other tests
 func TestCapacity_MemoryPerTable(t *testing.T) {
 	const tables = 200
 	const seatsPerTable = 6
@@ -37,7 +32,6 @@ func TestCapacity_MemoryPerTable(t *testing.T) {
 	manager := lobby.NewManager(context.Background(), nil)
 	registry := realRegistry(t)
 
-	// Build everything first so the measurement excludes one-off package state.
 	warm := openTable(t, manager, registry, 0, seatsPerTable)
 	require.NotNil(t, warm)
 
@@ -50,15 +44,13 @@ func TestCapacity_MemoryPerTable(t *testing.T) {
 	runtime.KeepAlive(held)
 
 	perTable := float64(after-before) / float64(tables)
-	t.Logf("MEASUREMENT retained per %d-seat table in play: %.1f KiB (%.1f KiB per seat)",
+	t.Logf("measurement retained per %d-seat table in play: %.1f KiB (%.1f KiB per seat)",
 		seatsPerTable, perTable/1024, perTable/float64(seatsPerTable)/1024)
-	t.Logf("MEASUREMENT %d tables held %.1f MiB of heap", tables, float64(after-before)/(1<<20))
+	t.Logf("measurement %d tables held %.1f MiB of heap", tables, float64(after-before)/(1<<20))
 
 	require.Less(t, perTable, float64(2<<20), "a table must not retain megabytes")
 }
 
-// openTable seats n players in a fresh lobby and starts the game, which is the state
-// a table spends essentially all of its life in.
 func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, idx, n int) *lobby.Lobby {
 	t.Helper()
 	leader := benchPlayer(idx, 0)
@@ -68,8 +60,6 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 		lobby.WithPrivate(false),
 	)
 	require.NoError(t, err)
-	// RemoveLobby closes the engine, which stops its turn clock: 200 tables left
-	// running would each fire a timeout timer while the rest of the suite runs.
 	t.Cleanup(func() { manager.RemoveLobby(l.Code()) })
 
 	guests := make([]*game.Player, 0, n-1)
