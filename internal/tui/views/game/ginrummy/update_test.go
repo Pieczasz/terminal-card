@@ -15,7 +15,7 @@ import (
 func TestUpdate_Navigation(t *testing.T) {
 	t.Parallel()
 	m := Model{
-		baseState: gameview.BaseState{
+		Session: gameview.Session{Base: gameview.BaseState{
 			Hand: []deck.Card{
 				{Rank: deck.Two, Suit: deck.Hearts},
 				{Rank: deck.Three, Suit: deck.Clubs},
@@ -23,29 +23,25 @@ func TestUpdate_Navigation(t *testing.T) {
 			},
 			MyTurn: true,
 			Phase:  game.Playing,
-		},
-		handPhase:       logic.AwaitingDiscard,
-		selectedCardIdx: 0,
+		}},
+		handPhase: logic.AwaitingDiscard,
 	}
 
 	msg := tea.KeyPressMsg{Code: rune("l"[0]), Text: "l"}
 	newM, _ := m.Update(msg)
-	assert.Equal(t, 1, newM.(*Model).selectedCardIdx)
+	assert.Equal(t, 1, newM.(*Model).Selected)
 
 	msg = tea.KeyPressMsg{Code: rune("h"[0]), Text: "h"}
 	newM, _ = newM.Update(msg)
-	assert.Equal(t, 0, newM.(*Model).selectedCardIdx)
+	assert.Equal(t, 0, newM.(*Model).Selected)
 }
 
 func TestUpdate_NumberSelection(t *testing.T) {
 	t.Parallel()
-	m := Model{
-		baseState: gameview.BaseState{
-			Hand: make([]deck.Card, 10),
-		},
-		selectedCardIdx: 0,
-	}
+	m := Model{Session: gameview.Session{
+		Base: gameview.BaseState{Hand: make([]deck.Card, 10)},
+	}}
 	msg := tea.KeyPressMsg{Code: rune("5"[0]), Text: "5"}
 	newM, _ := m.Update(msg)
-	assert.Equal(t, 5, newM.(*Model).selectedCardIdx)
+	assert.Equal(t, 5, newM.(*Model).Selected)
 }

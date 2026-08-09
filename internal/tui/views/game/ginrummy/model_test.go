@@ -7,7 +7,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/ginrummy"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	"github.com/stretchr/testify/assert"
@@ -21,9 +20,9 @@ func testUser(id uint, name string) *db.User {
 
 func startedTable(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
-	players := []*player.Player{
-		{ID: "1", DatabaseUser: testUser(1, "alice")},
-		{ID: "2", DatabaseUser: testUser(2, "bob")},
+	players := []*game.Player{
+		{ID: "1", UserID: 1, Name: "alice"},
+		{ID: "2", UserID: 2, Name: "bob"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
@@ -41,7 +40,7 @@ func TestSyncState_LoadsGinExtra(t *testing.T) {
 
 	assert.Equal(t, 1, m.handNumber)
 	assert.Equal(t, logic.AwaitingDraw, m.handPhase)
-	assert.Len(t, m.baseState.Hand, 10)
+	assert.Len(t, m.Base.Hand, 10)
 	assert.Len(t, m.seatOrder, 2)
 	assert.Equal(t, "alice", m.seatNames["1"])
 	assert.Equal(t, 31, m.stockSize)

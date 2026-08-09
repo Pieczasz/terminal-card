@@ -1,8 +1,6 @@
 package hearts
 
 import (
-	"fmt"
-	"log/slog"
 	"maps"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -14,15 +12,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-type gameMsg game.Event
-
+// TopDiscard from the base state is unused — Hearts has no discard pile.
 type Model struct {
-	global router.GlobalContext
-	bound  *game.BoundEngine
-	events <-chan game.Event
+	gameview.Session
 
-	baseState       gameview.BaseState
-	selectedCardIdx int
 	// passSelected holds hand indices staged for ActionPassCards (space toggles).
 	passSelected map[int]struct{}
 
@@ -42,93 +35,43 @@ type Model struct {
 	lastActionErr error
 }
 
-func listenForEvents(ch <-chan game.Event) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return gameMsg(msg)
-	}
-}
-
 // New creates a Hearts TUI view bound to the session player.
-// TopDiscard from SyncBaseState is unused — Hearts has no discard pile.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
-	playerID := ""
-	if global.User != nil {
-		playerID = fmt.Sprint(global.User.ID)
-	}
-	bound := game.Bind(engine, playerID)
-
-	var ch <-chan game.Event
-	var subErr error
-	if bound != nil {
-		if b := bound.Broadcaster(); b != nil {
-			ch, subErr = b.Subscribe()
-			if subErr != nil {
-				slog.Error("hearts view could not subscribe to game events", "error", subErr, "player_id", playerID)
-				subErr = fmt.Errorf("live table updates unavailable, leave and rejoin: %w", subErr)
-			}
-		}
-	}
+	session, err := gameview.NewSession(global, engine, "hearts")
 	m := &Model{
-		global:           global,
-		bound:            bound,
-		events:           ch,
+		Session:          session,
 		passSelected:     map[int]struct{}{},
 		trickCards:       map[string]deck.Card{},
 		handPoints:       map[string]int{},
 		cumulativeScores: map[string]int{},
 		seatNames:        map[string]string{},
-		lastActionErr:    subErr,
+		lastActionErr:    err,
 	}
 	m.syncState()
 	return m
 }
 
 func (m *Model) syncState() {
-	m.baseState = gameview.SyncBaseState(m.bound)
-
-	if m.bound != nil {
-		m.bound.WithExtra(func(extra any) {
-			if s, ok := extra.(*logic.State); ok {
-				m.stage = s.Stage
-				m.heartsBroken = s.HeartsBroken
-				m.trickCards = cloneTrick(s.TrickCards)
-				m.handPoints = cloneInts(s.HandPoints)
-				m.cumulativeScores = cloneInts(s.CumulativeScores)
-				m.handNumber = s.HandNumber
-				m.passDirection = s.PassDirection
-				m.handComplete = s.HandComplete
-				m.matchComplete = s.MatchComplete
-				m.lastTrickWinner = s.LastTrickWinner
-			}
-		})
-		if eng := m.bound.Engine(); eng != nil {
-			eng.WithState(func(s *game.State) {
-				m.seatOrder = make([]string, len(s.Players))
-				m.seatNames = make(map[string]string, len(s.Players))
-				for i, p := range s.Players {
-					m.seatOrder[i] = p.ID
-					name := p.ID
-					if p.DatabaseUser != nil {
-						name = p.DatabaseUser.Username
-					}
-					m.seatNames[p.ID] = name
-				}
-			})
+	m.SyncBase()
+	m.WithHiddenState(func(extra any) {
+		if s, ok := extra.(*logic.State); ok {
+			m.stage = s.Stage
+			m.heartsBroken = s.HeartsBroken
+			m.trickCards = maps.Clone(s.TrickCards)
+			m.handPoints = maps.Clone(s.HandPoints)
+			m.cumulativeScores = maps.Clone(s.CumulativeScores)
+			m.handNumber = s.HandNumber
+			m.passDirection = s.PassDirection
+			m.handComplete = s.HandComplete
+			m.matchComplete = s.MatchComplete
+			m.lastTrickWinner = s.LastTrickWinner
 		}
-	}
+	})
+	m.seatOrder = m.Base.SeatOrder()
+	m.seatNames = m.Base.SeatNames()
 
-	if m.selectedCardIdx >= len(m.baseState.Hand) {
-		m.selectedCardIdx = max(len(m.baseState.Hand)-1, 0)
-	}
 	for idx := range m.passSelected {
-		if idx >= len(m.baseState.Hand) {
+		if idx >= len(m.Base.Hand) {
 			delete(m.passSelected, idx)
 		}
 	}
@@ -137,21 +80,6 @@ func (m *Model) syncState() {
 	}
 }
 
-func cloneTrick(in map[string]deck.Card) map[string]deck.Card {
-	out := make(map[string]deck.Card, len(in))
-	maps.Copy(out, in)
-	return out
-}
-
-func cloneInts(in map[string]int) map[string]int {
-	out := make(map[string]int, len(in))
-	maps.Copy(out, in)
-	return out
-}
-
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(
-		listenForEvents(m.events),
-		gameview.ClockTick(),
-	)
+	return tea.Batch(m.Listen(), gameview.ClockTick())
 }

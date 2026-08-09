@@ -11,15 +11,15 @@ import (
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
+	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
 		return m, cmd
 	}
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
-	case gameMsg:
-		if m.idleRemoved(game.Event(msg)) {
+	case gameview.EventMsg:
+		if m.IdleRemoved(game.Event(msg)) {
 			// The engine took this seat for repeated missed turns. Quitting ends the
 			// bubbletea program, which is what tears the ssh session down and runs the
 			// ordinary leave path.
@@ -27,21 +27,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.lastErr = nil
 		m.syncState()
-		return m, listenForEvents(m.events)
+		return m, m.Listen()
 	case gameview.ClockTickMsg:
 		m.syncState()
-		if m.baseState.Phase != game.Playing {
+		if m.Base.Phase != game.Playing {
 			return m, nil
 		}
-		return m, gameview.ClockTickFor(m.baseState.TurnRemaining, m.baseState.MyTurn)
+		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
 	}
 	return m, nil
-}
-
-// idleRemoved reports whether ev says this session's own player lost their seat for
-// idling. Everyone else's removal is just another state change.
-func (m *Model) idleRemoved(ev game.Event) bool {
-	return ev.Type == game.EventPlayerIdle && m.bound != nil && ev.PlayerID == m.bound.PlayerID()
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -118,12 +112,12 @@ func (m *Model) stepRaise(direction int) {
 // confirm deals the next hand, leaves a finished match, or commits the pending raise.
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
 	if m.matchDone {
-		return m.returnToLobby()
+		return m, m.Leave()
 	}
 	if m.canDeal() {
 		return m.submit(logic.ActionNextHand{})
 	}
-	if m.raising && m.baseState.MyTurn {
+	if m.raising && m.Base.MyTurn {
 		amount := m.raiseAmount
 		m.raising = false
 		return m.submit(logic.ActionRaiseTo{Amount: amount})
@@ -143,10 +137,10 @@ func (m *Model) beginRaise() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
-	if m.bound == nil || !m.baseState.MyTurn {
+	if m.Bound == nil || !m.Base.MyTurn {
 		return m, nil
 	}
-	if err := m.bound.Submit(action); err != nil {
+	if err := m.Bound.Submit(action); err != nil {
 		m.lastErr = err
 		return m, nil
 	}
@@ -158,46 +152,14 @@ func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) unsubscribe() {
-	if m.bound != nil && m.events != nil {
-		if b := m.bound.Broadcaster(); b != nil {
-			b.Unsubscribe(m.events)
-		}
-		m.events = nil
-	}
-}
-
 func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 	if m.raising {
 		m.raising = false
 		return m, nil
 	}
-	if m.matchDone {
-		return m.returnToLobby()
-	}
-	p := views.SessionPlayer(m.global)
-	if p == nil {
-		m.unsubscribe()
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
-	}
-	m.global.LobbyManager.LeaveLobby(p)
-	m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+	return m, m.Leave()
 }
 
-func (m *Model) returnToLobby() (tea.Model, tea.Cmd) {
-	p := views.SessionPlayer(m.global)
-	var l any
-	if p != nil {
-		l = m.global.LobbyManager.FindLobbyByPlayer(p)
-	}
-	m.unsubscribe()
-	return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteLobby, Context: l} }
-}
-
-// Close releases the engine subscription when the router replaces this view or the
-// session ends. Without it a mid-game disconnect never runs the esc/enter paths,
-// so the listener goroutine stays parked on the event channel.
-func (m *Model) Close() {
-	m.unsubscribe()
-}
+// Close comes from the embedded Session. Without it a mid-game disconnect never runs
+// the esc/enter paths, so the listener goroutine stays parked on the event channel.
+var _ router.Closer = (*Model)(nil)
