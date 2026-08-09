@@ -57,8 +57,9 @@ func NewJoin(global router.GlobalContext) tea.Model {
 		global:    global,
 		textInput: ti,
 		// Full tables are hidden by default: the reason to open this screen is to
-		// find a seat, and a table with none is not one.
-		filter: lobby.BrowseFilter{OnlyWithRoom: true},
+		// find a seat, and a table with none is not one. Limit is the hard cap on
+		// how many matching tables we keep; only visibleRows show at once.
+		filter: lobby.BrowseFilter{OnlyWithRoom: true, Limit: lobby.MaxBrowseLimit},
 	}
 	m.refresh()
 	return m
@@ -85,14 +86,10 @@ func (m *joinModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, refreshTick()
 	}
 
-	// While typing a code the view keeps the keyboard to itself and only tracks
-	// resizes; otherwise the shared global handler gets first refusal.
-	if m.writingCode {
-		if size, ok := msg.(tea.WindowSizeMsg); ok {
-			m.global.Width = size.Width
-			m.global.Height = size.Height
-		}
-	} else if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
+	// The shared handler claims resizes, the theme switch and ctrl+c, and nothing
+	// else, so it is safe to run while a code is being typed: quitting has to work
+	// from a focused text field too.
+	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
 	}
 
@@ -247,47 +244,47 @@ func (m *joinModel) filterLine() string {
 	return m.global.Theme.Muted.Render(fmt.Sprintf("game: %s   mode: %s   showing: %s", game, m.modeLabel(), seats))
 }
 
-// Column widths for the table. Code is fixed at 8 by the generator, and the rest
-// are wide enough for the longest value each can hold.
+// Column widths match the leaderboard table style (fixed cells + " | " separators).
+// Codes stay off this list: JoinLobbyByCode never checks IsPrivate.
 const (
-	colGame     = 16
-	colSeats    = 7
-	colMode     = 6
-	colRating   = 6
-	tableIndent = "  "
+	colGame   = 16
+	colSeats  = 7
+	colMode   = 6
+	colRating = 4
+	// tableWidth is the printable width of one data row without the cursor gutter.
+	tableWidth = colGame + 3 + colSeats + 3 + colMode + 3 + colRating
 )
 
 func (m *joinModel) renderHeader() string {
-	return m.global.Theme.Muted.Render(tableIndent + strings.Join([]string{
-		styles.PadTruncate("CODE", 8),
-		styles.PadTruncate("GAME", colGame),
-		styles.PadTruncate("SEATS", colSeats),
-		styles.PadTruncate("MODE", colMode),
-		styles.PadTruncate("ELO", colRating),
-	}, " "))
+	header := m.global.Theme.SectionHeading.Render(
+		fmt.Sprintf(" %-*s | %-*s | %-*s | %s", colGame, "Game", colSeats, "Seats", colMode, "Mode", "Elo"),
+	)
+	rule := m.global.Theme.Dim.Render(" " + strings.Repeat("-", tableWidth))
+	return header + "\n" + rule
 }
 
 func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 	theme := m.global.Theme
 
-	mode := theme.Muted.Render(styles.PadTruncate("casual", colMode))
+	mode := styles.PadTruncate("casual", colMode)
+	modeRendered := theme.Muted.Render(mode)
 	if entry.Ranked {
-		mode = theme.Accented.Render(styles.PadTruncate("ranked", colMode))
+		modeRendered = theme.Accented.Render(styles.PadTruncate("ranked", colMode))
 	}
 
-	seats := fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers)
-	cells := strings.Join([]string{
-		styles.PadTruncate(entry.Code, 8),
+	seats := styles.PadTruncate(fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers), colSeats)
+	cells := fmt.Sprintf("%s | %s | %s | %s",
 		styles.PadTruncate(entry.GameName, colGame),
-		styles.PadTruncate(seats, colSeats),
-		mode,
+		seats,
+		modeRendered,
 		styles.PadTruncate(fmt.Sprint(entry.AvgElo), colRating),
-	}, " ")
+	)
 
+	marker := " "
 	if selected {
-		return theme.PlayerItemSelected.Render("> ") + cells
+		marker = theme.PlayerItemSelected.Render(">")
 	}
-	return tableIndent + cells
+	return marker + cells
 }
 
 // visibleWindow is the slice of rows on screen, scrolled to keep the cursor in view.
@@ -305,15 +302,17 @@ func (m *joinModel) renderList() string {
 	}
 
 	start, end := m.visibleWindow()
-	rows := make([]string, 0, end-start+1)
+	rows := make([]string, 0, visibleRows+3)
 	rows = append(rows, m.renderHeader())
 	for i := start; i < end; i++ {
 		rows = append(rows, m.renderRow(m.entries[i], !m.writingCode && m.cursor == i))
 	}
-	if len(m.entries) > visibleRows {
-		rows = append(rows, m.global.Theme.Dim.Render(
-			fmt.Sprintf("%s%d-%d of %d closest to your rating", tableIndent, start+1, end, len(m.entries))))
+	// Keep the list height stable so filters and the code field do not jump.
+	for pad := end - start; pad < visibleRows; pad++ {
+		rows = append(rows, strings.Repeat(" ", tableWidth+1))
 	}
+	rows = append(rows, m.global.Theme.Dim.Render(
+		fmt.Sprintf(" %d-%d of %d  ↑/↓ scroll", start+1, end, len(m.entries))))
 	return strings.Join(rows, "\n")
 }
 

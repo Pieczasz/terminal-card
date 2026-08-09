@@ -99,7 +99,7 @@ func TestFaceCells_EveryRowIsFaceWidth(t *testing.T) {
 	t.Parallel()
 
 	for _, c := range deck.StandardDeck() {
-		suit, _ := SuitGlyph(styles.NewTheme(true), c.Suit)
+		suit, _ := suitStyle(styles.NewTheme(true), c.Suit)
 		rows := FaceCells(c, suit)
 		require.Lenf(t, rows, FaceHeight, "%v row count", c)
 		for i, row := range rows {
@@ -147,12 +147,35 @@ func TestRenderFan_OnlyTheTopCardClosesItsEdge(t *testing.T) {
 
 	flat := stripANSI(RenderFan(theme, hand, -1))
 	assert.Equal(t, 1, strings.Count(flat, "╮"), "only the rightmost card closes")
-	assert.Equal(t, FanWidth(len(hand), -1), lg.Width(flat), "the fan is as wide as it claims")
+	wantWidth := 0
+	for i := range hand {
+		wantWidth += CardSlotWidth(i, len(hand), -1)
+	}
+	assert.Equal(t, wantWidth, lg.Width(flat), "the fan is as wide as it claims")
 
 	picked := stripANSI(RenderFan(theme, hand, 1))
 	assert.Equal(t, 2, strings.Count(picked, "╮"), "the picked card closes over its neighbour")
 
 	assert.Empty(t, RenderFan(theme, nil, -1), "no cards, nothing to draw")
+}
+
+// rankLabels replaced an exhaustive switch, so the compiler no longer catches a
+// missing rank — a new one would render as a blank label instead. deck.AllRanks is
+// the substitute check, and deck's own test keeps that list honest.
+func TestRankLabels_CoversAllDeckRanks(t *testing.T) {
+	t.Parallel()
+
+	require.Len(t, rankLabels, len(deck.AllRanks), "rankLabels has entries deck.AllRanks does not")
+	seen := make(map[string]deck.Rank, len(deck.AllRanks))
+	for _, rank := range deck.AllRanks {
+		label, ok := rankLabels[rank]
+		require.Truef(t, ok, "rankLabels missing deck.Rank %d", rank)
+		require.NotEmptyf(t, label, "rankLabels[%d] is empty", rank)
+
+		prev, dup := seen[label]
+		assert.Falsef(t, dup, "ranks %d and %d both render as %q", prev, rank, label)
+		seen[label] = rank
+	}
 }
 
 func stripANSI(s string) string {

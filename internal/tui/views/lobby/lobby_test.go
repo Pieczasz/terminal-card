@@ -8,7 +8,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	tea "charm.land/bubbletea/v2"
@@ -38,7 +37,7 @@ func leaderView(t *testing.T) (*model, *lobby.Lobby) {
 	t.Helper()
 	manager := lobby.NewManager(context.Background(), nil)
 	leaderUser := testUser(1, "alice")
-	leader := &player.Player{ID: "1", DatabaseUser: leaderUser}
+	leader := lobby.NewPlayer(leaderUser)
 
 	l, err := manager.New(leader,
 		lobby.WithCardGame(&db.Game{Name: testGameName}),
@@ -70,6 +69,8 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	default:
 		return tea.KeyPressMsg{Code: rune(key[0]), Text: key}
 	}
@@ -210,7 +211,7 @@ func TestHandleLobbyEvent_UnknownGameKeepsListening(t *testing.T) {
 	m.global.GameRegistry = game.NewRegistry() // game no longer registered
 
 	engine := game.NewEngine(&crazyeight.Rules{},
-		[]*player.Player{{ID: "1"}, {ID: "2"}}, nil)
+		[]*game.Player{{ID: "1"}, {ID: "2"}}, nil)
 
 	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventGameStarted, Payload: engine}))
 	require.NotNil(t, cmd, "listener must stay armed")

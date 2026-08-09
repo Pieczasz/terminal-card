@@ -8,13 +8,11 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestManager_New(t *testing.T) {
@@ -132,9 +130,7 @@ func TestManager_BrowseLobbiesCacheAndSorting(t *testing.T) {
 
 	_, _ = m.New(p1, WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
 
-	p2.DatabaseUser.Rankings = []db.Ranking{
-		{Game: db.Game{Name: "CrazyEights"}, Elo: 3000},
-	}
+	p2.Ratings = map[string]uint32{"CrazyEights": 3000}
 
 	public1 := m.BrowseLobbies(p2, BrowseFilter{})
 	assert.Len(t, public1, 1)
@@ -253,13 +249,13 @@ func TestManager_BrowseLobbies_ClosestRatingFirst(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 
 	p1 := mockPlayer("p1", 1) // average Elo = 1000
-	p1.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 1000}}
+	p1.Ratings = map[string]uint32{"Game": 1000}
 
 	p2 := mockPlayer("p2", 2) // average Elo = 2000
-	p2.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 2000}}
+	p2.Ratings = map[string]uint32{"Game": 2000}
 
 	p3 := mockPlayer("p3", 3)
-	p3.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 3000}}
+	p3.Ratings = map[string]uint32{"Game": 3000}
 
 	l1, _ := m.New(p1, WithPrivate(false), WithCardGame(&db.Game{Name: "Game"}))
 	l2, _ := m.New(p2, WithPrivate(false), WithCardGame(&db.Game{Name: "Game"}))
@@ -330,11 +326,11 @@ func FuzzJoinLobbyByCode(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, code string) {
 		m := NewManager(context.Background(), nil)
-		host := &player.Player{ID: "host", DatabaseUser: &db.User{Model: gorm.Model{ID: 1}}}
+		host := &game.Player{ID: "host", UserID: 1}
 		l, err := m.New(host, WithCardGame(&db.Game{Name: "Poker"}), WithMaxPlayers(4))
 		require.NoError(t, err)
 
-		joiner := &player.Player{ID: "joiner", DatabaseUser: &db.User{Model: gorm.Model{ID: 2}}}
+		joiner := &game.Player{ID: "joiner", UserID: 2}
 		err = m.JoinLobbyByCode(code, joiner)
 
 		if code == l.Code() {
@@ -383,18 +379,32 @@ func TestManager_ShutdownCtx(t *testing.T) {
 	})
 }
 
-// A non-positive timeout means "wait as long as it takes".
+// A non-positive timeout means "wait as long as it takes", so the only thing worth
+// asserting is the ordering: the drain must still be blocked while the write is in
+// flight, and must return once it finishes. The return value is true either way.
 func TestManager_WaitForFinalizers_ZeroTimeoutWaitsIndefinitely(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 	require.True(t, m.registerFinalizer())
 
+	drained := make(chan bool, 1)
 	go func() {
-		time.Sleep(50 * time.Millisecond)
-		m.finalizing.Done()
+		drained <- m.WaitForFinalizers(0)
 	}()
 
-	assert.True(t, m.WaitForFinalizers(0), "zero must wait for the write, not expire immediately")
+	select {
+	case <-drained:
+		t.Fatal("zero returned while a write was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	m.finalizing.Done()
+	select {
+	case ok := <-drained:
+		assert.True(t, ok)
+	case <-time.After(5 * time.Second):
+		t.Fatal("zero never returned after the write finished")
+	}
 }
 
 // The cache exists to absorb repeated browses - every player sitting on the browse screen
@@ -526,15 +536,12 @@ func TestManager_BrowseLobbies_IgnoresUnnamedRankings(t *testing.T) {
 	weak, err := m.New(mockPlayer("weak", 1), WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
 	require.NoError(t, err)
 	strongLeader := mockPlayer("strong", 2)
-	strongLeader.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "CrazyEights"}, Elo: 3000}}
+	strongLeader.Ratings = map[string]uint32{"CrazyEights": 3000}
 	strong, err := m.New(strongLeader, WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
 	require.NoError(t, err)
 
 	browser := mockPlayer("browser", 3)
-	browser.DatabaseUser.Rankings = []db.Ranking{
-		{Game: db.Game{Name: ""}, Elo: 1500},
-		{Game: db.Game{Name: "CrazyEights"}, Elo: 3000},
-	}
+	browser.Ratings = map[string]uint32{"CrazyEights": 3000}
 
 	public := m.BrowseLobbies(browser, BrowseFilter{})
 

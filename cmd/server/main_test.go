@@ -14,22 +14,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// fakeServer stands in for the wish server so serve's accept-loop failure paths are
-// reachable; a real *charmssh.Server blocks in Accept and never takes them.
 type fakeServer struct {
-	serveErr error
+	serveErr    error
+	shutdownErr error
+	closeErr    error
+	closed      bool
 }
 
 func (f *fakeServer) Serve(net.Listener) error       { return f.serveErr }
-func (f *fakeServer) Shutdown(context.Context) error { return nil }
+func (f *fakeServer) Shutdown(context.Context) error { return f.shutdownErr }
+
+func (f *fakeServer) Close() error {
+	f.closed = true
+	return f.closeErr
+}
 
 func testConfig() *config.Config {
 	return &config.Config{ServerHost: "127.0.0.1", ServerPort: 0, MaxConnections: 4}
 }
 
-// runServe calls serve and fails the test if it blocks, which is the regression
-// being guarded: the old code logged the error and then waited on the signal
-// channel forever, leaving a live process nobody could log in to.
 func runServe(t *testing.T, server sshServer) error {
 	t.Helper()
 	errCh := make(chan error, 1)
@@ -54,8 +57,30 @@ func TestServe_AcceptLoopFailureIsReturned(t *testing.T) {
 	assert.Contains(t, err.Error(), "accept loop failed")
 }
 
-// ErrServerClosed without a shutdown signal still means the server stopped serving,
-// but it must not be dressed up as an accept-loop failure.
+// Sessions outliving the drain window is what a card game does, so it must not stop
+// the shutdown: the listener and the connections have to be let go either way.
+func TestStopServer_ClosesOnEveryPath(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		server *fakeServer
+	}{
+		{name: "drained in time", server: &fakeServer{}},
+		{name: "drain deadline passed", server: &fakeServer{shutdownErr: context.DeadlineExceeded}},
+		{name: "close itself fails", server: &fakeServer{shutdownErr: context.DeadlineExceeded, closeErr: net.ErrClosed}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			stopServer(tt.server)
+
+			assert.True(t, tt.server.closed, "the server was never closed")
+		})
+	}
+}
+
 func TestServe_UnexpectedCleanStopIsReturned(t *testing.T) {
 	t.Parallel()
 	err := runServe(t, &fakeServer{serveErr: charmssh.ErrServerClosed})

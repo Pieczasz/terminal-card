@@ -9,6 +9,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/config"
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,9 +35,7 @@ func TestConnect_Success(t *testing.T) {
 				WithStartupTimeout(time.Second*60),
 		),
 	)
-	if err != nil {
-		t.Skipf("skipping test because Docker provider is not available: %v", err)
-	}
+	testutil.RequireContainer(t, err)
 	t.Cleanup(func() {
 		_ = postgresContainer.Terminate(ctx)
 	})

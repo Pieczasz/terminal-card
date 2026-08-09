@@ -125,7 +125,7 @@ func FaceLines(t styles.Theme, card deck.Card) []string {
 // row because a fan has to cut a card off mid-face, and slicing a styled string by
 // display column is a good way to cut an escape sequence in half.
 func FaceCells(card deck.Card, suit string) [][]string {
-	rank := rankLabel(card.Rank)
+	rank := RankLabel(card.Rank)
 	rows := make([][]string, 0, FaceHeight)
 	rows = append(rows, rankRow(rank, false))
 	rows = append(rows, artRows(card.Rank, suit)...)
@@ -213,11 +213,7 @@ func blankRow() []string {
 	return cells
 }
 
-// SuitGlyph is the one-column symbol for a suit, and the style it is drawn in.
-func SuitGlyph(t styles.Theme, suit deck.Suit) (string, lg.Style) {
-	return suitStyle(t, suit)
-}
-
+// suitStyle is the one-column symbol for a suit, and the style it is drawn in.
 func suitStyle(t styles.Theme, suit deck.Suit) (string, lg.Style) {
 	switch suit {
 	case deck.Hearts:
@@ -235,37 +231,18 @@ func suitStyle(t styles.Theme, suit deck.Suit) (string, lg.Style) {
 	}
 }
 
-func rankLabel(rank deck.Rank) string {
-	switch rank {
-	case deck.Ace:
-		return "A"
-	case deck.Two:
-		return "2"
-	case deck.Three:
-		return "3"
-	case deck.Four:
-		return "4"
-	case deck.Five:
-		return "5"
-	case deck.Six:
-		return "6"
-	case deck.Seven:
-		return "7"
-	case deck.Eight:
-		return "8"
-	case deck.Nine:
-		return "9"
-	case deck.Ten:
-		return "10"
-	case deck.Jack:
-		return "J"
-	case deck.Queen:
-		return "Q"
-	case deck.King:
-		return "K"
-	case deck.Joker:
-		return "Jk"
-	default:
-		return ""
-	}
+var rankLabels = map[deck.Rank]string{
+	deck.Ace: "A", deck.Two: "2", deck.Three: "3", deck.Four: "4",
+	deck.Five: "5", deck.Six: "6", deck.Seven: "7", deck.Eight: "8",
+	deck.Nine: "9", deck.Ten: "10", deck.Jack: "J", deck.Queen: "Q",
+	deck.King: "K", deck.Joker: "Jk",
+	deck.Zero: "0", deck.One: "1", deck.Skip: "SK", deck.Reverse: "RV",
+	deck.DrawTwo: "+2", deck.Wild: "W", deck.WildDrawFour: "+4",
+}
+
+// RankLabel is the rank as it is printed on a card, for callers drawing a card too
+// small to hold a face. It is the same table the faces use, so a mini card and the
+// card it stands for can never disagree about what rank they are.
+func RankLabel(rank deck.Rank) string {
+	return rankLabels[rank]
 }

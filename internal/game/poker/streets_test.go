@@ -9,7 +9,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -82,7 +81,7 @@ func TestBetting_FoldWinsHand(t *testing.T) {
 func TestBetting_CheckThroughFlop(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
@@ -130,7 +129,7 @@ func actCurrent(t *testing.T, engine *game.Engine) {
 func TestLeave_NonCurrentPlayerKeepsTurn(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
@@ -149,7 +148,7 @@ func TestLeave_NonCurrentPlayerKeepsTurn(t *testing.T) {
 func TestLeave_CurrentPlayerPassesTurnToValidActor(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
@@ -166,7 +165,7 @@ func TestLeave_CurrentPlayerPassesTurnToValidActor(t *testing.T) {
 func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{
+	players := []*game.Player{
 		{ID: "short", Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}, {Rank: deck.Ace, Suit: deck.Hearts}}},
 		{ID: "mid", Cards: []deck.Card{{Rank: deck.King, Suit: deck.Spades}, {Rank: deck.King, Suit: deck.Hearts}}},
 		{ID: "big", Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Clubs}}},
@@ -234,7 +233,7 @@ func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 func TestBuildSidePots_LayeredWithDeadMoney(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
 	state := game.NewState(rules, players, deck.StandardDeck())
 	extra := &State{
 		Folded:       map[string]bool{"p1": false, "p2": false, "p3": false, "p4": true},
@@ -270,7 +269,7 @@ func TestBuildSidePots_LayeredWithDeadMoney(t *testing.T) {
 func TestBuildSidePots_UncalledOvershoveReturned(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "p1"}, {ID: "p2"}}
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}}
 	state := game.NewState(rules, players, deck.StandardDeck())
 	extra := &State{
 		Folded:           map[string]bool{"p1": false, "p2": false},
@@ -320,7 +319,7 @@ func TestLeave_FoldsAndAwardsPot(t *testing.T) {
 func TestLeave_MultiwayContinues(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	players := []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
 	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
@@ -377,9 +376,9 @@ func TestSmoke_PassiveHands(t *testing.T) {
 		t.Run(fmt.Sprintf("%d-max", n), func(t *testing.T) {
 			t.Parallel()
 			rules := &Rules{}
-			players := make([]*player.Player, n)
+			players := make([]*game.Player, n)
 			for i := range players {
-				players[i] = &player.Player{ID: fmt.Sprintf("p%d", i)}
+				players[i] = &game.Player{ID: fmt.Sprintf("p%d", i)}
 			}
 			engine := game.NewEngine(rules, players, deck.StandardDeck())
 			require.NoError(t, engine.Start())
@@ -425,9 +424,9 @@ func chipsInPlay(extra *State) uint {
 
 func startTable(t testingT, n int) *game.Engine {
 	t.Helper()
-	players := make([]*player.Player, 0, n)
+	players := make([]*game.Player, 0, n)
 	for i := range n {
-		players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1)})
+		players = append(players, &game.Player{ID: fmt.Sprintf("p%d", i+1)})
 	}
 	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
@@ -567,11 +566,11 @@ func TestUnequalAllIns_ShortStackCannotWinSidePot(t *testing.T) {
 // each case's intent visible instead of restating a full literal every time.
 func sidePotState(t testingT, contributed map[string]uint, folded ...string) (*game.State, *State) {
 	t.Helper()
-	players := make([]*player.Player, 0, len(contributed))
+	players := make([]*game.Player, 0, len(contributed))
 	for id := range contributed {
-		players = append(players, &player.Player{ID: id})
+		players = append(players, &game.Player{ID: id})
 	}
-	slices.SortFunc(players, func(a, b *player.Player) int { return cmp.Compare(a.ID, b.ID) })
+	slices.SortFunc(players, func(a, b *game.Player) int { return cmp.Compare(a.ID, b.ID) })
 
 	extra := &State{
 		Folded:           map[string]bool{},
@@ -647,7 +646,7 @@ func TestBuildSidePots_DepartedContributorIsNotEligible(t *testing.T) {
 	state, extra := sidePotState(t, map[string]uint{"stayed": 100, "left": 100})
 
 	// Drop "left" from the seats, exactly as Engine.RemovePlayer does.
-	state.Players = slices.DeleteFunc(state.Players, func(p *player.Player) bool { return p.ID == "left" })
+	state.Players = slices.DeleteFunc(state.Players, func(p *game.Player) bool { return p.ID == "left" })
 
 	pots := buildSidePots(state, extra)
 

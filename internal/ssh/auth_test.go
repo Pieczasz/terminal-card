@@ -55,14 +55,17 @@ func (m *MockUserRepository) RegisterUserWithKey(ctx context.Context, username, 
 	return args.Get(0).(*db.User), args.Get(1).(*db.PublicKey), args.Error(2)
 }
 
-func (m *MockUserRepository) BestPlayers(_ context.Context, _ int) ([]db.Ranking, error) {
+func (m *MockUserRepository) BestPlayers(_ context.Context, _ int, _ string) ([]db.Ranking, error) {
 	return nil, nil
 }
+
 func (m *MockUserRepository) UserProfile(_ context.Context, _ uint) (*db.User, error) {
 	return nil, nil
 }
+
 func (m *MockUserRepository) UpdateUserActivity(_ context.Context, _ *db.User, _ *db.PublicKey) {
 }
+
 func (m *MockUserRepository) UserMatchHistory(_ context.Context, _ uint, _ int) ([]db.MatchParticipant, error) {
 	return nil, nil
 }

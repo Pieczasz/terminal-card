@@ -1,16 +1,17 @@
 package crazyeight
 
 import (
+	"strconv"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
@@ -21,26 +22,25 @@ import (
 
 func TestUpdate_Navigation(t *testing.T) {
 	t.Parallel()
-	m := Model{
-		baseState: gameview.BaseState{
+	m := Model{Session: gameview.Session{
+		Base: gameview.BaseState{
 			Hand: []deck.Card{
 				{Rank: deck.Two, Suit: deck.Spades},
 				{Rank: deck.Three, Suit: deck.Hearts},
 				{Rank: deck.Four, Suit: deck.Clubs},
 			},
 		},
-		selectedCardIdx: 0,
-	}
+	}}
 
 	// Right
 	msg := tea.KeyPressMsg{Code: rune("l"[0]), Text: "l"}
 	newM, _ := m.Update(msg)
-	assert.Equal(t, 1, newM.(*Model).selectedCardIdx)
+	assert.Equal(t, 1, newM.(*Model).Selected)
 
 	// Left
 	msg = tea.KeyPressMsg{Code: rune("h"[0]), Text: "h"}
 	newM, _ = newM.Update(msg)
-	assert.Equal(t, 0, newM.(*Model).selectedCardIdx)
+	assert.Equal(t, 0, newM.(*Model).Selected)
 }
 
 func TestUpdate_SuitPicking(t *testing.T) {
@@ -61,15 +61,64 @@ func TestUpdate_SuitPicking(t *testing.T) {
 	assert.Equal(t, 3, newM.(*Model).suitCursor)
 }
 
+// tableOnTurn seats the view as whichever player the engine put on turn, so the
+// test does not depend on where the deal landed.
+func tableOnTurn(t *testing.T) (*game.Engine, *Model) {
+	t.Helper()
+	players := []*game.Player{
+		{ID: "1", UserID: 1, Name: "alice"},
+		{ID: "2", UserID: 2, Name: "bob"},
+		{ID: "3", UserID: 3, Name: "carol"},
+	}
+	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
+	require.NoError(t, err)
+
+	global := router.GlobalContext{User: &db.User{Model: gorm.Model{ID: uint(id)}, Username: "hero"}}
+	m, ok := New(global, engine).(*Model)
+	require.True(t, ok)
+	require.True(t, m.Base.MyTurn, "the view has to be bound to the seat on turn")
+	return engine, m
+}
+
+// The suit picker is a modal over the hero's own turn. It used to survive the turn
+// being taken by the clock, leaving a picker on screen with nothing left to confirm
+// and the table hidden behind it.
+func TestSyncState_ClosesTheSuitPickerWhenTheTurnIsLost(t *testing.T) {
+	t.Parallel()
+	engine, m := tableOnTurn(t)
+
+	m.pickingSuit = true
+	m.suitCursor = 2
+	require.NoError(t, engine.SubmitAction(m.Bound.PlayerID(), logic.ActionDrawCard{}))
+	m.syncState()
+
+	require.False(t, m.Base.MyTurn, "drawing passes the turn on")
+	assert.False(t, m.pickingSuit, "the picker cannot outlive the turn it belongs to")
+}
+
+func TestSyncState_KeepsTheSuitPickerWhileTheTurnIsStillYours(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t)
+
+	m.pickingSuit = true
+	m.syncState()
+
+	assert.True(t, m.pickingSuit, "a refresh mid-turn must not close the picker")
+}
+
 // Mirrors the poker view's teardown test. Without it, a Close regression here parks
 // a listener goroutine and holds a broadcaster slot for every disconnected player,
 // and nothing in this package would notice.
 func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	t.Parallel()
 
-	players := []*player.Player{
-		{ID: "1", DatabaseUser: &db.User{Model: gorm.Model{ID: 1}, Username: "alice"}},
-		{ID: "2", DatabaseUser: &db.User{Model: gorm.Model{ID: 2}, Username: "bob"}},
+	players := []*game.Player{
+		{ID: "1", UserID: 1, Name: "alice"},
+		{ID: "2", UserID: 2, Name: "bob"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
@@ -82,8 +131,8 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 
 	// Park a listener exactly as the Bubble Tea runtime would. Init returns a batch
 	// that also drives the animation tick, so take the event listener directly.
-	// Built here because Close writes m.events.
-	listen := listenForEvents(m.events)
+	// Built here because Close writes m.Events.
+	listen := m.Listen()
 	done := make(chan tea.Msg, 1)
 	go func() { done <- listen() }()
 

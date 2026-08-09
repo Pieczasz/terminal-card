@@ -16,7 +16,7 @@ import (
 )
 
 func TestMatchRepositoryRecordMatch(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.PublicKey{})
+	gormDB := testutil.SetupTestDB(t)
 
 	// Seed data
 	game := &db.Game{Name: "Crazy Eights"}
@@ -45,7 +45,7 @@ func TestMatchRepositoryRecordMatch(t *testing.T) {
 }
 
 func TestMatchRepositoryFinalizeRankedMatch(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.Ranking{}, &db.PublicKey{})
+	gormDB := testutil.SetupTestDB(t)
 
 	u1 := &db.User{Username: "final1"}
 	u2 := &db.User{Username: "final2"}
@@ -55,7 +55,7 @@ func TestMatchRepositoryFinalizeRankedMatch(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	err := repo.FinalizeRankedMatch(ctx, "Crazy Eights", []uint{u1.ID, u2.ID})
+	err := repo.FinalizeRankedMatch(ctx, "Crazy Eights", []uint{u1.ID, u2.ID}, nil)
 	require.NoError(t, err)
 
 	var game db.Game
@@ -71,7 +71,7 @@ func TestMatchRepositoryFinalizeRankedMatch(t *testing.T) {
 }
 
 func TestMatchRepositoryGetOrCreateGame(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.Game{})
+	gormDB := testutil.SetupTestDB(t)
 	repo := repository.NewMatchRepository(gormDB)
 
 	ctx := context.Background()
@@ -85,7 +85,7 @@ func TestMatchRepositoryGetOrCreateGame(t *testing.T) {
 }
 
 func TestMatchRepositoryRecordMatchTransactionError(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{}, &db.PublicKey{})
+	gormDB := testutil.SetupTestDB(t)
 	repo := repository.NewMatchRepository(gormDB)
 
 	ctx := context.Background()
@@ -103,8 +103,7 @@ func TestMatchRepositoryRecordMatchTransactionError(t *testing.T) {
 // the profile screen renders from. The write and the read are in different
 // repositories, so each being correct on its own does not prove the pair is.
 func TestRankedMatchReadsBackAsRankedInHistory(t *testing.T) {
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.Game{}, &db.Match{},
-		&db.MatchParticipant{}, &db.PublicKey{}, &db.Ranking{})
+	gormDB := testutil.SetupTestDB(t)
 
 	u1 := &db.User{Username: "winner"}
 	u2 := &db.User{Username: "loser"}
@@ -115,7 +114,7 @@ func TestRankedMatchReadsBackAsRankedInHistory(t *testing.T) {
 	users := repository.NewUserRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, matches.FinalizeRankedMatch(ctx, "Poker", []uint{u1.ID, u2.ID}))
+	require.NoError(t, matches.FinalizeRankedMatch(ctx, "Poker", []uint{u1.ID, u2.ID}, nil))
 
 	var stored db.Match
 	require.NoError(t, gormDB.First(&stored).Error)

@@ -24,10 +24,10 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	require.Equal(t, 1, broadcaster.Len(), "the view subscribed on construction")
 
 	// Park a listener on the channel exactly as the Bubble Tea runtime would. The
-	// command is built here, on this goroutine, because Close writes m.events. It is
-	// listenForEvents rather than Init: Init also batches the turn-clock tick, and
+	// command is built here, on this goroutine, because Close writes m.Events. It is
+	// Session.Listen rather than Init: Init also batches the turn-clock tick, and
 	// this test is about the subscription alone.
-	listen := listenForEvents(m.events)
+	listen := m.Listen()
 	done := make(chan tea.Msg, 1)
 	go func() { done <- listen() }()
 
@@ -178,11 +178,11 @@ func TestHandOverHint_NamesTheHandAboutToBeDealt(t *testing.T) {
 	m.matchDone = false
 	m.handNumber = 1
 
-	m.baseState.MyTurn = true
+	m.Base.MyTurn = true
 	assert.Contains(t, m.handOverHint(), "deal hand 2", "the hero is on the button")
 
-	m.baseState.MyTurn = false
-	m.baseState.CurrentPlayer = "bob"
+	m.Base.MyTurn = false
+	m.Base.CurrentPlayer = "bob"
 	assert.Contains(t, m.handOverHint(), "hand 2", "and bob is when he is")
 }
 
@@ -232,7 +232,7 @@ func TestIdleRemoved_MatchesOnlyOurOwnSeat(t *testing.T) {
 			engine, m := startedTable(t)
 			t.Cleanup(engine.Close)
 
-			assert.Equal(t, tt.want, m.idleRemoved(tt.event))
+			assert.Equal(t, tt.want, m.IdleRemoved(tt.event))
 		})
 	}
 }
@@ -243,7 +243,7 @@ func TestUpdate_IdleRemovalQuitsTheSession(t *testing.T) {
 	engine, m := startedTable(t)
 	t.Cleanup(engine.Close)
 
-	_, cmd := m.Update(gameMsg(game.Event{Type: game.EventPlayerIdle, PlayerID: "1"}))
+	_, cmd := m.Update(gameview.EventMsg(game.Event{Type: game.EventPlayerIdle, PlayerID: "1"}))
 
 	require.NotNil(t, cmd)
 	_, isQuit := cmd().(tea.QuitMsg)
@@ -278,45 +278,22 @@ func TestSyncState_CarriesTheTurnCountdown(t *testing.T) {
 	engine, m := startedTable(t)
 	t.Cleanup(engine.Close)
 
-	assert.Positive(t, m.baseState.TurnRemaining, "a started hand has a clock running")
-	assert.LessOrEqual(t, m.baseState.TurnRemaining, game.DefaultTurnTimeout)
+	assert.Positive(t, m.Base.TurnRemaining, "a started hand has a clock running")
+	assert.LessOrEqual(t, m.Base.TurnRemaining, game.DefaultTurnTimeout)
 }
 
 // heroOnTurn advances the hand until the hero is the one to act. The button is dealt
 // at random, so a test that needs the hero on turn cannot assume it.
 func heroOnTurn(t *testing.T, engine *game.Engine, m *Model) {
 	t.Helper()
-	if m.baseState.MyTurn {
+	if m.Base.MyTurn {
 		return
 	}
 	// Heads-up preflop the small blind acts first; calling passes the turn to the
 	// big blind without ending the hand.
 	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionCall{}))
 	m.syncState()
-	require.True(t, m.baseState.MyTurn, "the hero has to be on turn for this test to mean anything")
-}
-
-// A view that never reads its event channel shows a frozen table while the hand plays on
-// without it.
-func TestListenForEvents_DeliversWhatTheEngineBroadcasts(t *testing.T) {
-	t.Parallel()
-
-	events := make(chan game.Event, 1)
-	events <- game.Event{Type: game.EventTurnAdvanced}
-
-	msg := listenForEvents(events)()
-
-	require.IsType(t, gameMsg{}, msg)
-	assert.Equal(t, game.EventTurnAdvanced, game.Event(msg.(gameMsg)).Type)
-}
-
-func TestListenForEvents_EndsQuietlyWithoutAFeed(t *testing.T) {
-	t.Parallel()
-	assert.Nil(t, listenForEvents(nil)(), "no feed is not an event")
-
-	closed := make(chan game.Event)
-	close(closed)
-	assert.Nil(t, listenForEvents(closed)(), "a closed feed ends the listener")
+	require.True(t, m.Base.MyTurn, "the hero has to be on turn for this test to mean anything")
 }
 
 // The error line is what tells a player their table has gone quiet, so it must stay empty
@@ -327,7 +304,7 @@ func TestNew_HealthyTableReportsNoError(t *testing.T) {
 	t.Cleanup(engine.Close)
 
 	require.NoError(t, m.lastErr, "a successful subscription is not an error")
-	assert.NotNil(t, m.events, "and the feed is live")
+	assert.NotNil(t, m.Events, "and the feed is live")
 }
 
 // matchDone is what turns esc from "forfeit" into "leave", and what stops the hero being
@@ -380,7 +357,7 @@ func TestCanAllInAndHeroBusted(t *testing.T) {
 			hero := m.heroSeat()
 			require.NotNil(t, hero)
 			hero.Chips = tt.chips
-			m.baseState.MyTurn = tt.myTurn
+			m.Base.MyTurn = tt.myTurn
 			m.handDone = tt.handDone
 
 			assert.Equal(t, tt.wantAllIn, m.canAllIn(), "canAllIn")
@@ -462,7 +439,7 @@ func TestSubmit(t *testing.T) {
 		t.Parallel()
 		engine, m := startedTable(t)
 		t.Cleanup(engine.Close)
-		m.baseState.MyTurn = false
+		m.Base.MyTurn = false
 		m.lastErr = nil
 
 		_, cmd := m.submit(logic.ActionFold{})
@@ -506,7 +483,7 @@ func TestView_CountdownIsDrawnOnTheSeatOnTurn(t *testing.T) {
 
 	rendered := stripANSI(m.View().Content)
 
-	clock := gameview.FormatTurnClock(m.baseState.TurnRemaining, m.baseState.MyTurn)
+	clock := gameview.FormatTurnClock(m.Base.TurnRemaining, m.Base.MyTurn)
 	require.NotEmpty(t, clock, "a started hand has a clock running")
 	assert.Equal(t, 1, strings.Count(rendered, clock),
 		"the countdown is drawn exactly once, on the seat that owes an action")

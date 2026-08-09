@@ -6,7 +6,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,7 +13,7 @@ import (
 
 func createTestState() *game.State {
 	rules := &Rules{}
-	players := []*player.Player{
+	players := []*game.Player{
 		{ID: "p1", Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}, {Rank: deck.King, Suit: deck.Hearts}}},
 		{ID: "p2", Cards: []deck.Card{{Rank: deck.Three, Suit: deck.Diamonds}, {Rank: deck.Queen, Suit: deck.Clubs}}},
 		{ID: "p3", Cards: []deck.Card{{Rank: deck.Four, Suit: deck.Clubs}, {Rank: deck.Jack, Suit: deck.Spades}}},
@@ -276,9 +275,9 @@ func TestRules_Standings(t *testing.T) {
 func BenchmarkPlayFullMatch(b *testing.B) {
 	for _, seats := range []int{2, 6, 9} {
 		b.Run(fmt.Sprintf("seats=%d", seats), func(b *testing.B) {
-			players := make([]*player.Player, 0, seats)
+			players := make([]*game.Player, 0, seats)
 			for i := range seats {
-				players = append(players, &player.Player{ID: fmt.Sprintf("p%d", i+1)})
+				players = append(players, &game.Player{ID: fmt.Sprintf("p%d", i+1)})
 			}
 
 			b.ReportAllocs()
@@ -390,7 +389,7 @@ func TestRules_TimeoutAction(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			state := &game.State{
-				Players:     []*player.Player{{ID: "hero"}, {ID: "villain"}},
+				Players:     []*game.Player{{ID: "hero"}, {ID: "villain"}},
 				CurrentTurn: tt.turn,
 				Extra:       tt.extra,
 			}
@@ -404,7 +403,7 @@ func TestRules_TimeoutAction(t *testing.T) {
 func TestRules_TimeoutAction_IsAcceptedByValidateAction(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	engine := game.NewEngine(rules, []*player.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}, rules.InitialDeck())
+	engine := game.NewEngine(rules, []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}, rules.InitialDeck())
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
 

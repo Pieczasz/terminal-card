@@ -3,7 +3,6 @@ package poker
 import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 // Pot is a main or side pot with players eligible to win it.
@@ -38,7 +37,7 @@ type State struct {
 
 	Pots         []Pot
 	HandComplete bool
-	Winners      []*player.Player
+	Winners      []*game.Player
 	// ReachedShowdown is true only when the hand was actually shown down. A pot
 	// nobody contested is won face-down, so the winner's cards must stay hidden -
 	// the match has more hands to play and the table would be reading them.

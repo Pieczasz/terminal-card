@@ -61,16 +61,6 @@ type rankedCard struct {
 	suit deck.Suit
 }
 
-// rankValue maps deck.Joker onto 14, making it indistinguishable from an ace. That is
-// unreachable today (StandardDeck stops at King), and dealing jokers would mean
-// teaching wildness to rankCounts, straightHigh and bestFlush too.
-func rankValue(r deck.Rank) int {
-	if r == deck.Ace {
-		return 14
-	}
-	return int(r) + 1
-}
-
 // EvaluateHand evaluates up to 7 cards and returns a score that can be directly compared.
 func EvaluateHand(cards []deck.Card) int {
 	return ClassifyHand(cards).Score()
@@ -90,7 +80,7 @@ func ClassifyHand(cards []deck.Card) HandValue {
 func normalizeCards(cards []deck.Card) []rankedCard {
 	hand := make([]rankedCard, 0, len(cards))
 	for _, c := range cards {
-		hand = append(hand, rankedCard{rank: rankValue(c.Rank), suit: c.Suit})
+		hand = append(hand, rankedCard{rank: deck.RankValue(c.Rank), suit: c.Suit})
 	}
 	slices.SortFunc(hand, func(a, b rankedCard) int {
 		return cmp.Compare(b.rank, a.rank)

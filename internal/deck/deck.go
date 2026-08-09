@@ -49,9 +49,6 @@ func (p *Pile) Draw() (Card, bool) {
 }
 
 func (p *Pile) DrawNCards(cardsToDraw int) ([]Card, bool) {
-	// A negative count used to reach make([]Card, n) and panic the server; any
-	// Rules implementation returning a bad InitialDealCount would take the process
-	// down at game start.
 	if cardsToDraw < 0 || cardsToDraw > len(p.cards) {
 		return nil, false
 	}

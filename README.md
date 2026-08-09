@@ -6,13 +6,14 @@
 
 Terminal Card is an SSH server for multiplayer card games. Built with Go and the [Charm](https://charm.sh/) ecosystem (Bubble Tea, Wish), it gives players a rich TUI over plain SSH.
 
-**v0.1** ships **Crazy Eights** and **No-Limit Texas Hold'em** (one ranked hand per match; rematch via lobby Ready). Chips are numeric stacks.
+**v0.1** ships five games: **Crazy Eights**, **No-Limit Texas Hold'em**, **Uno**, **Hearts** and **Gin Rummy** (one ranked match at a time; rematch via lobby Ready). Chips are numeric stacks.
 
 ## Features
 
 - **SSH multiplayer** – connect with any SSH client
 - **Rich TUI** - Bubble Tea + Lip Gloss
-- **Crazy Eights & Poker (NLHE)** – up to nine seats at Hold'em
+- **Five games** – Crazy Eights, Poker (NLHE, up to nine seats), Uno (2–10), Hearts (4), Gin Rummy (2)
+- **Turn clock** – 30s per turn; the rules supply a safe move, and a seat that keeps idling is taken
 - **Persistent stats** – PostgreSQL users, matches, and ELO
 - **Observability** – OpenTelemetry logs, metrics, and traces into a built-in Grafana + Loki/Tempo/Prometheus stack
 - **Pluggable games** - register a `game.Module` + TUI view factory
@@ -51,7 +52,7 @@ The LGTM stack (Alloy -> Loki/Tempo/Prometheus + Grafana) starts by default with
 5. `docker compose up -d --build`.
 6. Connect: `ssh yourname@your-host` (or `-p <mapped-port>`).
 7. Optional: cron backups - install `zstd`, then schedule `./scripts/backup.sh` (see script header). Protect the `backups/` directory.
-8. Smoke-test: register with a new key -> create a lobby -> play Crazy Eights and Poker -> disconnect mid-hand -> reconnect -> check profile/leaderboard.
+8. Smoke-test: register with a new key -> create a lobby -> play each game -> disconnect mid-hand -> reconnect -> check profile/leaderboard.
 
 Notes:
 

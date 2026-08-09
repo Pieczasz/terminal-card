@@ -32,6 +32,13 @@ type Theme struct {
 	SuitRed  color.Color
 	SuitDark color.Color
 
+	// Uno colors are four mutually distinct tones; SuitRed/SuitDark stay as
+	// real playing-card convention and must not be repurposed.
+	UnoRed    color.Color
+	UnoYellow color.Color
+	UnoGreen  color.Color
+	UnoBlue   color.Color
+
 	TurnFg color.Color
 	TurnBg color.Color
 
@@ -83,6 +90,11 @@ func NewTheme(isDark bool) Theme {
 		CardBack: pick(lg.Color("#6A6A6A"), lg.Color("#8A8A8A")),
 		SuitRed:  pick(lg.Color("#C0261F"), lg.Color("#FF9494")),
 		SuitDark: pick(lg.Color("#1A1A1A"), lg.Color("#DDDDDD")),
+
+		UnoRed:    pick(lg.Color("#C0261F"), lg.Color("#FF9494")),
+		UnoYellow: pick(lg.Color("#7A6100"), lg.Color("#FFD700")),
+		UnoGreen:  pick(lg.Color("#0F7A3D"), lg.Color("#6FD48A")),
+		UnoBlue:   pick(lg.Color("#1F4FA8"), lg.Color("#A8C5FF")),
 
 		TurnFg: pick(lg.Color("#FFFFFF"), lg.Color("#1A1A1A")),
 		TurnBg: pick(lg.Color("#6B4F1D"), lg.Color("#E8D5A3")),

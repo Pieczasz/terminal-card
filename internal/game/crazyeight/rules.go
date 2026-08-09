@@ -8,7 +8,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 type Rules struct{}
@@ -64,12 +63,6 @@ type ActionDrawCard struct{}
 
 func (a ActionDrawCard) Name() string { return "crazyeight.DrawCard" }
 
-type ActionPickSuit struct {
-	Suit deck.Suit
-}
-
-func (a ActionPickSuit) Name() string { return "crazyeight.PickSuit" }
-
 func validSuit(s deck.Suit) bool {
 	switch s {
 	case deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs:
@@ -120,10 +113,6 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		// Always legal: with cards available it draws, otherwise it is a forced
 		// pass so an exhausted board can never soft-lock the turn loop.
 		return nil
-
-	case ActionPickSuit:
-		// Suit changes must go through ActionPlayCard when playing an eight.
-		return errors.New("pick suit is not a standalone action")
 	}
 
 	return errors.New("unknown action")
@@ -140,17 +129,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionPlayCard:
 		card := action.Cards[0]
 
-		newHand := make([]deck.Card, 0, len(p.Cards))
-		removed := false
-		for _, c := range p.Cards {
-			if c == card && !removed {
-				removed = true
-				continue
-			}
-			newHand = append(newHand, c)
-		}
-		p.Cards = newHand
-
+		p.Cards = deck.RemoveOne(p.Cards, card)
 		state.Discard.AddCard(card)
 
 		if card.Rank != deck.Eight {
@@ -191,11 +170,18 @@ func reshuffleDiscardIntoDeck(state *game.State) error {
 	state.Deck.AddCard(rest...)
 	if err := state.Deck.Shuffle(); err != nil {
 		// Restore prior piles so we never leave an unshuffled stock in play.
-		state.Discard.AddCard(rest...)
+		state.Discard = restoreDiscard(rest, top)
 		state.Deck = deck.New(nil)
 		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
 	}
 	return nil
+}
+
+// restoreDiscard puts the pile back the way it was found, top card last. Peek and
+// Draw read the end of the pile, so rebuilding it the other way round rotates the
+// discard and leaves a card nobody played sitting in play.
+func restoreDiscard(rest []deck.Card, top deck.Card) *deck.Pile {
+	return deck.New(append(rest, top))
 }
 
 func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
@@ -219,6 +205,12 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 // OnPlayerLeave returns the departing player's cards to the stock so the deck
 // stays whole; the engine removes the player afterward.
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
+	// Passes counts turns nobody could draw on, and the returned hand refills the
+	// stock, so the count is stale. Left alone it would also be measured against a
+	// table one seat smaller and read as a deadlock that never happened.
+	if extra, ok := state.Extra.(*State); ok {
+		extra.Passes = 0
+	}
 	for _, p := range state.Players {
 		if p.ID == playerID {
 			state.Deck.AddCard(p.Cards...)
@@ -234,12 +226,18 @@ func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 // AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
-func (r *Rules) Standings(state *game.State) []*player.Player {
+func (r *Rules) Standings(state *game.State) []*game.Player {
 	standings := slices.Clone(state.Players)
 
-	slices.SortStableFunc(standings, func(a, b *player.Player) int {
+	slices.SortStableFunc(standings, func(a, b *game.Player) int {
 		return len(a.Cards) - len(b.Cards)
 	})
 
 	return standings
+}
+
+// StandingScore is the value Standings sorted by, so two players left holding the
+// same number of cards are reported as the draw they are.
+func (r *Rules) StandingScore(_ *game.State, p *game.Player) int {
+	return len(p.Cards)
 }

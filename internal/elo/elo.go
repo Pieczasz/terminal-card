@@ -1,8 +1,10 @@
 package elo
 
 import (
+	"cmp"
 	"log/slog"
 	"math"
+	"slices"
 )
 
 const (
@@ -32,6 +34,7 @@ func ToUint32(rating float64) uint32 {
 type Player struct {
 	ID     string
 	Rating float64
+	Place  int
 }
 
 func ExpectedScore(ratingA, ratingB float64) float64 {
@@ -41,7 +44,6 @@ func ExpectedScore(ratingA, ratingB float64) float64 {
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
 // https://www.tckerrigan.com/Misc/Multiplayer_Elo/
 // The player slice MUST be sorted by performance, from 1st place (index 0) to last place (index n-1).
-// It returns a map of Player ID to their new rating.
 func Calculate(players []Player) map[string]float64 {
 	n := len(players)
 	newRatings := make(map[string]float64, n)
@@ -50,31 +52,64 @@ func Calculate(players []Player) map[string]float64 {
 		return newRatings
 	}
 	if n == 1 {
-		newRatings[players[0].ID] = players[0].Rating
+		newRatings[players[0].ID] = ClampRating(players[0].Rating)
 		return newRatings
 	}
 
-	// SME scores each player against their immediate neighbors only: a win over the
-	// one below, a loss to the one above. The two ends have a single comparison.
-	for i, player := range players {
-		var totalDelta float64
+	ordered := slices.Clone(players)
+	normalizeTies(ordered)
 
-		if i < n-1 {
-			opponent := players[i+1]
-			expectedWin := ExpectedScore(player.Rating, opponent.Rating)
-			deltaWin := KFactor * (1.0 - expectedWin)
-			totalDelta += deltaWin
-		}
+	deltas := make([]float64, n)
+	for i := range n - 1 {
+		moved := capTransfer(
+			rawTransfer(ordered[i], ordered[i+1]),
+			ordered[i].Rating+deltas[i],
+			ordered[i+1].Rating+deltas[i+1],
+		)
+		deltas[i] += moved
+		deltas[i+1] -= moved
+	}
 
-		if i > 0 {
-			opponent := players[i-1]
-			expectedLoss := ExpectedScore(player.Rating, opponent.Rating)
-			deltaLoss := KFactor * (0.0 - expectedLoss)
-			totalDelta += deltaLoss
-		}
-
-		newRatings[player.ID] = ClampRating(player.Rating + totalDelta)
+	for i, player := range ordered {
+		newRatings[player.ID] = ClampRating(player.Rating + deltas[i])
 	}
 
 	return newRatings
+}
+
+func normalizeTies(players []Player) {
+	for start := 0; start < len(players); {
+		end := start + 1
+		for end < len(players) && players[end].Place != 0 && players[end].Place == players[start].Place {
+			end++
+		}
+		if end-start > 1 {
+			slices.SortFunc(players[start:end], func(a, b Player) int {
+				if c := cmp.Compare(b.Rating, a.Rating); c != 0 {
+					return c
+				}
+				return cmp.Compare(a.ID, b.ID)
+			})
+		}
+		start = end
+	}
+}
+
+func rawTransfer(upper, lower Player) float64 {
+	score := 1.0
+	if drew(upper, lower) {
+		score = 0.5
+	}
+	return KFactor * (score - ExpectedScore(upper.Rating, lower.Rating))
+}
+
+func capTransfer(moved, gainsRating, losesRating float64) float64 {
+	if moved < 0 {
+		return -min(-moved, max(MaxRating-losesRating, 0), max(gainsRating-MinRating, 0))
+	}
+	return min(moved, max(MaxRating-gainsRating, 0), max(losesRating-MinRating, 0))
+}
+
+func drew(a, b Player) bool {
+	return a.Place != 0 && a.Place == b.Place
 }

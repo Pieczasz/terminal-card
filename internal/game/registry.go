@@ -6,9 +6,6 @@ import (
 	"sync"
 )
 
-// Module describes a playable card game plugin: display name, stable slug, and
-// rules factory. The slug is what the presentation layer keys its own routing on;
-// this package deliberately knows nothing about routes.
 type Module struct {
 	Name    string
 	Slug    string // e.g. "crazy_eights"
@@ -25,7 +22,6 @@ func NewRegistry() *Registry {
 	return &Registry{modules: make(map[string]Module)}
 }
 
-// RegisterModule registers a game module as the single source of truth for name, slug, and factory.
 func (r *Registry) RegisterModule(m Module) {
 	if m.Name == "" || m.Slug == "" || m.Factory == nil {
 		panic("game.RegisterModule: Name, Slug, and Factory are required")

@@ -8,7 +8,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/crazyeight"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
@@ -20,11 +19,11 @@ import (
 // per-frame cost every client pays, so it is the number that decides table capacity.
 func benchTable(b *testing.B, n int) *Model {
 	b.Helper()
-	players := make([]*player.Player, 0, n)
+	players := make([]*game.Player, 0, n)
 	for i := range n {
-		players = append(players, &player.Player{
-			ID:           fmt.Sprint(i + 1),
-			DatabaseUser: &db.User{Model: gorm.Model{ID: uint(i + 1)}, Username: fmt.Sprintf("p%d", i+1)},
+		players = append(players, &game.Player{
+			ID:     fmt.Sprint(i + 1),
+			UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
