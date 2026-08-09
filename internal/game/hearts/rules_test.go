@@ -7,20 +7,19 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func fourPlayers(hands ...[]deck.Card) []*player.Player {
-	out := make([]*player.Player, playerCount)
+func fourPlayers(hands ...[]deck.Card) []*game.Player {
+	out := make([]*game.Player, playerCount)
 	for i := range playerCount {
 		cards := []deck.Card{}
 		if i < len(hands) {
 			cards = hands[i]
 		}
-		out[i] = &player.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards}
+		out[i] = &game.Player{ID: fmt.Sprintf("p%d", i+1), Cards: cards}
 	}
 	return out
 }
@@ -220,6 +219,108 @@ func TestRules_ApplyAction_Play_BreaksHeartsAndTrickWinner(t *testing.T) {
 	assert.Equal(t, 1, *state.OverrideNextTurn)
 }
 
+// The negative case for HeartsBroken: a trick with no heart in it must leave hearts
+// unbroken, or leading a heart becomes legal a trick too early.
+func TestRules_ApplyAction_Play_TrickWithoutHeartsLeavesThemUnbroken(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createTestState(
+		[]deck.Card{{Rank: deck.Five, Suit: deck.Diamonds}},
+		[]deck.Card{{Rank: deck.Ace, Suit: deck.Diamonds}},
+		[]deck.Card{{Rank: deck.Three, Suit: deck.Clubs}},
+		[]deck.Card{{Rank: deck.Two, Suit: deck.Diamonds}},
+	)
+	extra := state.Extra.(*State)
+	extra.TricksPlayed = 1
+
+	for seat, card := range []deck.Card{
+		{Rank: deck.Five, Suit: deck.Diamonds},
+		{Rank: deck.Ace, Suit: deck.Diamonds},
+		{Rank: deck.Three, Suit: deck.Clubs},
+		{Rank: deck.Two, Suit: deck.Diamonds},
+	} {
+		state.CurrentTurn = seat
+		rules.ApplyAction(state, ActionPlayCard{Card: card})
+		require.NoError(t, rules.AfterAction(state, ActionPlayCard{Card: card}))
+	}
+
+	assert.False(t, extra.HeartsBroken, "no heart was played")
+	assert.Zero(t, extra.HandPoints["p2"], "a heartless trick scores nothing")
+}
+
+// The led suit is fixed by the first card of the trick, not the last. A higher card
+// of another suit does not win, however high it is.
+func TestRules_AfterAction_Play_LedSuitIsTheFirstCardNotTheLast(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createTestState(
+		[]deck.Card{{Rank: deck.Nine, Suit: deck.Clubs}},
+		[]deck.Card{{Rank: deck.Ace, Suit: deck.Diamonds}},
+		[]deck.Card{{Rank: deck.King, Suit: deck.Clubs}},
+		[]deck.Card{{Rank: deck.Two, Suit: deck.Diamonds}},
+	)
+	extra := state.Extra.(*State)
+	extra.TricksPlayed = 1
+
+	for seat, card := range []deck.Card{
+		{Rank: deck.Nine, Suit: deck.Clubs},   // leads clubs
+		{Rank: deck.Ace, Suit: deck.Diamonds}, // higher rank, wrong suit
+		{Rank: deck.King, Suit: deck.Clubs},   // highest club: takes the trick
+		{Rank: deck.Two, Suit: deck.Diamonds}, // last card, and its suit must not lead
+	} {
+		state.CurrentTurn = seat
+		rules.ApplyAction(state, ActionPlayCard{Card: card})
+		require.NoError(t, rules.AfterAction(state, ActionPlayCard{Card: card}))
+	}
+
+	assert.Equal(t, "p3", extra.LastTrickWinner, "the king of clubs beats the ace of diamonds")
+	require.NotNil(t, state.OverrideNextTurn)
+	assert.Equal(t, 2, *state.OverrideNextTurn, "the trick winner leads the next one")
+}
+
+func TestThreeLowestCards(t *testing.T) {
+	t.Parallel()
+
+	t.Run("picks the three lowest by rank", func(t *testing.T) {
+		t.Parallel()
+		hand := []deck.Card{
+			{Rank: deck.King, Suit: deck.Spades},
+			{Rank: deck.Three, Suit: deck.Hearts},
+			{Rank: deck.Ace, Suit: deck.Clubs},
+			{Rank: deck.Two, Suit: deck.Diamonds},
+			{Rank: deck.Ten, Suit: deck.Clubs},
+			{Rank: deck.Four, Suit: deck.Spades},
+		}
+		got := threeLowestCards(hand)
+		assert.Equal(t, []deck.Card{
+			{Rank: deck.Two, Suit: deck.Diamonds},
+			{Rank: deck.Three, Suit: deck.Hearts},
+			{Rank: deck.Four, Suit: deck.Spades},
+		}, got, "ace is high in Hearts, so it is never among the lowest")
+	})
+
+	t.Run("same-rank cards break the tie on suit", func(t *testing.T) {
+		t.Parallel()
+		hand := []deck.Card{
+			{Rank: deck.Three, Suit: deck.Hearts},
+			{Rank: deck.Two, Suit: deck.Clubs},
+			{Rank: deck.King, Suit: deck.Spades},
+			{Rank: deck.Two, Suit: deck.Diamonds},
+		}
+		assert.Equal(t, []deck.Card{
+			{Rank: deck.Two, Suit: deck.Diamonds},
+			{Rank: deck.Two, Suit: deck.Clubs},
+			{Rank: deck.Three, Suit: deck.Hearts},
+		}, threeLowestCards(hand), "equal ranks order by suit, so the pass is deterministic")
+	})
+
+	t.Run("a short hand passes whatever it has", func(t *testing.T) {
+		t.Parallel()
+		hand := []deck.Card{{Rank: deck.King, Suit: deck.Spades}, {Rank: deck.Two, Suit: deck.Clubs}}
+		assert.Equal(t, hand, threeLowestCards(hand))
+	})
+}
+
 func TestRules_CheckWinCondition_AndStandings(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -260,13 +361,16 @@ func TestRules_TimeoutAction(t *testing.T) {
 		pass, ok := act.(ActionPassCards)
 		require.True(t, ok)
 		assert.Len(t, pass.Cards, 3)
+		require.NoError(t, rules.ValidateAction(state, act))
 	})
 
 	t.Run("hand over returns next hand", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Extra.(*State).Stage = StageHandOver
-		assert.Equal(t, ActionNextHand{}, rules.TimeoutAction(state))
+		act := rules.TimeoutAction(state)
+		assert.Equal(t, ActionNextHand{}, act)
+		require.NoError(t, rules.ValidateAction(state, act))
 	})
 
 	t.Run("match complete returns nil", func(t *testing.T) {
@@ -277,6 +381,47 @@ func TestRules_TimeoutAction(t *testing.T) {
 		extra.MatchComplete = true
 		assert.Nil(t, rules.TimeoutAction(state))
 	})
+}
+
+// The engine broadcasts a play after AfterAction returns, so a trick swept the
+// moment its fourth card lands is gone before anyone is told about it: the three
+// players who did not take it never see what beat them. It has to stay on the table
+// until somebody leads the next one.
+func TestRules_FinishedTrickStaysOnTheTableUntilTheNextLead(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	// Everyone follows clubs; p3 takes the trick with the king.
+	state := createTestState(
+		[]deck.Card{{Rank: deck.Five, Suit: deck.Clubs}},
+		[]deck.Card{{Rank: deck.Three, Suit: deck.Clubs}},
+		[]deck.Card{{Rank: deck.King, Suit: deck.Clubs}, {Rank: deck.Nine, Suit: deck.Diamonds}},
+		[]deck.Card{{Rank: deck.Two, Suit: deck.Clubs}},
+	)
+	extra := state.Extra.(*State)
+	extra.TricksPlayed = 1 // past the opening trick, so the 2♣ lead rule is done
+
+	for seat, p := range state.Players {
+		state.CurrentTurn = seat
+		card := p.Cards[0]
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: card}))
+		rules.ApplyAction(state, ActionPlayCard{Card: card})
+		require.NoError(t, rules.AfterAction(state, ActionPlayCard{Card: card}))
+	}
+
+	require.Equal(t, "p3", extra.LastTrickWinner)
+	assert.True(t, extra.TrickComplete)
+	assert.Len(t, extra.TrickCards, playerCount, "all four cards are still up for the broadcast")
+	assert.Equal(t, deck.Clubs, extra.LedSuit, "and the suit that was led still reads correctly")
+
+	// The winner leads the next trick. A won trick is not one in progress, so an
+	// off-suit lead is a lead, not a failure to follow suit.
+	next := deck.Card{Rank: deck.Nine, Suit: deck.Diamonds}
+	require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: next}))
+	rules.ApplyAction(state, ActionPlayCard{Card: next})
+
+	assert.False(t, extra.TrickComplete)
+	assert.Equal(t, map[string]deck.Card{"p3": next}, extra.TrickCards, "the table was swept for the new trick")
+	assert.Equal(t, deck.Diamonds, extra.LedSuit)
 }
 
 func TestRules_OnPlayerLeave_EndsMatch(t *testing.T) {
@@ -290,12 +435,7 @@ func TestRules_OnPlayerLeave_EndsMatch(t *testing.T) {
 
 func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	t.Parallel()
-	players := fourPlayers()
-	for i, p := range players {
-		p.DatabaseUser = nil
-		_ = i
-	}
-	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+	engine := game.NewEngine(&Rules{}, fourPlayers(), deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 

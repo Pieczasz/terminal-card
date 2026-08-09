@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
-	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/game"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -115,7 +115,7 @@ func TestMatch_NextHandRejectedWhileLive(t *testing.T) {
 
 func TestMatch_CumulativeScoresCarry(t *testing.T) {
 	t.Parallel()
-	players := []*player.Player{
+	players := []*game.Player{
 		{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"},
 	}
 	extra := &State{
@@ -127,4 +127,41 @@ func TestMatch_CumulativeScoresCarry(t *testing.T) {
 	assert.Equal(t, 8, extra.CumulativeScores["p2"])
 	assert.Equal(t, 18, extra.CumulativeScores["p3"])
 	assert.Equal(t, 17, extra.CumulativeScores["p4"])
+}
+
+// The deal rotates one seat per hand. Nothing else pins the direction down, so a
+// dealer that stood still or ran backwards would otherwise go unnoticed.
+func TestMatch_DealerRotatesOneSeatPerHand(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+	state := game.NewState(rules, players, deck.StandardDeck())
+	state.CurrentTurn = 1
+	require.NoError(t, rules.OnGameStart(state))
+
+	extra := state.Extra.(*State)
+	require.Equal(t, 1, extra.DealerIndex, "the opening dealer is whoever is on turn")
+
+	for hand := 2; hand <= 5; hand++ {
+		// Finish the hand outright so afterPlay picks the next dealer.
+		extra.TricksPlayed = cardsPerHand - 1
+		extra.TrickCards = map[string]deck.Card{}
+		extra.Stage = StageTrickPlay
+		for i, p := range state.Players {
+			state.CurrentTurn = i
+			card := deck.Card{Rank: deck.Rank(i + 2), Suit: deck.Clubs}
+			p.Cards = []deck.Card{card}
+			extra.TrickCards[p.ID] = card
+		}
+		extra.LedSuit = deck.Clubs
+		require.NoError(t, rules.AfterAction(state, ActionPlayCard{}))
+
+		// Hand 1 dealt from seat 1, so hand N deals from seat N mod 4.
+		wantDealer := hand % len(players)
+		require.Equal(t, wantDealer, state.CurrentTurn, "hand %d deals to the next seat", hand)
+
+		require.NoError(t, rules.AfterAction(state, ActionNextHand{}))
+		assert.Equal(t, wantDealer, extra.DealerIndex, "hand %d", hand)
+		assert.Equal(t, hand, extra.HandNumber)
+	}
 }
