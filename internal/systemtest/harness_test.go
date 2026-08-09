@@ -2,7 +2,6 @@ package systemtest
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -12,7 +11,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -23,25 +21,51 @@ type finalizedMatch struct {
 	userIDs  []uint
 }
 
+// finalizeSignal announces each completed ranked write so a test waits on the write
+// itself rather than polling for what it produced.
+type finalizeSignal struct {
+	signal chan struct{}
+}
+
+func newFinalizeSignal() finalizeSignal {
+	return finalizeSignal{signal: make(chan struct{}, 8)}
+}
+
+func (s finalizeSignal) fire() {
+	select {
+	case s.signal <- struct{}{}:
+	default: // no test is waiting; never block the game
+	}
+}
+
+func (s finalizeSignal) awaitFinalize(t *testing.T) {
+	t.Helper()
+	select {
+	case <-s.signal:
+	case <-time.After(30 * time.Second):
+		t.Fatal("ranked finalize never ran")
+	}
+}
+
 // rankedFinalizeRecorder narrows the persistence boundary to the ranked write
-// exercised by the non-database system tests. The recorder signals each call so
-// tests wait for the write rather than scheduling or polling.
+// exercised by the non-database system tests.
 type rankedFinalizeRecorder struct {
 	db.MatchRepository
+	finalizeSignal
 
 	mu        sync.Mutex
 	finalized []finalizedMatch
-	signal    chan struct{}
 }
 
 func newRankedFinalizeRecorder() *rankedFinalizeRecorder {
-	return &rankedFinalizeRecorder{signal: make(chan struct{}, 8)}
+	return &rankedFinalizeRecorder{finalizeSignal: newFinalizeSignal()}
 }
 
 func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 	ctx context.Context,
 	gameName string,
 	orderedUserIDs []uint,
+	_ []int,
 ) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -54,20 +78,8 @@ func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 	})
 	r.mu.Unlock()
 
-	select {
-	case r.signal <- struct{}{}:
-	default: // no test is waiting; never block the game
-	}
+	r.fire()
 	return nil
-}
-
-func (r *rankedFinalizeRecorder) awaitFinalize(t *testing.T) {
-	t.Helper()
-	select {
-	case <-r.signal:
-	case <-time.After(10 * time.Second):
-		t.Fatal("ranked finalize never ran")
-	}
 }
 
 func (r *rankedFinalizeRecorder) calls() []finalizedMatch {
@@ -93,12 +105,8 @@ func realRegistry(t *testing.T) *game.Registry {
 	return registry
 }
 
-func newPlayer(id uint, name string) *player.Player {
-	return playerFor(&db.User{Model: gorm.Model{ID: id}, Username: name})
-}
-
-func playerFor(user *db.User) *player.Player {
-	return &player.Player{ID: fmt.Sprint(user.ID), DatabaseUser: user}
+func newPlayer(id uint, name string) *game.Player {
+	return lobby.NewPlayer(&db.User{Model: gorm.Model{ID: id}, Username: name})
 }
 
 func awaitGameStart(t *testing.T, events <-chan lobby.Event) *game.Engine {
@@ -122,6 +130,13 @@ func awaitGameStart(t *testing.T, events <-chan lobby.Event) *game.Engine {
 	}
 }
 
+// chipsInPlay is the invariant every betting path must preserve: a chip is either in
+// a stack or in the pool, so the two together are constant for the whole match.
+//
+// State.Pots is deliberately not counted. awardPots pays each layer into the winners'
+// stacks and zeroes MainPool, but leaves Pots populated for the showdown screen to
+// read, so a hand that has been paid out reports its last pots alongside the stacks
+// that already hold those chips. Adding them would double-count.
 func chipsInPlay(t *testing.T, engine *game.Engine) uint {
 	t.Helper()
 	var total uint

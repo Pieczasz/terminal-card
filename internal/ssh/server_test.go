@@ -52,7 +52,7 @@ type testEnv struct {
 
 func setupTestEnvironment(t *testing.T) testEnv {
 	t.Helper()
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	gormDB := testutil.SetupTestDB(t)
 	userRepo := repository.NewUserRepository(gormDB)
 	matchRepo := repository.NewMatchRepository(gormDB)
 

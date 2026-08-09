@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -36,7 +36,7 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	registry := realRegistry(t)
 
 	leader := newPlayer(1, "alice")
-	guests := []*player.Player{newPlayer(2, "bob"), newPlayer(3, "carol"), newPlayer(4, "dave")}
+	guests := []*game.Player{newPlayer(2, "bob"), newPlayer(3, "carol"), newPlayer(4, "dave")}
 
 	// --- create -------------------------------------------------------------
 	l, err := manager.New(leader,
@@ -70,7 +70,7 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	t.Cleanup(func() { l.Unsubscribe(leader.ID, events) })
 
 	// --- everyone readies up; the last one starts the game ------------------
-	all := append([]*player.Player{leader}, guests...)
+	all := append([]*game.Player{leader}, guests...)
 	for _, p := range all {
 		require.NoError(t, l.ToggleReady(p, registry))
 	}
@@ -162,7 +162,7 @@ func TestSystemLeaderLeavingPromotesGuest(t *testing.T) {
 
 // browseCodes lists the lobby codes on offer to p, unfiltered: a full table is still
 // listed, it just has no seat.
-func browseCodes(manager *lobby.Manager, p *player.Player) []string {
+func browseCodes(manager *lobby.Manager, p *game.Player) []string {
 	entries := manager.BrowseLobbies(p, lobby.BrowseFilter{})
 	codes := make([]string, 0, len(entries))
 	for _, e := range entries {

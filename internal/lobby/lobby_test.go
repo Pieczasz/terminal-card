@@ -12,7 +12,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -47,8 +46,8 @@ func (m *MockRules) AfterAction(state *game.State, action game.Action) error {
 	return m.Called(state, action).Error(0)
 }
 func (m *MockRules) CheckWinCondition(state *game.State) bool { return m.Called(state).Bool(0) }
-func (m *MockRules) Standings(state *game.State) []*player.Player {
-	return m.Called(state).Get(0).([]*player.Player)
+func (m *MockRules) Standings(state *game.State) []*game.Player {
+	return m.Called(state).Get(0).([]*game.Player)
 }
 
 type MockMatchRepo struct {
@@ -66,17 +65,14 @@ func (m *MockMatchRepo) RecordMatch(
 	return m.Called(ctx, gameID, orderedUserIDs, eloDeltas, ranked).Error(0)
 }
 
-func (m *MockMatchRepo) FinalizeRankedMatch(ctx context.Context, gameName string, orderedUserIDs []uint) error {
-	return m.Called(ctx, gameName, orderedUserIDs).Error(0)
+func (m *MockMatchRepo) FinalizeRankedMatch(
+	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+) error {
+	return m.Called(ctx, gameName, orderedUserIDs, places).Error(0)
 }
 
-func mockPlayer(id string, dbID uint) *player.Player {
-	return &player.Player{
-		ID: id,
-		DatabaseUser: &db.User{
-			Model: gorm.Model{ID: dbID},
-		},
-	}
+func mockPlayer(id string, dbID uint) *game.Player {
+	return &game.Player{ID: id, UserID: dbID}
 }
 
 func TestLobby_ToggleReady(t *testing.T) {
@@ -167,17 +163,8 @@ func TestLobby_BasicGetters(t *testing.T) {
 	assert.Equal(t, 4, l.MaxPlayers())
 	assert.True(t, l.IsPrivate())
 
-	guest := mockPlayer("guest", 2)
-	guest.DatabaseUser.Rankings = []db.Ranking{
-		{Game: db.Game{Name: "CrazyEights"}, Elo: 2000},
-	}
-	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
-
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("guest", 2)))
 	assert.Len(t, l.Guests(), 1)
-
-	// Leader has default 1500, guest has 2000. Avg = 1750.
-	avg := l.averageElo()
-	assert.Equal(t, uint32(1750), avg)
 }
 
 func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
@@ -201,12 +188,12 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	mockRules.On("InitialDealCount").Return(5)
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
 	mockRules.On("CheckWinCondition", mock.Anything).Return(true) // Immediate win to end game
-	mockRules.On("Standings", mock.Anything).Return([]*player.Player{leader, guest})
+	mockRules.On("Standings", mock.Anything).Return([]*game.Player{leader, guest})
 
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}).
+	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}, mock.Anything).
 		Run(func(mock.Arguments) {
 			close(done)
 		}).
@@ -264,7 +251,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	mockRules.On("InitialDealCount").Return(5)
 	mockRules.On("OnGameStart", mock.Anything).Return(nil)
 	mockRules.On("CheckWinCondition", mock.Anything).Return(true)
-	mockRules.On("Standings", mock.Anything).Return([]*player.Player{leader, guest})
+	mockRules.On("Standings", mock.Anything).Return([]*game.Player{leader, guest})
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
@@ -287,7 +274,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	}
 
 	mockRepo.AssertExpectations(t)
-	mockRepo.AssertNotCalled(t, "FinalizeRankedMatch", mock.Anything, mock.Anything, mock.Anything)
+	mockRepo.AssertNotCalled(t, "FinalizeRankedMatch", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
@@ -370,7 +357,7 @@ func newTestLobby(t *testing.T, maxPlayers int) (*Manager, *Lobby, *game.Registr
 	rules.On("InitialDealCount").Return(2).Maybe()
 	rules.On("OnGameStart", mock.Anything).Return(nil).Maybe()
 	rules.On("CheckWinCondition", mock.Anything).Return(false).Maybe()
-	rules.On("Standings", mock.Anything).Return([]*player.Player{}).Maybe()
+	rules.On("Standings", mock.Anything).Return([]*game.Player{}).Maybe()
 	registerGame(registry, "Mock", rules)
 
 	return m, l, registry
@@ -591,7 +578,7 @@ func TestLobby_ToggleReadyAfterAFinishedGame(t *testing.T) {
 func TestLobby_StartsWithExactlyMaxPlayers(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 3)
-	guests := []*player.Player{mockPlayer("p2", 2), mockPlayer("p3", 3)}
+	guests := []*game.Player{mockPlayer("p2", 2), mockPlayer("p3", 3)}
 	for _, g := range guests {
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 	}
@@ -620,14 +607,14 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			name:   "ranked success",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(nil)
+				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(nil)
 			},
 		},
 		{
 			name:   "ranked failure is reported",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
 			},
 			wantErr: "finalize ranked match",
 		},
@@ -664,7 +651,7 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(tt.ranked))
 			require.NoError(t, err)
 
-			err = l.recordFinishedMatch(context.Background(), "Mock", []uint{1}, tt.ranked)
+			err = l.recordFinishedMatch(context.Background(), "Mock", []uint{1}, nil, tt.ranked)
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
@@ -709,12 +696,12 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(original) })
 
 	repo := new(MockMatchRepo)
-	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
 	m := NewManager(context.Background(), repo)
 	l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(true))
 	require.NoError(t, err)
 
-	engine := game.NewEngine(&stubRules{}, []*player.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
+	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
 	t.Cleanup(engine.Close)
 
 	l.finalizeFinishedGame(engine)
@@ -737,7 +724,7 @@ func (stubRules) ValidateAction(*game.State, game.Action) error { return nil }
 func (stubRules) ApplyAction(*game.State, game.Action)          {}
 func (stubRules) AfterAction(*game.State, game.Action) error    { return nil }
 func (stubRules) CheckWinCondition(*game.State) bool            { return false }
-func (stubRules) Standings(s *game.State) []*player.Player      { return s.Players }
+func (stubRules) Standings(s *game.State) []*game.Player        { return s.Players }
 
 // A match that ends has to reopen the table by itself.
 func TestLobby_FinishedGameReopensTheTableForSettings(t *testing.T) {

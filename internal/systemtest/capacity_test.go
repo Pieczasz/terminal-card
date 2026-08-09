@@ -9,10 +9,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // heapInUse settles the heap and reports what is live, so a before/after pair
@@ -70,8 +68,11 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 		lobby.WithPrivate(false),
 	)
 	require.NoError(t, err)
+	// RemoveLobby closes the engine, which stops its turn clock: 200 tables left
+	// running would each fire a timeout timer while the rest of the suite runs.
+	t.Cleanup(func() { manager.RemoveLobby(l.Code()) })
 
-	guests := make([]*player.Player, 0, n-1)
+	guests := make([]*game.Player, 0, n-1)
 	for i := 1; i < n; i++ {
 		g := benchPlayer(idx, i)
 		require.NoError(t, manager.JoinLobbyByCode(l.Code(), g))
@@ -85,13 +86,7 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 	return l
 }
 
-func benchPlayer(table, seat int) *player.Player {
+func benchPlayer(table, seat int) *game.Player {
 	id := fmt.Sprintf("t%d-s%d", table, seat)
-	return &player.Player{
-		ID: id,
-		DatabaseUser: &db.User{
-			Model:    gorm.Model{ID: uint(table*100 + seat + 1)},
-			Username: id,
-		},
-	}
+	return &game.Player{ID: id, UserID: uint(table*100 + seat + 1), Name: id}
 }
