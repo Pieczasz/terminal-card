@@ -1,7 +1,10 @@
 package styles
 
 import (
+	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	lg "charm.land/lipgloss/v2"
 	"github.com/common-nighthawk/go-figure"
@@ -13,6 +16,37 @@ const (
 	maxBoxWidth  = 120
 	maxBoxHeight = 40
 )
+
+// The framed layout needs this much terminal to draw without overflowing: the
+// poker board alone is five cards at 11 columns each. Below it, views are told to
+// render the resize prompt instead of a broken frame - lipgloss will happily wrap
+// a table into unreadable confetti rather than complain.
+const (
+	MinWidth  = 64
+	MinHeight = 20
+)
+
+// TooSmall reports whether the terminal cannot fit the layout. A zero dimension
+// means the first WindowSizeMsg has not arrived yet, which is not the same as
+// small - answering true there would flash the resize prompt on every connection.
+func TooSmall(screenWidth, screenHeight int) bool {
+	if screenWidth <= 0 || screenHeight <= 0 {
+		return false
+	}
+	return screenWidth < MinWidth || screenHeight < MinHeight
+}
+
+// RenderTooSmall fills the terminal with the resize prompt. It reports the current
+// size as well as the required one, so the player can see which way to drag.
+func (t Theme) RenderTooSmall(screenWidth, screenHeight int) string {
+	msg := lg.JoinVertical(lg.Center,
+		t.Accented.Render("Terminal too small"),
+		"",
+		t.Muted.Render(fmt.Sprintf("need %d x %d", MinWidth, MinHeight)),
+		t.Muted.Render(fmt.Sprintf("have %d x %d", screenWidth, screenHeight)),
+	)
+	return lg.Place(max(screenWidth, 1), max(screenHeight, 1), lg.Center, lg.Center, msg)
+}
 
 // BoxWidth is the outer width of the framed layout. It must never shrink as the
 // terminal grows, and must never go negative: Router.Global.Width is 0 until the
@@ -39,7 +73,62 @@ func AvailableContentHeight(screenHeight int, header, footer string) int {
 	return max(innerHeight-lg.Height(header)-lg.Height(footer), 0)
 }
 
+// PadTruncate fits s into exactly width cells, padding short values and eliding
+// long ones. It counts runes rather than bytes so a multi-byte username is never
+// cut mid-character, and it is what keeps aligned columns aligned once a player
+// uses all 16 characters of their name.
+func PadTruncate(s string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(s)
+	if len(runes) <= width {
+		return s + strings.Repeat(" ", width-len(runes))
+	}
+	if width <= 3 {
+		return string(runes[:width])
+	}
+	return string(runes[:width-3]) + "..."
+}
+
+// figureKey is a title at a terminal width. Widths are bounded by maxBoxWidth and the
+// titles are a fixed handful, so the cache cannot grow without limit.
+type figureKey struct {
+	text     string
+	maxWidth int
+}
+
+// figureCache memoises rendered banners. go-figure re-reads and re-parses the whole
+// figlet font on every call, which measured as 85% of the allocations in a menu frame
+// - and a banner is a pure function of its text and the width it has to fit.
+//
+// It is capped because one caller banners the player's own username: anyone may
+// register one, so an uncapped cache would grow with every account that ever logs in.
+// Past the cap the banners still render, they just stop being remembered - the screen
+// titles that matter are already in by then.
+var (
+	figureCache   sync.Map // figureKey -> string
+	figureCached  atomic.Int64
+	maxFigureKeys = int64(512)
+)
+
 func RenderFigureASCII(text string, maxWidth int) string {
+	key := figureKey{text: text, maxWidth: maxWidth}
+	if cached, ok := figureCache.Load(key); ok {
+		banner, _ := cached.(string)
+		return banner
+	}
+
+	banner := renderFigureASCII(text, maxWidth)
+	if figureCached.Load() < maxFigureKeys {
+		if _, loaded := figureCache.LoadOrStore(key, banner); !loaded {
+			figureCached.Add(1)
+		}
+	}
+	return banner
+}
+
+func renderFigureASCII(text string, maxWidth int) string {
 	fonts := []string{"slant", "small", "mini"}
 	for _, font := range fonts {
 		fig := figure.NewFigure(text, font, true).String()
@@ -50,11 +139,11 @@ func RenderFigureASCII(text string, maxWidth int) string {
 	return text // no font fits; plain text always does
 }
 
-func RenderMainLayout(width, height int, header, content, footer string) string {
+func (t Theme) RenderMainLayout(width, height int, header, content, footer string) string {
 	boxWidth := BoxWidth(width)
 	boxHeight := BoxHeight(height)
 
-	innerWidth := InnerWidth(width)
+	innerWidth := max(boxWidth-6, 0)
 	innerHeight := max(boxHeight-4, 0)
 
 	// go-figure leaves trailing newlines that inflate the measured height below.
@@ -74,62 +163,51 @@ func RenderMainLayout(width, height int, header, content, footer string) string 
 	// which reads as centered where true centering reads as slightly low.
 	content = strings.TrimRight(content, "\r\n") + "\n\n"
 
-	headerArea := lg.Place(innerWidth, hHeader, lg.Center, lg.Top, header)
-	footerArea := lg.Place(innerWidth, hFooter, lg.Center, lg.Bottom, footer)
-	contentArea := lg.Place(innerWidth, hContent, lg.Center, lg.Center, content)
+	headerArea := Place(innerWidth, hHeader, lg.Center, lg.Top, header)
+	footerArea := Place(innerWidth, hFooter, lg.Center, lg.Bottom, footer)
+	contentArea := Place(innerWidth, hContent, lg.Center, lg.Center, content)
 
 	stacked := lg.JoinVertical(lg.Center, headerArea, contentArea, footerArea)
-	return Box.Width(boxWidth).Height(boxHeight).Render(stacked)
+	return t.Box.Width(boxWidth).Height(boxHeight).Render(stacked)
 }
 
-func RenderActionFooter(actions []string) string {
+// footerKey is the action list a view offers, at one palette. Each view has a fixed
+// set, so the cache holds one entry per screen rather than growing with use.
+type footerKey struct {
+	actions string
+	dark    bool
+}
+
+// footerCache memoises the action footer. Every action is styled separately, so a
+// ten-item footer emits ten colour sequences on a frame that never changes.
+var footerCache sync.Map // footerKey -> string
+
+func (t Theme) RenderActionFooter(actions []string) string {
+	key := footerKey{actions: strings.Join(actions, "\x00"), dark: t.Dark}
+	if cached, ok := footerCache.Load(key); ok {
+		footer, _ := cached.(string)
+		return footer
+	}
+
 	renderedActions := make([]string, 0, len(actions))
 	for _, action := range actions {
-		renderedActions = append(renderedActions, ActionsText.Render(action))
+		renderedActions = append(renderedActions, t.ActionsText.Render(action))
 	}
-	return strings.Join(renderedActions, " | ")
+	footer := strings.Join(renderedActions, " | ")
+	footerCache.Store(key, footer)
+	return footer
 }
 
 var GlobalActions = []string{"n - New Game", "f - Join Game", "p - Profile", "t - Leaderboard", "ctrl+c - Quit"}
 
-// Gold highlights the thing the player is meant to look at: the lobby leader,
-// the selected suit, a poker chip stack.
-var Gold = lg.Color("#FFD700")
+// ResetFigureCacheForTest empties the banner cache. Exported for the cap test, which
+// cannot observe a bound it shares with every other test in the package.
+func ResetFigureCacheForTest() {
+	figureCache.Clear()
+	figureCached.Store(0)
+}
 
-var (
-	Box = lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(lg.Color("#FFFFFF")).
-		Padding(1, 2)
-
-	Title = lg.NewStyle().
-		Bold(true).
-		Foreground(lg.Color("#FAFAFA"))
-
-	ActionsText = lg.NewStyle().
-			Foreground(lg.Color("#B0B0B0"))
-
-	Welcome = lg.NewStyle().
-		Bold(true).
-		Foreground(lg.Color("#00FFFF"))
-
-	LobbyCode = lg.NewStyle().
-			Foreground(lg.Color("#FFA500")).
-			Bold(true)
-
-	// SectionHeading labels a block of content within a view (Settings, Players,
-	// Rankings, Recent Matches, and the player name in the game layout).
-	SectionHeading = lg.NewStyle().
-			Foreground(lg.Color("#FFA500")).
-			Bold(true)
-
-	PlayerItemSelected = lg.NewStyle().
-				Foreground(lg.Color("205"))
-
-	HostTag = lg.NewStyle().
-		Foreground(Gold).
-		Bold(true)
-
-	GuestTag = lg.NewStyle().
-			Foreground(lg.Color("#A9A9A9"))
-)
+// FigureCacheLenForTest reports how many banners are held.
+func FigureCacheLenForTest() int {
+	return int(figureCached.Load())
+}

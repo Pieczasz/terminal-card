@@ -49,7 +49,7 @@ func (m model) View() tea.View {
 	innerWidth := styles.InnerWidth(m.global.Width)
 
 	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
-	titleText := styles.Title.Render(titleFig)
+	titleText := m.global.Theme.Title.Render(titleFig)
 
 	welcomeName := "Player"
 	if m.global.User != nil {
@@ -57,9 +57,9 @@ func (m model) View() tea.View {
 	}
 	welcomeUser := fmt.Sprintf("Welcome %s", welcomeName)
 	welcomeFig := styles.RenderFigureASCII(welcomeUser, innerWidth)
-	welcomeText := styles.Welcome.Render(welcomeFig)
+	welcomeText := m.global.Theme.Welcome.Render(welcomeFig)
 
-	homePageActions := styles.RenderActionFooter(styles.GlobalActions)
+	homePageActions := m.global.Theme.RenderActionFooter(styles.GlobalActions)
 
-	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, titleText, welcomeText, homePageActions))
+	return tea.NewView(views.RenderCenteredLayout(m.global, titleText, welcomeText, homePageActions))
 }

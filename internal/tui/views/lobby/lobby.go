@@ -9,7 +9,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
@@ -36,27 +35,23 @@ type model struct {
 }
 
 func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return lobbyMsg(msg)
-	}
+	return views.ListenOn(ch, func(ev lobby.Event) tea.Msg { return lobbyMsg(ev) })
 }
 
 // New returns a new lobby model. We pass the current active lobby through Context.
 func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
-	playerID := ""
-	if global.User != nil {
-		playerID = fmt.Sprint(global.User.ID)
-	}
+	playerID := views.SessionPlayerID(global)
 	var ch <-chan lobby.Event
+	var subErr error
 	if activeLobby != nil {
-		ch = activeLobby.Subscribe(playerID)
+		ch, subErr = activeLobby.Subscribe(playerID)
+		if subErr != nil {
+			// Without the feed this screen would never see another player join or the
+			// game start, so the player is told instead of being left staring at a
+			// roster that silently stops updating.
+			slog.Error("lobby view could not subscribe to events", "error", subErr, "player_id", playerID)
+			subErr = fmt.Errorf("live updates unavailable, rejoin the lobby: %w", subErr)
+		}
 	}
 	gameName := ""
 	isPrivate := true
@@ -78,6 +73,7 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 		isPrivate:    isPrivate,
 		isRanked:     isRanked,
 		maxPlayers:   maxPlayers,
+		actionErr:    subErr,
 	}
 }
 
@@ -85,27 +81,21 @@ func (m *model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
-// Elo is retrieved from preloaded Rankings, which is updated whenever a game ends.
-func (m *model) getElo(p *player.Player) uint32 {
-	if p == nil || p.DatabaseUser == nil {
+// Elo comes from the ratings the player was seated with, which are refreshed from
+// the database whenever a game ends.
+func (m *model) getElo(p *game.Player) uint32 {
+	if p == nil {
 		return elo.ToUint32(elo.DefaultRating)
 	}
-	gameName := m.currentLobby.GameName()
-	for _, r := range p.DatabaseUser.Rankings {
-		if r.Game.Name == gameName {
-			return r.Elo
-		}
+	if rating, ok := p.Ratings[m.currentLobby.GameName()]; ok {
+		return rating
 	}
 	return elo.ToUint32(elo.DefaultRating)
 }
 
 func (m *model) unsubscribe() {
 	if m.currentLobby != nil && m.lobbyChan != nil {
-		playerID := ""
-		if m.global.User != nil {
-			playerID = fmt.Sprint(m.global.User.ID)
-		}
-		m.currentLobby.Unsubscribe(playerID, m.lobbyChan)
+		m.currentLobby.Unsubscribe(views.SessionPlayerID(m.global), m.lobbyChan)
 		m.lobbyChan = nil
 	}
 }
@@ -122,7 +112,7 @@ func (m *model) gamePlayerBounds() (minPlayers, maxPlayers int) {
 	return rules.MinPlayers(), rules.MaxPlayers()
 }
 
-func (m *model) selfPlayer() *player.Player {
+func (m *model) selfPlayer() *game.Player {
 	return views.SessionPlayer(m.global)
 }
 
@@ -220,7 +210,7 @@ func (m *model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) adjustSetting(self *player.Player, delta int) {
+func (m *model) adjustSetting(self *game.Player, delta int) {
 	switch m.cursor {
 	case cursorMaxPlayers:
 		rulesMin, rulesMax := m.gamePlayerBounds()
@@ -311,28 +301,27 @@ func (m *model) View() tea.View {
 
 	innerWidth := styles.InnerWidth(m.global.Width)
 	titleFig := styles.RenderFigureASCII("Lobby", innerWidth)
-	titleText := styles.Title.Render(titleFig)
-	header := styles.Title.Render(titleText)
+	header := m.global.Theme.Title.Render(titleFig)
 
 	isLeader := m.currentLobby.IsLeader(m.selfPlayer())
 
 	footerActions := slices.Concat([]string{"x - Leave Lobby", "r - Ready"}, styles.GlobalActions)
-	footer := lg.NewStyle().Render(styles.RenderActionFooter(footerActions))
+	footer := m.global.Theme.RenderActionFooter(footerActions)
 
 	if m.showLeaveConfirm {
-		redYes := lg.NewStyle().Foreground(lg.Color("#FF4444")).Bold(true).Render("Yes")
+		redYes := m.global.Theme.ErrorText.Bold(true).Render("Yes")
 		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
 
-		return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, popupText, footer))
+		return tea.NewView(views.RenderCenteredLayout(m.global, header, popupText, footer))
 	}
 
 	form := m.renderForm(isLeader, innerWidth)
 	if m.actionErr != nil {
-		errLine := lg.NewStyle().Foreground(lg.Color("9")).Render(m.actionErr.Error())
+		errLine := m.global.Theme.ErrorText.Render(m.actionErr.Error())
 		form = lg.JoinVertical(lg.Center, form, "", errLine)
 	}
 
-	return tea.NewView(views.RenderCenteredLayout(m.global.Width, m.global.Height, header, form, footer))
+	return tea.NewView(views.RenderCenteredLayout(m.global, header, form, footer))
 }
 
 // renderForm lays the settings and player columns side by side, stacking them
@@ -357,8 +346,8 @@ func (m *model) renderSettings(isLeader bool) string {
 		cursor := "  "
 		if isLeader && m.cursor == idx {
 			cursor = "> "
-			label = lg.NewStyle().Foreground(lg.Color("205")).Render(label)
-			value = lg.NewStyle().Foreground(lg.Color("205")).Render(value)
+			label = m.global.Theme.PlayerItemSelected.Render(label)
+			value = m.global.Theme.PlayerItemSelected.Render(value)
 		}
 		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
 	}
@@ -373,8 +362,8 @@ func (m *model) renderSettings(isLeader bool) string {
 	}
 
 	return lg.JoinVertical(lg.Left,
-		"  "+styles.SectionHeading.Render("Settings"),
-		fmt.Sprintf("  Lobby Code: %s", styles.LobbyCode.Render(m.currentLobby.Code())),
+		"  "+m.global.Theme.SectionHeading.Render("Settings"),
+		fmt.Sprintf("  Lobby Code: %s", m.global.Theme.LobbyCode.Render(m.currentLobby.Code())),
 		renderOption(cursorGame, "Game", m.gameOptions[m.gameIndex]),
 		renderOption(cursorMaxPlayers, "Max Players", strconv.Itoa(m.maxPlayers)),
 		renderOption(cursorVisibility, "Visibility", fmt.Sprintf("%-7s", vis)),
@@ -387,11 +376,11 @@ func (m *model) renderSettings(isLeader bool) string {
 func (m *model) renderPlayerList(isLeader bool) []string {
 	guests := m.currentLobby.Guests()
 	rows := make([]string, 0, 2+len(guests))
-	rows = append(rows, "  "+styles.SectionHeading.Render("Players"))
+	rows = append(rows, "  "+m.global.Theme.SectionHeading.Render("Players"))
 
 	leader := m.currentLobby.Leader()
 	rows = append(rows, fmt.Sprintf("  %s %s (Elo: %d)%s",
-		styles.HostTag.Render("[Leader]"), leader.Username(), m.getElo(leader), m.readyMark(leader)))
+		m.global.Theme.HostTag.Render("[Leader]"), leader.DisplayName(), m.getElo(leader), m.readyMark(leader)))
 
 	for i, g := range guests {
 		cursor := "  "
@@ -400,20 +389,20 @@ func (m *model) renderPlayerList(isLeader bool) []string {
 			cursor = "> "
 		}
 		row := fmt.Sprintf("%s%s %s (Elo: %d)%s",
-			cursor, styles.GuestTag.Render("[Guest] "), g.Username(), m.getElo(g), m.readyMark(g))
+			cursor, m.global.Theme.GuestTag.Render("[Guest] "), g.DisplayName(), m.getElo(g), m.readyMark(g))
 		if isSelected {
-			row = styles.PlayerItemSelected.Render(row)
+			row = m.global.Theme.PlayerItemSelected.Render(row)
 		}
 		rows = append(rows, row)
 	}
 	return rows
 }
 
-func (m *model) readyMark(p *player.Player) string {
+func (m *model) readyMark(p *game.Player) string {
 	if !m.currentLobby.IsReady(p) {
 		return ""
 	}
-	return lg.NewStyle().Foreground(lg.Color("46")).Render(" - Ready")
+	return m.global.Theme.SuccessText.Render(" - Ready")
 }
 
 // Close releases the lobby subscription when the router replaces this view or the

@@ -2,58 +2,77 @@ package game
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
-	"math"
-
+	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 )
 
-// Card face colours, shared by every card renderer in this package.
-var (
-	cardColor = lg.Color("#EEEEEE")
-	textColor = lg.Color("#AAAAAA")
-)
-
-func RenderHand(hand []deck.Card, selectedIdx int, selectionLift float64, disableSelection bool) string {
-	renderedCards := make([]string, 0, len(hand))
-	for i, c := range hand {
-		isSelected := i == selectedIdx && !disableSelection
-		var lift int
-		if isSelected {
-			lift = max(int(math.Round(selectionLift)), 0)
-		}
-
-		cardView := components.RenderCard(c, isSelected)
-		if i < 10 {
-			numStyle := lg.NewStyle().Foreground(lg.Color("#888888"))
-			if isSelected {
-				numStyle = numStyle.Foreground(lg.Color("205")).Bold(true)
-			}
-			numView := numStyle.Render(strconv.Itoa(i))
-			cardView = lg.JoinVertical(lg.Center, cardView, numView)
-		}
-
-		maxLift := 2
-		if lift > maxLift {
-			lift = maxLift
-		}
-
-		cardView = lg.NewStyle().
-			MarginTop(maxLift - lift).
-			MarginBottom(lift).
-			Render(cardView)
-
-		renderedCards = append(renderedCards, cardView)
+func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelection bool) string {
+	if len(hand) == 0 {
+		return ""
 	}
-	return lg.JoinHorizontal(lg.Top, renderedCards...)
+	selected := selectedIdx
+	if disableSelection {
+		selected = -1
+	}
+
+	fan := components.RenderFan(t, hand, selected)
+
+	// The index row sits under the fan, one number centred in each card's visible slot,
+	// so a player can see which key picks which card.
+	var labels strings.Builder
+	for i := range hand {
+		slot := components.CardSlotWidth(i, len(hand), selected)
+		label := " "
+		if i < 10 {
+			style := t.Dim
+			if i == selected {
+				style = t.PlayerItemSelected.Bold(true)
+			}
+			label = style.Render(strconv.Itoa(i))
+		}
+		labels.WriteString(styles.PadCenter(slot, label))
+	}
+
+	return lg.JoinVertical(lg.Left, fan, labels.String())
+}
+
+// RenderHandMulti is RenderHand for multi-select (Hearts pass phase). selected marks
+// which cards are currently staged for the pass; cursor highlights the focused index.
+func RenderHandMulti(t styles.Theme, hand []deck.Card, selected map[int]struct{}, cursor int) string {
+	if len(hand) == 0 {
+		return ""
+	}
+	fan := components.RenderFanMulti(t, hand, selected)
+
+	var labels strings.Builder
+	for i := range hand {
+		slot := components.CardSlotWidthMulti(i, len(hand), selected)
+		label := " "
+		if i < 10 {
+			style := t.Dim
+			if _, ok := selected[i]; ok {
+				style = t.PlayerItemSelected.Bold(true)
+			} else if i == cursor {
+				style = t.PlayerItemSelected
+			}
+			label = style.Render(strconv.Itoa(i))
+		}
+		labels.WriteString(styles.PadCenter(slot, label))
+	}
+
+	return lg.JoinVertical(lg.Left, fan, labels.String())
 }
 
 type Orientation int
@@ -64,16 +83,16 @@ const (
 	OrientationRight
 )
 
-func renderTopCards(count int) string {
+func renderTopCards(t styles.Theme, count int) string {
 	if count <= 0 {
 		return ""
 	}
 
-	botLine := lg.NewStyle().Foreground(cardColor).Render("╰" + strings.Repeat("┴", count-1) + "───────╯")
+	botLine := lg.NewStyle().Foreground(t.CardFace).Render("╰" + strings.Repeat("┴", count-1) + "───────╯")
 
-	edge := lg.NewStyle().Foreground(cardColor).Render("│" + strings.Repeat("│", count-1))
-	body := lg.NewStyle().Foreground(textColor).Render("░░░░░░░")
-	rightEdge := lg.NewStyle().Foreground(cardColor).Render("│")
+	edge := lg.NewStyle().Foreground(t.CardFace).Render("│" + strings.Repeat("│", count-1))
+	body := lg.NewStyle().Foreground(t.CardBack).Render("░░░░░░░")
+	rightEdge := lg.NewStyle().Foreground(t.CardFace).Render("│")
 
 	midLine := edge + body + rightEdge
 
@@ -93,28 +112,28 @@ func renderTopCards(count int) string {
 	return sb.String()
 }
 
-func renderLeftCards(count int) string {
+func renderLeftCards(t styles.Theme, count int) string {
 	if count <= 0 {
 		return ""
 	}
 
-	topEdge := lg.NewStyle().Foreground(cardColor).Render("─────╮")
-	midEdge := lg.NewStyle().Foreground(cardColor).Render("─────┤")
-	botEdge := lg.NewStyle().Foreground(cardColor).Render("─────╯")
-	cardBody := lg.NewStyle().Foreground(textColor).Render("░░░░░") + lg.NewStyle().Foreground(cardColor).Render("│")
+	topEdge := lg.NewStyle().Foreground(t.CardFace).Render("─────╮")
+	midEdge := lg.NewStyle().Foreground(t.CardFace).Render("─────┤")
+	botEdge := lg.NewStyle().Foreground(t.CardFace).Render("─────╯")
+	cardBody := lg.NewStyle().Foreground(t.CardBack).Render("░░░░░") + lg.NewStyle().Foreground(t.CardFace).Render("│")
 
 	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
 }
 
-func renderRightCards(count int) string {
+func renderRightCards(t styles.Theme, count int) string {
 	if count <= 0 {
 		return ""
 	}
 
-	topEdge := lg.NewStyle().Foreground(cardColor).Render("╭─────")
-	midEdge := lg.NewStyle().Foreground(cardColor).Render("├─────")
-	botEdge := lg.NewStyle().Foreground(cardColor).Render("╰─────")
-	cardBody := lg.NewStyle().Foreground(cardColor).Render("│") + lg.NewStyle().Foreground(textColor).Render("░░░░░")
+	topEdge := lg.NewStyle().Foreground(t.CardFace).Render("╭─────")
+	midEdge := lg.NewStyle().Foreground(t.CardFace).Render("├─────")
+	botEdge := lg.NewStyle().Foreground(t.CardFace).Render("╰─────")
+	cardBody := lg.NewStyle().Foreground(t.CardFace).Render("│") + lg.NewStyle().Foreground(t.CardBack).Render("░░░░░")
 
 	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
 }
@@ -142,76 +161,172 @@ func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody str
 	return sb.String()
 }
 
-func RenderOpponent(o game.PlayerSnapshot, isCurrentTurn bool, orientation Orientation) string {
-	nameStyle := styles.SectionHeading
+func RenderOpponent(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn bool, orientation Orientation, remaining time.Duration) string {
+	nameStyle := t.SectionHeading
 	if isCurrentTurn {
-		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
+		nameStyle = t.TurnName
 	}
 	nameView := nameStyle.Render(o.Username)
-	cardsCountView := lg.NewStyle().Foreground(textColor).Render(fmt.Sprintf("[%d cards]", o.HandSize))
+	cardsCountView := t.Muted.Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	infoView := lg.JoinVertical(lg.Center, nameView, cardsCountView)
 
 	var cardsView string
 	switch orientation {
 	case OrientationTop:
-		cardsView = renderTopCards(o.HandSize)
+		cardsView = renderTopCards(t, o.HandSize)
 	case OrientationLeft:
-		cardsView = renderLeftCards(o.HandSize)
+		cardsView = renderLeftCards(t, o.HandSize)
 	case OrientationRight:
-		cardsView = renderRightCards(o.HandSize)
+		cardsView = renderRightCards(t, o.HandSize)
 	}
 
+	var block string
 	switch orientation {
 	case OrientationTop:
-		return lg.JoinVertical(lg.Center, cardsView, infoView)
+		block = lg.JoinVertical(lg.Center, cardsView, infoView)
 	case OrientationLeft:
-		return lg.JoinVertical(lg.Left, infoView, cardsView)
+		block = lg.JoinVertical(lg.Left, infoView, cardsView)
 	default:
-		return lg.JoinVertical(lg.Right, infoView, cardsView)
+		block = lg.JoinVertical(lg.Right, infoView, cardsView)
 	}
+
+	if !isCurrentTurn {
+		return block
+	}
+	return AttachTurnClock(block, RenderTurnClock(t, remaining, false), orientation)
 }
 
-func RenderOpponentMinimal(o game.PlayerSnapshot, isCurrentTurn bool) string {
-	nameStyle := styles.SectionHeading
+func RenderOpponentMinimal(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn bool) string {
+	nameStyle := t.SectionHeading
 	if isCurrentTurn {
-		nameStyle = nameStyle.Background(lg.Color("#555555")).Padding(0, 1)
+		nameStyle = t.TurnName
 	}
 	nameView := nameStyle.Render(o.Username)
-	cardsCountView := lg.NewStyle().Foreground(textColor).Render(fmt.Sprintf("[%d cards]", o.HandSize))
+	cardsCountView := t.Muted.Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }
 
 // RenderCardBacks draws count face-down card backs oriented for a table edge,
 // so every game view shows opponents' hidden cards the same way.
-func RenderCardBacks(count int, orientation Orientation) string {
+func RenderCardBacks(t styles.Theme, count int, orientation Orientation) string {
 	switch orientation {
 	case OrientationLeft:
-		return renderLeftCards(count)
+		return renderLeftCards(t, count)
 	case OrientationRight:
-		return renderRightCards(count)
+		return renderRightCards(t, count)
 	default:
-		return renderTopCards(count)
+		return renderTopCards(t, count)
 	}
 }
 
-func RenderStatus(currentPlayer string, isMyTurn bool) string {
-	statusStyle := lg.NewStyle().Foreground(lg.Color("#888888")).MarginTop(1).MarginBottom(1)
+// RenderStatus names whose turn it is. When it is the hero's turn the countdown sits
+// on the same line as the banner: a second row under the hand would grow botHeight and
+// shove the discard pile every time the clock arms.
+func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining time.Duration) string {
+	statusStyle := t.Dim.MarginTop(1).MarginBottom(1)
 	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)
 	if isMyTurn {
-		statusStyle = statusStyle.Foreground(lg.Color("#00FF00")).Bold(true)
+		statusStyle = statusStyle.Foreground(t.Success).Bold(true)
 		statusStr = "> YOUR TURN <"
+		if clock := RenderTurnClock(t, remaining, true); clock != "" {
+			statusStr += "  " + clock
+		}
 	}
 	return statusStyle.Render(statusStr)
 }
 
-func RenderWaitingScreen(width, height int, phase game.Phase, winner string) string {
-	innerWidth := styles.InnerWidth(width)
+// preciseClockThreshold is when the countdown starts counting in tenths. Whole seconds
+// hide up to a second of the time a player actually has, and in the last few seconds
+// that is the difference between acting and being folded for them.
+const preciseClockThreshold = 6 * time.Second
+
+// tenthTickInterval is the tick rate while the countdown is showing tenths. It is only
+// paid for the last seconds of a turn: ten renders a second, for every client at the
+// table, is not something to run for a whole thirty-second turn over SSH.
+const tenthTickInterval = 100 * time.Millisecond
+
+// FormatTurnClock renders the turn countdown, or empty when no clock is running.
+//
+// precise asks for tenths (5.5, 5.4, ...) below preciseClockThreshold; without it the
+// clock stays in m:ss the whole way down. Only the player who has to act needs the
+// finer reading, and it is not free: tenths have to be driven by a tick ten times a
+// second, and every client at the table paying that for somebody else's clock is the
+// most expensive thing a table does. Both forms round up, so the display never claims
+// less time than the player has and never reads zero while they can still act.
+func FormatTurnClock(remaining time.Duration, precise bool) string {
+	if remaining <= 0 {
+		return ""
+	}
+	if precise && remaining < preciseClockThreshold {
+		tenths := int(math.Ceil(remaining.Seconds() * 10))
+		return fmt.Sprintf("%d.%d", tenths/10, tenths%10)
+	}
+	secs := int((remaining + time.Second - 1) / time.Second)
+	return fmt.Sprintf("%d:%02d", secs/60, secs%60)
+}
+
+// RenderTurnClock is the countdown as drawn on the seat that is on turn. It turns
+// urgent inside the last seconds whoever is reading it, and counts in tenths only for
+// the player those seconds belong to.
+func RenderTurnClock(t styles.Theme, remaining time.Duration, precise bool) string {
+	clock := FormatTurnClock(remaining, precise)
+	if clock == "" {
+		return ""
+	}
+	if remaining < preciseClockThreshold {
+		return t.ErrorText.Bold(true).Render(clock)
+	}
+	return t.Muted.Render(clock)
+}
+
+// AttachTurnClock places the countdown against a seat block: underneath for the seats
+// along the top and bottom, and alongside for the ones stacked down the sides, where
+// another row would push the stack apart. The clock sits toward the middle of the
+// table on both sides. An empty clock leaves the block untouched.
+func AttachTurnClock(block, clock string, orientation Orientation) string {
+	if clock == "" {
+		return block
+	}
+	switch orientation {
+	case OrientationLeft:
+		return lg.JoinHorizontal(lg.Center, block, " ", clock)
+	case OrientationRight:
+		return lg.JoinHorizontal(lg.Center, clock, " ", block)
+	case OrientationTop:
+	}
+	return lg.JoinVertical(lg.Center, block, clock)
+}
+
+// ClockTickMsg drives the turn countdown.
+type ClockTickMsg time.Time
+
+// ClockTickFor schedules the next countdown tick at the rate the current reading
+// needs: once a second while the clock shows whole seconds, ten times a second only
+// for the player whose clock is running out.
+//
+// onTurn is what keeps a table cheap. A frame costs the server thousands of
+// allocations, so every seat re-rendering ten times a second because one player is
+// running late would cost the table six times its own worth of work, for a digit
+// nobody but that player is acting on.
+func ClockTickFor(remaining time.Duration, onTurn bool) tea.Cmd {
+	interval := time.Second
+	if onTurn && remaining > 0 && remaining < preciseClockThreshold {
+		interval = tenthTickInterval
+	}
+	return tea.Tick(interval, func(t time.Time) tea.Msg { return ClockTickMsg(t) })
+}
+
+// ClockTick starts the countdown before any deadline is known, which is what a view's
+// Init has to work with.
+func ClockTick() tea.Cmd { return ClockTickFor(0, false) }
+
+func RenderWaitingScreen(g router.GlobalContext, phase game.Phase, winner string) string {
+	innerWidth := styles.InnerWidth(g.Width)
 	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
-	titleText := styles.Title.Render(titleFig)
-	header := styles.Title.Render(titleText)
-	footer := lg.NewStyle().Render(styles.RenderActionFooter(styles.GlobalActions))
+	header := g.Theme.Title.Render(titleFig)
+	footer := g.Theme.RenderActionFooter(styles.GlobalActions)
 
 	var content string
 	if phase == game.Finished {
@@ -220,5 +335,5 @@ func RenderWaitingScreen(width, height int, phase game.Phase, winner string) str
 		content = "Waiting for game to start..."
 	}
 
-	return views.RenderCenteredLayout(width, height, header, content, footer)
+	return views.RenderCenteredLayout(g, header, content, footer)
 }

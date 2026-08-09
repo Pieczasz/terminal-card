@@ -94,9 +94,6 @@ func TestPile_AddAllCards(t *testing.T) {
 	assert.Equal(t, 2, p.Size())
 }
 
-// FuzzPile_DrawNCards guards the arithmetic in DrawNCards: it slices by the caller's
-// count, and a negative count used to reach make([]Card, n) and panic the server via
-// Engine.Start -> Rules.InitialDealCount.
 func FuzzPile_DrawNCards(f *testing.F) {
 	f.Add(0, 0)
 	f.Add(3, -1)

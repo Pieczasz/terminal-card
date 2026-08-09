@@ -12,9 +12,12 @@ import (
 )
 
 func Connect(cfg *config.Config) (*gorm.DB, error) {
-	logMode := logger.Info
-	if cfg.Env == "production" {
-		logMode = logger.Warn
+	// Info logs every statement with its parameter values, and logs ship to Loki.
+	// Only development opts into that: staging is not production but may still be
+	// pointed at real data.
+	logMode := logger.Warn
+	if cfg.Env == "development" {
+		logMode = logger.Info
 	}
 
 	database, err := gorm.Open(postgres.Open(cfg.DSN()), &gorm.Config{

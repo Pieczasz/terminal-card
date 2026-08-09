@@ -13,3 +13,6 @@ backups/
 web/node_modules/
 web/dist/
 web/.astro/
+
+# Astro preview output at the repo root
+/.astro/

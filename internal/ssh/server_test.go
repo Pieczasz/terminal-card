@@ -22,15 +22,10 @@ import (
 	cryptossh "golang.org/x/crypto/ssh"
 )
 
-// listenLocal binds an ephemeral port and keeps the listener. Returning only the
-// port number and closing the listener is a race: these tests run in parallel, so
-// the kernel can hand the same port to another test before the server re-binds it.
 func listenLocal(t *testing.T) net.Listener {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	// Registered here rather than at the call site: a require.NoError between the
-	// bind and the server's own teardown would otherwise strand the socket.
 	t.Cleanup(func() { _ = l.Close() })
 	return l
 }
@@ -52,7 +47,7 @@ type testEnv struct {
 
 func setupTestEnvironment(t *testing.T) testEnv {
 	t.Helper()
-	gormDB := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	gormDB := testutil.SetupTestDB(t)
 	userRepo := repository.NewUserRepository(gormDB)
 	matchRepo := repository.NewMatchRepository(gormDB)
 
@@ -61,8 +56,6 @@ func setupTestEnvironment(t *testing.T) testEnv {
 
 	deps := ServerDependencies{
 		Config: &config.Config{
-			// The port is informational here; the server is handed the listener
-			// below rather than binding this itself.
 			ServerPort:      listener.Addr().(*net.TCPAddr).Port,
 			SSHKeyPath:      t.TempDir() + "/id_ed25519",
 			RateLimitCount:  5,
@@ -249,7 +242,6 @@ func TestServer_RateLimit(t *testing.T) {
 		HostKeyCallback: cryptossh.InsecureIgnoreHostKey(),
 	}
 
-	// Rate limiter allows 5 per second. 6th should fail.
 	var failed bool
 	for i := 0; i < 6; i++ {
 		client, err := cryptossh.Dial("tcp", env.addr, clientConfig)
@@ -283,4 +275,22 @@ func TestSetupServer_Errors(t *testing.T) {
 	}
 	_, err := SetupServer(deps)
 	assert.ErrorContains(t, err, "error while saving keypair")
+}
+
+func TestSetupServer_SetsConnectionTimeouts(t *testing.T) {
+	t.Parallel()
+
+	deps := ServerDependencies{
+		Config: &config.Config{
+			SSHKeyPath:      t.TempDir() + "/id_ed25519",
+			RateLimitCount:  5,
+			RateLimitWindow: time.Second,
+		},
+	}
+
+	server, err := SetupServer(deps)
+	require.NoError(t, err)
+
+	assert.Equal(t, 20*time.Second, server.HandshakeTimeout, "an unauthenticated connection must be dropped")
+	assert.Equal(t, 30*time.Minute, server.IdleTimeout, "a connection that vanished without a FIN must be reaped")
 }

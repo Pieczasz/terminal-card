@@ -13,8 +13,6 @@ import (
 
 const keyHints = "<-/h: left | ->/l: right | enter: play/confirm | d: draw | esc: leave/cancel"
 
-var hintStyle = lg.NewStyle().Foreground(lg.Color("#888888"))
-
 // suitLabels are the picker cells, in grid order. suitPickerOrder in update.go
 // maps a cursor position back to the suit and must stay in the same order.
 var suitLabels = []string{"♠ Spades", "♥︎ Hearts", "♦ Diamonds", "♣ Clubs"}
@@ -33,14 +31,15 @@ func widestLabel(labels []string) int {
 }
 
 func (m *Model) View() tea.View {
-	if m.baseState.Phase != game.Playing {
-		return tea.NewView(gameview.RenderWaitingScreen(m.global.Width, m.global.Height, m.baseState.Phase, m.baseState.Winner))
+	if m.Base.Phase != game.Playing {
+		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
 
-	compactMode := m.global.Height < 30
-	superCompact := m.global.Height < 24
+	compactMode := m.Global.Height < 30
+	superCompact := m.Global.Height < 24
 
-	topSection := m.renderTopOpponent(superCompact)
+	opponents := gameview.RenderOpponentEdges(m.Global.Theme, m.Base, superCompact)
+	topSection := opponents.Top
 	var topAreaContent string
 	if superCompact {
 		topAreaContent = topSection
@@ -53,27 +52,24 @@ func (m *Model) View() tea.View {
 	if superCompact {
 		fullPlayerArea = mySection
 	} else if compactMode {
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, hintStyle.Render(keyHints))
+		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.Render(keyHints))
 	} else {
-		hints := hintStyle.MarginTop(1).Render(keyHints)
+		hints := m.Global.Theme.Dim.MarginTop(1).Render(keyHints)
 		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
 	}
 
 	topHeight := lg.Height(topAreaContent)
 	botHeight := lg.Height(fullPlayerArea)
-	midHeight := max(m.global.Height-topHeight-botHeight, 0)
+	midHeight := max(m.Global.Height-topHeight-botHeight, 0)
 
-	topArea := lg.PlaceHorizontal(m.global.Width, lg.Center, topAreaContent)
-	midArea := m.renderMiddleLayer(midHeight, superCompact)
-	botArea := lg.PlaceHorizontal(m.global.Width, lg.Center, fullPlayerArea)
+	topArea := styles.PadCenter(m.Global.Width, topAreaContent)
+	midArea := m.renderMiddleLayer(midHeight, opponents)
+	botArea := styles.PadCenter(m.Global.Width, fullPlayerArea)
 
 	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
 }
 
-func (m *Model) renderMiddleLayer(height int, superCompact bool) string {
-	leftOpponent := m.renderLeftOpponent(superCompact)
-	rightOpponent := m.renderRightOpponent(superCompact)
-
+func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) string {
 	var centerStack string
 	if m.pickingSuit {
 		centerStack = m.renderSuitPicker()
@@ -81,66 +77,19 @@ func (m *Model) renderMiddleLayer(height int, superCompact bool) string {
 		centerStack = m.renderCenterTable()
 	}
 
-	w1 := m.global.Width / 3
-	w2 := m.global.Width / 3
-	w3 := m.global.Width - w1 - w2
+	w1 := m.Global.Width / 3
+	w2 := m.Global.Width / 3
+	w3 := m.Global.Width - w1 - w2
 
-	leftArea := lg.Place(w1, height, lg.Left, lg.Center, leftOpponent)
-	centerArea := lg.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
-	rightArea := lg.Place(w3, height, lg.Right, lg.Center, rightOpponent)
+	leftArea := styles.Place(w1, height, lg.Left, lg.Center, opponents.Left)
+	centerArea := styles.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
+	rightArea := styles.Place(w3, height, lg.Right, lg.Center, opponents.Right)
 
 	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
 }
 
-func (m *Model) renderTopOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) == 1 || len(m.baseState.Opponents) >= 3 {
-		idx := 0
-		if len(m.baseState.Opponents) >= 3 {
-			idx = 1
-		}
-		o := m.baseState.Opponents[idx]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
-		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationTop)
-	}
-	return ""
-}
-
-func (m *Model) renderLeftOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) >= 2 {
-		o := m.baseState.Opponents[0]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
-		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationLeft)
-	}
-	return ""
-}
-
-func (m *Model) renderRightOpponent(superCompact bool) string {
-	if len(m.baseState.Opponents) == 2 {
-		o := m.baseState.Opponents[1]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
-		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
-	} else if len(m.baseState.Opponents) >= 3 {
-		o := m.baseState.Opponents[2]
-		isTurn := m.baseState.CurrentPlayer == o.Username
-		if superCompact {
-			return gameview.RenderOpponentMinimal(o, isTurn)
-		}
-		return gameview.RenderOpponent(o, isTurn, gameview.OrientationRight)
-	}
-	return ""
-}
-
 func (m *Model) renderCenterTable() string {
-	discardView := components.RenderCard(m.baseState.TopDiscard, false)
+	discardView := components.RenderCard(m.Global.Theme, m.Base.TopDiscard, false)
 	currentSuitView := m.renderCurrentSuitIndicator()
 	return lg.JoinVertical(lg.Center, discardView, currentSuitView)
 }
@@ -164,17 +113,17 @@ func (m *Model) renderCurrentSuitIndicator() string {
 		return ""
 	}
 
-	return lg.NewStyle().Foreground(lg.Color("#AAAAAA")).Render("Current Suit: ") +
-		lg.NewStyle().Bold(true).Render(suitStr)
+	return m.Global.Theme.Muted.Render("Current Suit: ") +
+		lg.NewStyle().Bold(true).Foreground(m.Global.Theme.Text).Render(suitStr)
 }
 
 func (m *Model) renderPlayerSection() string {
-	statusView := gameview.RenderStatus(m.baseState.CurrentPlayer, m.baseState.MyTurn)
-	handView := gameview.RenderHand(m.baseState.Hand, m.selectedCardIdx, m.selectionLift, m.pickingSuit)
+	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
+	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingSuit)
 
 	sections := []string{statusView, handView}
 	if m.lastActionErr != nil {
-		errView := lg.NewStyle().Foreground(lg.Color("196")).Render(m.lastActionErr.Error())
+		errView := m.Global.Theme.ErrorText.Render(m.lastActionErr.Error())
 		sections = append(sections, errView)
 	}
 
@@ -186,13 +135,14 @@ func (m *Model) renderSuitPicker() string {
 		return ""
 	}
 
+	t := m.Global.Theme
 	renderedSuits := make([]string, 0, len(suitLabels))
 	for i, suitName := range suitLabels {
 		style := lg.NewStyle().Padding(0, 1).Border(lg.RoundedBorder())
 		if i == m.suitCursor {
-			style = style.BorderForeground(styles.Gold).Foreground(styles.Gold).Bold(true)
+			style = style.BorderForeground(t.Selection).Foreground(t.Selection).Bold(true)
 		} else {
-			style = style.BorderForeground(lg.Color("#555555")).Foreground(lg.Color("#AAAAAA"))
+			style = style.BorderForeground(t.BorderMuted).Foreground(t.TextMuted)
 		}
 		renderedSuits = append(renderedSuits, style.Width(suitCellWidth).Align(lg.Center).Render(suitName))
 	}
@@ -203,11 +153,11 @@ func (m *Model) renderSuitPicker() string {
 
 	return lg.NewStyle().
 		Border(lg.RoundedBorder()).
-		BorderForeground(styles.Gold).
+		BorderForeground(t.Selection).
 		Padding(1, 2).
 		Render(
 			lg.JoinVertical(lg.Center,
-				lg.NewStyle().Bold(true).Foreground(styles.Gold).Render("Pick a suit:"),
+				lg.NewStyle().Bold(true).Foreground(t.Selection).Render("Pick a suit:"),
 				"",
 				pickerBox,
 			),

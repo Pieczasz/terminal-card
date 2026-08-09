@@ -8,13 +8,11 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestManager_New(t *testing.T) {
@@ -91,7 +89,7 @@ func TestManager_LeaveLobby(t *testing.T) {
 	require.ErrorContains(t, err, "lobby not found")
 }
 
-func TestManager_PublicLobbies(t *testing.T) {
+func TestManager_BrowseLobbies_ListsOnlyPublicTables(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 
@@ -103,10 +101,10 @@ func TestManager_PublicLobbies(t *testing.T) {
 	l2, _ := m.New(p2, WithPrivate(true), WithCardGame(&db.Game{Name: "TestGame"}))
 	l3, _ := m.New(p3, WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
 
-	public := m.PublicLobbies(nil)
+	public := m.BrowseLobbies(nil, BrowseFilter{})
 	assert.Len(t, public, 2)
 
-	codes := []string{public[0].Code(), public[1].Code()}
+	codes := []string{public[0].Code, public[1].Code}
 	assert.Contains(t, codes, l1.Code())
 	assert.Contains(t, codes, l3.Code())
 	assert.NotContains(t, codes, l2.Code())
@@ -123,7 +121,7 @@ func TestManager_CodeCollisions(t *testing.T) {
 	assert.Len(t, code, 8)
 }
 
-func TestManager_PublicLobbiesCacheAndSorting(t *testing.T) {
+func TestManager_BrowseLobbiesCacheAndSorting(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 
@@ -132,15 +130,13 @@ func TestManager_PublicLobbiesCacheAndSorting(t *testing.T) {
 
 	_, _ = m.New(p1, WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
 
-	p2.DatabaseUser.Rankings = []db.Ranking{
-		{Game: db.Game{Name: "CrazyEights"}, Elo: 3000},
-	}
+	p2.Ratings = map[string]uint32{"CrazyEights": 3000}
 
-	public1 := m.PublicLobbies(p2)
+	public1 := m.BrowseLobbies(p2, BrowseFilter{})
 	assert.Len(t, public1, 1)
 
-	public2 := m.PublicLobbies(p2)
-	assert.Equal(t, public1[0].Code(), public2[0].Code())
+	public2 := m.BrowseLobbies(p2, BrowseFilter{})
+	assert.Equal(t, public1[0].Code, public2[0].Code)
 }
 
 func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
@@ -248,28 +244,28 @@ func TestValidLobbyCode(t *testing.T) {
 	assert.False(t, ValidLobbyCode("ABCD-234"))
 }
 
-func TestManager_PublicLobbies_Sorting(t *testing.T) {
+func TestManager_BrowseLobbies_ClosestRatingFirst(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 
 	p1 := mockPlayer("p1", 1) // average Elo = 1000
-	p1.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 1000}}
+	p1.Ratings = map[string]uint32{"Game": 1000}
 
 	p2 := mockPlayer("p2", 2) // average Elo = 2000
-	p2.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 2000}}
+	p2.Ratings = map[string]uint32{"Game": 2000}
 
 	p3 := mockPlayer("p3", 3)
-	p3.DatabaseUser.Rankings = []db.Ranking{{Game: db.Game{Name: "Game"}, Elo: 3000}}
+	p3.Ratings = map[string]uint32{"Game": 3000}
 
 	l1, _ := m.New(p1, WithPrivate(false), WithCardGame(&db.Game{Name: "Game"}))
 	l2, _ := m.New(p2, WithPrivate(false), WithCardGame(&db.Game{Name: "Game"}))
 
 	// p3 has 3000, l2 has 2000 (diff 1000), l1 has 1000 (diff 2000)
 	// So l2 should be first.
-	public := m.PublicLobbies(p3)
+	public := m.BrowseLobbies(p3, BrowseFilter{})
 	assert.Len(t, public, 2)
-	assert.Equal(t, l2.Code(), public[0].Code())
-	assert.Equal(t, l1.Code(), public[1].Code())
+	assert.Equal(t, l2.Code(), public[0].Code)
+	assert.Equal(t, l1.Code(), public[1].Code)
 }
 
 func TestManager_WaitForFinalizers(t *testing.T) {
@@ -280,7 +276,11 @@ func TestManager_WaitForFinalizers(t *testing.T) {
 
 	m = NewManager(context.Background(), nil)
 	require.True(t, m.registerFinalizer())
-	assert.False(t, m.WaitForFinalizers(50*time.Millisecond), "an in-flight write blocks the drain")
+	// Guarded: a timeout that is not honored blocks here forever, and a suite that
+	// hangs says far less than one that fails.
+	runWithTimeout(t, 5*time.Second, func() {
+		assert.False(t, m.WaitForFinalizers(50*time.Millisecond), "an in-flight write blocks the drain")
+	})
 
 	m.finalizing.Done()
 	assert.True(t, m.WaitForFinalizers(time.Second), "drains once the write completes")
@@ -314,9 +314,8 @@ func TestManager_WaitForFinalizers_NilReceiver(t *testing.T) {
 	assert.True(t, m.WaitForFinalizers(time.Second))
 }
 
-// FuzzJoinLobbyByCode covers a trust boundary: the code is typed by a remote SSH
-// client, so arbitrary bytes reach the lookup. Nothing may panic, and no input may
-// smuggle a player into a lobby they were not invited to.
+// FuzzJoinLobbyByCode covers a trust boundary: the code is typed by a remote SSH client, so
+// arbitrary bytes reach the lookup.
 func FuzzJoinLobbyByCode(f *testing.F) {
 	f.Add("")
 	f.Add("ABCD1234")
@@ -327,11 +326,11 @@ func FuzzJoinLobbyByCode(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, code string) {
 		m := NewManager(context.Background(), nil)
-		host := &player.Player{ID: "host", DatabaseUser: &db.User{Model: gorm.Model{ID: 1}}}
+		host := &game.Player{ID: "host", UserID: 1}
 		l, err := m.New(host, WithCardGame(&db.Game{Name: "Poker"}), WithMaxPlayers(4))
 		require.NoError(t, err)
 
-		joiner := &player.Player{ID: "joiner", DatabaseUser: &db.User{Model: gorm.Model{ID: 2}}}
+		joiner := &game.Player{ID: "joiner", UserID: 2}
 		err = m.JoinLobbyByCode(code, joiner)
 
 		if code == l.Code() {
@@ -343,4 +342,210 @@ func FuzzJoinLobbyByCode(f *testing.F) {
 		assert.False(t, l.HasPlayer(joiner), "a rejected code must not add the player")
 		assert.Nil(t, m.FindLobbyByPlayer(joiner), "a rejected join leaves no membership")
 	})
+}
+
+// The manager holds the app context so a finalizing write can be cut short at shutdown.
+func TestManager_ShutdownCtx(t *testing.T) {
+	t.Parallel()
+
+	t.Run("carries the context it was built with", func(t *testing.T) {
+		t.Parallel()
+		ctx, cancel := context.WithCancel(context.Background())
+		m := NewManager(ctx, nil)
+
+		cancel()
+
+		select {
+		case <-m.shutdownCtx().Done():
+		case <-time.After(time.Second):
+			t.Fatal("cancelling the app context must reach the manager")
+		}
+	})
+
+	t.Run("a nil context still yields a usable one", func(t *testing.T) {
+		t.Parallel()
+		var missing context.Context
+		m := NewManager(missing, nil)
+
+		ctx := m.shutdownCtx()
+		require.NotNil(t, ctx)
+		assert.NoError(t, ctx.Err(), "and it must not arrive already cancelled")
+	})
+
+	t.Run("a nil manager still yields a usable one", func(t *testing.T) {
+		t.Parallel()
+		var m *Manager
+		assert.NotNil(t, m.shutdownCtx())
+	})
+}
+
+// A non-positive timeout means "wait as long as it takes", so the only thing worth
+// asserting is the ordering: the drain must still be blocked while the write is in
+// flight, and must return once it finishes. The return value is true either way.
+func TestManager_WaitForFinalizers_ZeroTimeoutWaitsIndefinitely(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	require.True(t, m.registerFinalizer())
+
+	drained := make(chan bool, 1)
+	go func() {
+		drained <- m.WaitForFinalizers(0)
+	}()
+
+	select {
+	case <-drained:
+		t.Fatal("zero returned while a write was still in flight")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	m.finalizing.Done()
+	select {
+	case ok := <-drained:
+		assert.True(t, ok)
+	case <-time.After(5 * time.Second):
+		t.Fatal("zero never returned after the write finished")
+	}
+}
+
+// The cache exists to absorb repeated browses - every player sitting on the browse screen
+// re-reads on a timer - not to hide changes.
+func TestManager_BrowseLobbiesReuseTheScanUntilSomethingChanges(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+
+	_, err := m.New(mockPlayer("p1", 1), WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
+
+	m.mu.RLock()
+	scannedAt := m.cacheLastUpdated
+	m.mu.RUnlock()
+
+	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
+	m.mu.RLock()
+	assert.Equal(t, scannedAt, m.cacheLastUpdated, "a second browse with nothing changed reuses the scan")
+	m.mu.RUnlock()
+}
+
+// A table appearing or closing has to show up on the next browse.
+func TestManager_BrowseLobbiesSeeChangesImmediately(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+
+	first, err := m.New(mockPlayer("p1", 1), WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
+
+	_, err = m.New(mockPlayer("p2", 2), WithPrivate(false), WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 2, "a new table is offered at once")
+
+	m.RemoveLobby(first.Code())
+	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1, "and a closed one stops being offered")
+}
+
+// A table that starts playing is no longer joinable, so it has to leave the browse list
+// even though nothing went through the manager to remove it.
+func TestManager_BrowseLobbiesDropTablesThatStartPlaying(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	leader := mockPlayer("p1", 1)
+	guest := mockPlayer("p2", 2)
+
+	l, err := m.New(leader, WithPrivate(false), WithMaxPlayers(2), WithCardGame(&db.Game{Name: "Mock"}))
+	require.NoError(t, err)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
+
+	registry := game.NewRegistry()
+	rules := new(MockRules)
+	rules.On("MinPlayers").Return(2)
+	rules.On("MaxPlayers").Return(4)
+	rules.On("InitialDeck").Return(deck.StandardDeck())
+	rules.On("InitialDealCount").Return(2)
+	rules.On("OnGameStart", mock.Anything).Return(nil)
+	registerGame(registry, "Mock", rules)
+
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	require.Equal(t, InGame, l.state)
+
+	assert.Empty(t, m.BrowseLobbies(nil, BrowseFilter{}), "a table in play is not on offer")
+}
+
+// A stale player->lobby entry has to be dropped when it is noticed, or the player is told
+// they are already in a lobby that no longer holds them.
+func TestManager_FindLobbyByPlayer_DropsTheStaleEntry(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	leader := mockPlayer("p1", 1)
+
+	l, err := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+
+	l.mu.Lock()
+	l.leader = mockPlayer("someone-else", 2)
+	l.mu.Unlock()
+
+	assert.Nil(t, m.FindLobbyByPlayer(leader))
+
+	m.mu.RLock()
+	_, stillMapped := m.playerLobby[leader.ID]
+	m.mu.RUnlock()
+	assert.False(t, stillMapped, "the stale entry must be gone, not merely ignored")
+
+	_, err = m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
+	assert.NoError(t, err, "so the player can open a lobby again")
+}
+
+// RemoveLobby is the only place a lobby's broadcaster is torn down.
+func TestManager_RemoveLobbyClosesSubscribers(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+	leader := mockPlayer("p1", 1)
+	guest := mockPlayer("p2", 2)
+
+	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
+	require.NoError(t, err)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	ch, err := l.Subscribe(leader.ID)
+	require.NoError(t, err)
+
+	m.RemoveLobby(l.Code())
+
+	select {
+	case _, ok := <-ch:
+		assert.False(t, ok, "every subscriber must be closed with the lobby")
+	case <-time.After(time.Second):
+		t.Fatal("RemoveLobby left a subscriber open")
+	}
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	assert.Empty(t, m.lobbies)
+	assert.Empty(t, m.playerLobby, "both the leader and the guest are released")
+}
+
+// A ranking row with no game name matches nothing, so it must not become the target rating
+// for every lobby: the browse list would then be sorted around a rating the player does not have.
+func TestManager_BrowseLobbies_IgnoresUnnamedRankings(t *testing.T) {
+	t.Parallel()
+	m := NewManager(context.Background(), nil)
+
+	weak, err := m.New(mockPlayer("weak", 1), WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
+	require.NoError(t, err)
+	strongLeader := mockPlayer("strong", 2)
+	strongLeader.Ratings = map[string]uint32{"CrazyEights": 3000}
+	strong, err := m.New(strongLeader, WithPrivate(false), WithCardGame(&db.Game{Name: "CrazyEights"}))
+	require.NoError(t, err)
+
+	browser := mockPlayer("browser", 3)
+	browser.Ratings = map[string]uint32{"CrazyEights": 3000}
+
+	public := m.BrowseLobbies(browser, BrowseFilter{})
+
+	require.Len(t, public, 2)
+	assert.Equal(t, strong.Code(), public[0].Code, "the closest table by the player's own rating comes first")
+	assert.Equal(t, weak.Code(), public[1].Code)
 }

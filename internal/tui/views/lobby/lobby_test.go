@@ -8,7 +8,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
 	tea "charm.land/bubbletea/v2"
@@ -34,11 +33,11 @@ func testRegistry() *game.Registry {
 }
 
 // leaderView returns the lobby view as seen by the lobby's leader.
-func leaderView(t *testing.T) (*model, *lobby.Lobby, *lobby.Manager) {
+func leaderView(t *testing.T) (*model, *lobby.Lobby) {
 	t.Helper()
 	manager := lobby.NewManager(context.Background(), nil)
 	leaderUser := testUser(1, "alice")
-	leader := &player.Player{ID: "1", DatabaseUser: leaderUser}
+	leader := lobby.NewPlayer(leaderUser)
 
 	l, err := manager.New(leader,
 		lobby.WithCardGame(&db.Game{Name: testGameName}),
@@ -56,7 +55,7 @@ func leaderView(t *testing.T) (*model, *lobby.Lobby, *lobby.Manager) {
 	}
 	m, ok := New(global, l).(*model)
 	require.True(t, ok)
-	return m, l, manager
+	return m, l
 }
 
 // keyMsg builds the message Bubble Tea would deliver for a keystroke. Named keys
@@ -70,6 +69,8 @@ func keyMsg(key string) tea.KeyPressMsg {
 		return tea.KeyPressMsg{Code: tea.KeyEnter}
 	case "space":
 		return tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}
+	case "ctrl+c":
+		return tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl}
 	default:
 		return tea.KeyPressMsg{Code: rune(key[0]), Text: key}
 	}
@@ -101,7 +102,7 @@ func TestHandleKey_Navigation(t *testing.T) {
 	for key, want := range cases {
 		t.Run("key_"+key, func(t *testing.T) {
 			t.Parallel()
-			m, _, _ := leaderView(t)
+			m, _ := leaderView(t)
 			_, cmd := press(m, key)
 			assert.Equal(t, want, routeOf(t, cmd))
 			assert.Nil(t, m.lobbyChan, "navigating away releases the lobby subscription")
@@ -111,7 +112,7 @@ func TestHandleKey_Navigation(t *testing.T) {
 
 func TestHandleKey_LeaveConfirmFlow(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 
 	_, cmd := press(m, "x")
 	assert.True(t, m.showLeaveConfirm)
@@ -132,7 +133,7 @@ func TestHandleKey_LeaveConfirmFlow(t *testing.T) {
 
 func TestHandleKey_CursorStaysInBounds(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 
 	for range 10 {
 		press(m, "k")
@@ -147,7 +148,7 @@ func TestHandleKey_CursorStaysInBounds(t *testing.T) {
 
 func TestAdjustSetting_MaxPlayersRespectsRulesBounds(t *testing.T) {
 	t.Parallel()
-	m, l, _ := leaderView(t)
+	m, l := leaderView(t)
 
 	rulesMin, rulesMax := m.gamePlayerBounds()
 	require.Equal(t, 2, rulesMin)
@@ -168,7 +169,7 @@ func TestAdjustSetting_MaxPlayersRespectsRulesBounds(t *testing.T) {
 
 func TestAdjustSetting_TogglesVisibilityAndMode(t *testing.T) {
 	t.Parallel()
-	m, l, _ := leaderView(t)
+	m, l := leaderView(t)
 
 	m.cursor = cursorVisibility
 	press(m, "l")
@@ -184,7 +185,7 @@ func TestAdjustSetting_TogglesVisibilityAndMode(t *testing.T) {
 // The game row is deliberately fixed once a lobby exists.
 func TestAdjustSetting_GameRowIsNoOp(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 
 	m.cursor = cursorGame
 	before := m.gameIndex
@@ -195,7 +196,7 @@ func TestAdjustSetting_GameRowIsNoOp(t *testing.T) {
 
 func TestHandleLobbyEvent_ClosedGoesHome(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 
 	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventLobbyClosed}))
 	assert.Equal(t, router.RouteHome, routeOf(t, cmd))
@@ -206,11 +207,11 @@ func TestHandleLobbyEvent_ClosedGoesHome(t *testing.T) {
 // armed so the view keeps receiving lobby events.
 func TestHandleLobbyEvent_UnknownGameKeepsListening(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 	m.global.GameRegistry = game.NewRegistry() // game no longer registered
 
 	engine := game.NewEngine(&crazyeight.Rules{},
-		[]*player.Player{{ID: "1"}, {ID: "2"}}, nil)
+		[]*game.Player{{ID: "1"}, {ID: "2"}}, nil)
 
 	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventGameStarted, Payload: engine}))
 	require.NotNil(t, cmd, "listener must stay armed")
@@ -219,7 +220,7 @@ func TestHandleLobbyEvent_UnknownGameKeepsListening(t *testing.T) {
 
 func TestView_RendersLobbyAndConfirmPopup(t *testing.T) {
 	t.Parallel()
-	m, _, _ := leaderView(t)
+	m, _ := leaderView(t)
 
 	out := m.View().Content
 	assert.Contains(t, out, "alice")

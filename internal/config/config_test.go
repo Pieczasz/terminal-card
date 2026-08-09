@@ -1,6 +1,9 @@
 package config_test
 
 import (
+	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -82,19 +85,46 @@ func TestValidate_RateLimit(t *testing.T) {
 	assert.Contains(t, err.Error(), "RATE_LIMIT_CONNECTIONS")
 }
 
+// Every field has to survive the trip, whatever the password looks like: the old
+// keyword/value DSN let a blank or spaced password absorb the keywords after it, and
+// the server connected to a different database than the one it was configured with.
 func TestDSN(t *testing.T) {
 	t.Parallel()
-	cfg := &config.Config{
-		DBHost:     "localhost",
-		DBUser:     "postgres",
-		DBPassword: "secret",
-		DBName:     "terminal_card",
-		DBPort:     5432,
-		DBSSLMode:  "disable",
+
+	passwords := []struct {
+		name  string
+		value string
+	}{
+		{name: "ordinary", value: "secret"},
+		{name: "empty", value: ""},
+		{name: "spaced", value: "two words"},
+		{name: "looks like more keywords", value: " dbname=other sslmode=disable"},
 	}
-	assert.Contains(t, cfg.DSN(), "host=localhost")
-	assert.Contains(t, cfg.DSN(), "dbname=terminal_card")
-	assert.Contains(t, cfg.DSN(), "sslmode=disable")
+
+	for _, pw := range passwords {
+		t.Run(pw.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{
+				DBHost:     "localhost",
+				DBUser:     "postgres",
+				DBPassword: pw.value,
+				DBName:     "terminal_card",
+				DBPort:     5432,
+				DBSSLMode:  "disable",
+			}
+
+			parsed, err := url.Parse(cfg.DSN())
+			require.NoError(t, err)
+
+			assert.Equal(t, "localhost:5432", parsed.Host)
+			assert.Equal(t, "/terminal_card", parsed.Path)
+			assert.Equal(t, "postgres", parsed.User.Username())
+			password, _ := parsed.User.Password()
+			assert.Equal(t, pw.value, password, "the driver must read back the configured password")
+			assert.Equal(t, "disable", parsed.Query().Get("sslmode"))
+			assert.Equal(t, "UTC", parsed.Query().Get("TimeZone"))
+		})
+	}
 }
 
 func TestValidate_InsecureDBRemoteHost(t *testing.T) {
@@ -113,8 +143,7 @@ func TestValidate_InsecureDBRemoteHost(t *testing.T) {
 	assert.Contains(t, err.Error(), "DB_SSLMODE=disable")
 }
 
-// An env var that is present but blank must not defeat the default. A blank
-// SSH_KEY_PATH in a .env or compose file previously reached keygen.New("").
+// An env var that is present but blank must not defeat the default.
 func TestLoad_BlankEnvFallsBackToDefault(t *testing.T) {
 	blanked := []string{
 		"SERVER_HOST", "SSH_KEY_PATH", "DB_HOST", "DB_USER", "DB_NAME",
@@ -136,4 +165,161 @@ func TestLoad_BlankEnvFallsBackToDefault(t *testing.T) {
 	assert.Equal(t, "disable", cfg.DBSSLMode)
 	assert.Equal(t, "localhost:4317", cfg.OTelEndpoint)
 	assert.NotEmpty(t, cfg.ServiceVersion, "version always resolves to something")
+}
+
+// Trusting X-Forwarded-For on a directly reachable listener lets any caller forge an
+// X-Forwarded-For on a directly reachable listener can be forged, so off is the only
+// safe default and turning it on takes an explicit opt-in.
+func TestLoad_TrustProxyDefaultsToOff(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "unset", value: "", want: false},
+		{name: "explicitly false", value: "false", want: false},
+		{name: "anything else is not an opt-in", value: "1", want: false},
+		{name: "yes is not an opt-in either", value: "yes", want: false},
+		{name: "opted in", value: "true", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ENV", "development")
+			t.Setenv("API_TRUST_PROXY", tt.value)
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.APITrustProxy)
+		})
+	}
+}
+
+// An explicitly configured SSL mode has to survive Load: silently replacing it with the
+// environment default would either weaken or break a deployment.
+func TestLoad_ExplicitSSLModeIsHonored(t *testing.T) {
+	t.Setenv("ENV", "production")
+	t.Setenv("DB_PASSWORD", "secret")
+	t.Setenv("DB_SSLMODE", "verify-full")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "verify-full", cfg.DBSSLMode)
+}
+
+// .env is a development convenience.
+func TestResolveEnv_DotEnvLoadedOutsideProductionOnly(t *testing.T) {
+	tests := []struct {
+		name       string
+		env        string
+		wantDBName string
+	}{
+		{name: "development reads .env", env: "development", wantDBName: "from_dotenv"},
+		{name: "staging reads .env", env: "staging", wantDBName: "from_dotenv"},
+		{name: "production ignores .env", env: "production", wantDBName: "terminal_card"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			require.NoError(t, os.WriteFile(filepath.Join(dir, ".env"), []byte("DB_NAME=from_dotenv\n"), 0o600))
+			t.Chdir(dir)
+
+			t.Setenv("ENV", tt.env)
+			t.Setenv("DB_PASSWORD", "secret")
+			// godotenv never overrides a variable that is already present, so this one
+			// has to be genuinely absent for the file to be observable at all.
+			t.Setenv("DB_NAME", "")
+			require.NoError(t, os.Unsetenv("DB_NAME"))
+
+			cfg, err := config.Load()
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantDBName, cfg.DBName)
+			assert.Equal(t, tt.env, cfg.Env)
+		})
+	}
+}
+
+// An unrecognised ENV is not a reason to guess production behavior.
+func TestResolveEnv_UnknownFallsBackToDevelopment(t *testing.T) {
+	t.Setenv("ENV", "wat")
+
+	cfg, err := config.Load()
+	require.NoError(t, err)
+	assert.Equal(t, "development", cfg.Env)
+}
+
+// Each of these limits is "at least one", so one itself has to pass.
+func TestValidate_LowestAllowedValuesAreValid(t *testing.T) {
+	t.Parallel()
+
+	base := func() *config.Config {
+		return &config.Config{
+			Env:                  "development",
+			RateLimitCount:       1,
+			RateLimitWindow:      time.Millisecond,
+			DBMaxOpenConnections: 1,
+			MaxConnections:       1,
+		}
+	}
+
+	require.NoError(t, base().Validate(), "the documented minimum of each limit is valid")
+
+	tests := []struct {
+		name    string
+		breakIt func(*config.Config)
+		want    string
+	}{
+		{name: "no connections allowed", breakIt: func(c *config.Config) { c.RateLimitCount = 0 }, want: "RATE_LIMIT_CONNECTIONS"},
+		{name: "sub-millisecond window", breakIt: func(c *config.Config) { c.RateLimitWindow = time.Microsecond }, want: "RATE_LIMIT_WINDOW_MS"},
+		{name: "no db connections", breakIt: func(c *config.Config) { c.DBMaxOpenConnections = 0 }, want: "DB_MAX_OPEN_CONNS"},
+		// LimitListener accepts nothing at all with a non-positive limit, so the
+		// server would come up healthy and refuse every player.
+		{name: "no connections at all", breakIt: func(c *config.Config) { c.MaxConnections = 0 }, want: "MAX_CONNECTIONS"},
+		{name: "negative connections", breakIt: func(c *config.Config) { c.MaxConnections = -1 }, want: "MAX_CONNECTIONS"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := base()
+			tt.breakIt(cfg)
+
+			err := cfg.Validate()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.want)
+		})
+	}
+}
+
+// String is the only thing standing between a careless log line and the database password
+// ending up in log storage, so it is checked directly.
+func TestConfig_String_RedactsThePassword(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{DBUser: "postgres", DBHost: "db", DBPassword: "super-secret-value"}
+
+	rendered := cfg.String()
+
+	assert.NotContains(t, rendered, "super-secret-value", "the password must never be formatted")
+	assert.Contains(t, rendered, "[REDACTED]")
+	assert.Contains(t, rendered, "postgres", "everything else still needs to be readable")
+	assert.Equal(t, "super-secret-value", cfg.DBPassword, "the config itself is not mutated")
+}
+
+func TestConfig_String_HandlesTheEmptyCases(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, "<nil>", (*config.Config)(nil).String())
+	assert.NotContains(t, (&config.Config{}).String(), "[REDACTED]", "no password, nothing to redact")
+}
+
+// DSN still carries the password; that is what the driver needs.
+func TestConfig_DSN_CarriesThePasswordAndStringDoesNot(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{DBHost: "db", DBUser: "u", DBPassword: "pw", DBName: "n", DBPort: 5432, DBSSLMode: "require"}
+
+	assert.Contains(t, cfg.DSN(), ":pw@")
+	assert.NotContains(t, cfg.String(), "pw")
 }

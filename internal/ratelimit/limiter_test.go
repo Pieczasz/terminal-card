@@ -86,8 +86,18 @@ func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 
 	require.True(t, limiter.Allow("a"))
 	require.True(t, limiter.Allow("b"))
-	require.False(t, limiter.Allow("c"), "new key should be rejected when at capacity")
-	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
+	require.True(t, limiter.Allow("c"), "a caller the table has no room for is still served")
+	assert.LessOrEqual(t, limiter.Size(), 2, "and the table stays bounded")
+}
+
+func TestSlidingWindowLimiter_EvictionKeepsTheTableBounded(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(64)
+
+	for i := range 1_000 {
+		require.True(t, limiter.Allow(strconv.Itoa(i)), "every first request is within budget")
+		require.LessOrEqual(t, limiter.Size(), 64)
+	}
 }
 
 func BenchmarkAllow(b *testing.B) {
@@ -106,4 +116,30 @@ func BenchmarkAllow(b *testing.B) {
 			}
 		})
 	}
+}
+
+func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
+	t.Parallel()
+
+	for _, n := range []int{0, -1} {
+		limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(n)
+
+		assert.Truef(t, limiter.Allow("1.1.1.1"), "WithMaxKeys(%d) must keep the default cap", n)
+	}
+}
+
+func TestSlidingWindowLimiter_SweepsExpiredKeysPeriodically(t *testing.T) {
+	t.Parallel()
+	const window = 20 * time.Millisecond
+	limiter := ratelimit.NewSlidingWindowLimiter(1, window)
+
+	for i := range 63 {
+		require.True(t, limiter.Allow(strconv.Itoa(i)))
+	}
+	require.Equal(t, 63, limiter.Size(), "nothing is swept before the sweep is due")
+
+	time.Sleep(4 * window)
+	require.True(t, limiter.Allow("late"), "the 64th call is the one that sweeps")
+
+	assert.Equal(t, 1, limiter.Size(), "every caller that has gone quiet is dropped")
 }
