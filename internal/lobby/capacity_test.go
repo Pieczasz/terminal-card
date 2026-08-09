@@ -10,10 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// A broadcaster sized to the seats a table started with has no room for the
-// subscriptions that table later needs: SetMaxPlayers raises the roster after the
-// broadcaster exists, and a reconnecting player briefly holds two. ErrAtCapacity
-// here is a lobby view that never updates again.
 func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -36,8 +32,6 @@ func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 		require.NoErrorf(t, err, "seat %s was refused a lobby feed", id)
 	}
 
-	// A reconnect overlaps the subscription it replaces, so the seat needs a second
-	// slot before the first one is released.
 	_, err = l.Subscribe(leader.ID)
 	require.NoError(t, err, "a reconnecting player must not be refused")
 }

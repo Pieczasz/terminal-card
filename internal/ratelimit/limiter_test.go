@@ -80,9 +80,6 @@ func TestSlidingWindowLimiter_WindowExpiryEvicts(t *testing.T) {
 	assert.Equal(t, 1, limiter.Size())
 }
 
-// A full key table must not become a global lockout: filling it with throwaway
-// addresses is cheap, and refusing every unseen caller from then on denies the
-// service to everybody. Capacity is held by evicting instead.
 func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 	t.Parallel()
 	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(2)
@@ -93,8 +90,6 @@ func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 	assert.LessOrEqual(t, limiter.Size(), 2, "and the table stays bounded")
 }
 
-// Eviction is what keeps the cap meaningful: a long flood of one-off keys must
-// neither grow the table nor start refusing the callers behind it.
 func TestSlidingWindowLimiter_EvictionKeepsTheTableBounded(t *testing.T) {
 	t.Parallel()
 	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(64)
@@ -123,8 +118,6 @@ func BenchmarkAllow(b *testing.B) {
 	}
 }
 
-// A non-positive cap would refuse every caller the limiter has not seen before, so it has
-// to be ignored rather than applied.
 func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
 	t.Parallel()
 
@@ -135,12 +128,8 @@ func TestSlidingWindowLimiter_NonPositiveMaxKeysIsIgnored(t *testing.T) {
 	}
 }
 
-// Entries for callers who have gone quiet are swept periodically, not only when the key cap
-// is reached: without it a burst of one-off addresses stays resident for as long as the process runs.
 func TestSlidingWindowLimiter_SweepsExpiredKeysPeriodically(t *testing.T) {
 	t.Parallel()
-	// The sweep runs every 64th call, so the window has to be short enough that the
-	// first 63 callers have expired by the time the 64th arrives.
 	const window = 20 * time.Millisecond
 	limiter := ratelimit.NewSlidingWindowLimiter(1, window)
 

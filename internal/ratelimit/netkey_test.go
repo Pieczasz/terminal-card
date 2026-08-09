@@ -34,8 +34,6 @@ func TestNetKey(t *testing.T) {
 	}
 }
 
-// The whole point of NetKey: rotating through the addresses of one allocation must
-// not buy a fresh budget. Without the /64 collapse each of these keys differently.
 func TestNetKey_AddressesInOneAllocationShareAKey(t *testing.T) {
 	t.Parallel()
 
@@ -51,7 +49,6 @@ func TestNetKey_AddressesInOneAllocationShareAKey(t *testing.T) {
 	}
 }
 
-// A neighbouring /64 is a different customer and keeps its own budget.
 func TestNetKey_AdjacentAllocationsDoNotShareAKey(t *testing.T) {
 	t.Parallel()
 
@@ -61,8 +58,6 @@ func TestNetKey_AdjacentAllocationsDoNotShareAKey(t *testing.T) {
 	)
 }
 
-// NetKey sits on the first thing an unauthenticated client sends us, so it has to
-// survive anything net.SplitHostPort hands back.
 func FuzzNetKey(f *testing.F) {
 	for _, seed := range []string{"", "198.51.100.7", "::ffff:0.0.0.0", "2001:db8::1", "fe80::1%eth0", "0", "::/0", "999.999.999.999"} {
 		f.Add(seed)
@@ -74,8 +69,6 @@ func FuzzNetKey(f *testing.F) {
 		if ip != "" {
 			require.NotEmpty(t, key, "a non-empty address must map to a non-empty key, or every client shares one budget")
 		}
-		// Re-keying an already-derived key must be a no-op; a prefix that fed back
-		// into ParseAddr and collapsed further would merge unrelated networks.
 		assert.Equal(t, key, ratelimit.NetKey(key))
 	})
 }
