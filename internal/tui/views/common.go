@@ -1,9 +1,8 @@
 package views
 
 import (
-	"fmt"
-
-	"github.com/Pieczasz/terminal-card/internal/player"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
@@ -12,11 +11,35 @@ import (
 )
 
 // SessionPlayer builds the player for the authenticated user, or nil when unauthenticated.
-func SessionPlayer(g router.GlobalContext) *player.Player {
-	if g.User == nil {
-		return nil
+func SessionPlayer(g router.GlobalContext) *game.Player {
+	return lobby.NewPlayer(g.User)
+}
+
+// SessionPlayerID is the seat key the engine and the lobby know this user by, empty
+// when unauthenticated. It reads the ID off the player rather than formatting the
+// user ID again: a subscription keyed on a different spelling silently never fires.
+func SessionPlayerID(g router.GlobalContext) string {
+	p := SessionPlayer(g)
+	if p == nil {
+		return ""
 	}
-	return &player.Player{ID: fmt.Sprint(g.User.ID), DatabaseUser: g.User}
+	return p.ID
+}
+
+// ListenOn delivers the next value from ch as a message. A closed or absent channel
+// ends the stream by returning a nil message rather than blocking forever, so a view
+// that has released its subscription simply stops updating.
+func ListenOn[T any](ch <-chan T, wrap func(T) tea.Msg) tea.Cmd {
+	return func() tea.Msg {
+		if ch == nil {
+			return nil
+		}
+		v, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return wrap(v)
+	}
 }
 
 // globalActionRoutes maps the shortcut keys advertised in styles.GlobalActions to

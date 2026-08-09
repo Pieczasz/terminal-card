@@ -125,7 +125,7 @@ func FaceLines(t styles.Theme, card deck.Card) []string {
 // row because a fan has to cut a card off mid-face, and slicing a styled string by
 // display column is a good way to cut an escape sequence in half.
 func FaceCells(card deck.Card, suit string) [][]string {
-	rank := rankLabel(card.Rank)
+	rank := RankLabel(card.Rank)
 	rows := make([][]string, 0, FaceHeight)
 	rows = append(rows, rankRow(rank, false))
 	rows = append(rows, artRows(card.Rank, suit)...)
@@ -213,11 +213,7 @@ func blankRow() []string {
 	return cells
 }
 
-// SuitGlyph is the one-column symbol for a suit, and the style it is drawn in.
-func SuitGlyph(t styles.Theme, suit deck.Suit) (string, lg.Style) {
-	return suitStyle(t, suit)
-}
-
+// suitStyle is the one-column symbol for a suit, and the style it is drawn in.
 func suitStyle(t styles.Theme, suit deck.Suit) (string, lg.Style) {
 	switch suit {
 	case deck.Hearts:
@@ -244,6 +240,9 @@ var rankLabels = map[deck.Rank]string{
 	deck.DrawTwo: "+2", deck.Wild: "W", deck.WildDrawFour: "+4",
 }
 
-func rankLabel(rank deck.Rank) string {
+// RankLabel is the rank as it is printed on a card, for callers drawing a card too
+// small to hold a face. It is the same table the faces use, so a mini card and the
+// card it stands for can never disagree about what rank they are.
+func RankLabel(rank deck.Rank) string {
 	return rankLabels[rank]
 }
