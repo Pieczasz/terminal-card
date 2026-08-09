@@ -9,7 +9,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
@@ -36,24 +35,12 @@ type model struct {
 }
 
 func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return lobbyMsg(msg)
-	}
+	return views.ListenOn(ch, func(ev lobby.Event) tea.Msg { return lobbyMsg(ev) })
 }
 
 // New returns a new lobby model. We pass the current active lobby through Context.
 func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
-	playerID := ""
-	if global.User != nil {
-		playerID = fmt.Sprint(global.User.ID)
-	}
+	playerID := views.SessionPlayerID(global)
 	var ch <-chan lobby.Event
 	var subErr error
 	if activeLobby != nil {
@@ -94,27 +81,21 @@ func (m *model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
-// Elo is retrieved from preloaded Rankings, which is updated whenever a game ends.
-func (m *model) getElo(p *player.Player) uint32 {
-	if p == nil || p.DatabaseUser == nil {
+// Elo comes from the ratings the player was seated with, which are refreshed from
+// the database whenever a game ends.
+func (m *model) getElo(p *game.Player) uint32 {
+	if p == nil {
 		return elo.ToUint32(elo.DefaultRating)
 	}
-	gameName := m.currentLobby.GameName()
-	for _, r := range p.DatabaseUser.Rankings {
-		if r.Game.Name == gameName {
-			return r.Elo
-		}
+	if rating, ok := p.Ratings[m.currentLobby.GameName()]; ok {
+		return rating
 	}
 	return elo.ToUint32(elo.DefaultRating)
 }
 
 func (m *model) unsubscribe() {
 	if m.currentLobby != nil && m.lobbyChan != nil {
-		playerID := ""
-		if m.global.User != nil {
-			playerID = fmt.Sprint(m.global.User.ID)
-		}
-		m.currentLobby.Unsubscribe(playerID, m.lobbyChan)
+		m.currentLobby.Unsubscribe(views.SessionPlayerID(m.global), m.lobbyChan)
 		m.lobbyChan = nil
 	}
 }
@@ -131,7 +112,7 @@ func (m *model) gamePlayerBounds() (minPlayers, maxPlayers int) {
 	return rules.MinPlayers(), rules.MaxPlayers()
 }
 
-func (m *model) selfPlayer() *player.Player {
+func (m *model) selfPlayer() *game.Player {
 	return views.SessionPlayer(m.global)
 }
 
@@ -229,7 +210,7 @@ func (m *model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) adjustSetting(self *player.Player, delta int) {
+func (m *model) adjustSetting(self *game.Player, delta int) {
 	switch m.cursor {
 	case cursorMaxPlayers:
 		rulesMin, rulesMax := m.gamePlayerBounds()
@@ -399,7 +380,7 @@ func (m *model) renderPlayerList(isLeader bool) []string {
 
 	leader := m.currentLobby.Leader()
 	rows = append(rows, fmt.Sprintf("  %s %s (Elo: %d)%s",
-		m.global.Theme.HostTag.Render("[Leader]"), leader.Username(), m.getElo(leader), m.readyMark(leader)))
+		m.global.Theme.HostTag.Render("[Leader]"), leader.DisplayName(), m.getElo(leader), m.readyMark(leader)))
 
 	for i, g := range guests {
 		cursor := "  "
@@ -408,7 +389,7 @@ func (m *model) renderPlayerList(isLeader bool) []string {
 			cursor = "> "
 		}
 		row := fmt.Sprintf("%s%s %s (Elo: %d)%s",
-			cursor, m.global.Theme.GuestTag.Render("[Guest] "), g.Username(), m.getElo(g), m.readyMark(g))
+			cursor, m.global.Theme.GuestTag.Render("[Guest] "), g.DisplayName(), m.getElo(g), m.readyMark(g))
 		if isSelected {
 			row = m.global.Theme.PlayerItemSelected.Render(row)
 		}
@@ -417,7 +398,7 @@ func (m *model) renderPlayerList(isLeader bool) []string {
 	return rows
 }
 
-func (m *model) readyMark(p *player.Player) string {
+func (m *model) readyMark(p *game.Player) string {
 	if !m.currentLobby.IsReady(p) {
 		return ""
 	}
