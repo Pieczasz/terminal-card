@@ -7,7 +7,6 @@ import (
 	"strings"
 
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 )
 
 func bettingRoundComplete(state *game.State, extra *State) bool {
@@ -149,14 +148,14 @@ func runShowdown(state *game.State, extra *State) error {
 
 // showdownWinners returns every non-folded player tying for the best hand, so a
 // split pot names all co-winners rather than only the first.
-func showdownWinners(state *game.State, extra *State, scores map[string]int) []*player.Player {
+func showdownWinners(state *game.State, extra *State, scores map[string]int) []*game.Player {
 	best := -1
 	for _, p := range state.Players {
 		if !isFolded(extra, p.ID) && scores[p.ID] > best {
 			best = scores[p.ID]
 		}
 	}
-	var winners []*player.Player
+	var winners []*game.Player
 	for _, p := range state.Players {
 		if !isFolded(extra, p.ID) && scores[p.ID] == best {
 			winners = append(winners, p)
@@ -238,7 +237,7 @@ func playerStillSeated(state *game.State, id string) bool {
 }
 
 func awardPots(state *game.State, extra *State, scores map[string]int) {
-	playerByID := map[string]*player.Player{}
+	playerByID := map[string]*game.Player{}
 	for _, p := range state.Players {
 		playerByID[p.ID] = p
 	}
@@ -277,7 +276,7 @@ func awardPots(state *game.State, extra *State, scores map[string]int) {
 	extra.MainPool = 0
 }
 
-func handScore(p *player.Player, extra *State) int {
+func handScore(p *game.Player, extra *State) int {
 	cards := slices.Clone(p.Cards)
 	cards = append(cards, extra.Table...)
 	return EvaluateHand(cards)
@@ -285,7 +284,7 @@ func handScore(p *player.Player, extra *State) int {
 
 // handScores evaluates each player's hand once, so callers avoid re-running the
 // allocating evaluator inside a sort comparator or per-pot loop.
-func handScores(players []*player.Player, extra *State) map[string]int {
+func handScores(players []*game.Player, extra *State) map[string]int {
 	scores := make(map[string]int, len(players))
 	for _, p := range players {
 		scores[p.ID] = handScore(p, extra)
@@ -293,7 +292,7 @@ func handScores(players []*player.Player, extra *State) map[string]int {
 	return scores
 }
 
-func awardUncontested(extra *State, winner *player.Player) {
+func awardUncontested(extra *State, winner *game.Player) {
 	extra.PlayerChips[winner.ID] += extra.MainPool
 	extra.MainPool = 0
 	extra.Pots = nil
@@ -303,7 +302,7 @@ func awardUncontested(extra *State, winner *player.Player) {
 // Leaving mid-match forfeits the match, so no leaver places above someone who saw
 // it through - but leavers are still ranked against each other on what they won
 // while they were playing, not on who happened to quit first.
-func rankPlayers(state *game.State, extra *State) []*player.Player {
+func rankPlayers(state *game.State, extra *State) []*game.Player {
 	byResult := resultOrder(state, extra)
 
 	seated := slices.Clone(state.Players)
@@ -318,9 +317,9 @@ func rankPlayers(state *game.State, extra *State) []*player.Player {
 // the stack a player walks away with; everyone who busted is level on chips, so how
 // long they lasted is what separates them. The hand-level keys only matter for
 // players who finished holding equal stacks.
-func resultOrder(state *game.State, extra *State) func(a, b *player.Player) int {
+func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
 	scores := handScores(slices.Concat(state.Players, state.LeftPlayers), extra)
-	return func(a, b *player.Player) int {
+	return func(a, b *game.Player) int {
 		ca, cb := extra.PlayerChips[a.ID], extra.PlayerChips[b.ID]
 		if ca != cb {
 			if ca > cb {

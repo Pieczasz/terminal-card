@@ -17,7 +17,7 @@ import (
 
 func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 
 	t.Run("successful registration", func(t *testing.T) {
@@ -58,7 +58,7 @@ func TestUserRepository_RegisterUserWithKey_ConcurrentSameFingerprint(t *testing
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 
 	const workers = 8
@@ -89,7 +89,7 @@ func TestUserRepository_RegisterUserWithKey_ConcurrentSameFingerprint(t *testing
 
 func TestUserRepository_LoadUserByFingerprint(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 
 	_, _, err := repo.RegisterUserWithKey(context.Background(), "player_two", "fingerprint_abc")
@@ -113,7 +113,7 @@ func TestUserRepository_LoadUserByFingerprint(t *testing.T) {
 
 func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 
 	user, key, err := repo.RegisterUserWithKey(context.Background(), "player_three", "fingerprint_xyz")
@@ -138,9 +138,68 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 		"last_used_at must move forward: got %v, seeded %v", updatedKey.LastUsedAt, stale)
 }
 
+// The public key carries a preloaded User, which GORM would happily upsert
+// alongside the timestamp - so every login became a write to the users table.
+func TestUserRepository_UpdateUserActivityDoesNotWriteUsers(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := NewUserRepository(database)
+	ctx := context.Background()
+
+	created, createdKey, err := repo.RegisterUserWithKey(ctx, "activity_user", "activity_fp")
+	require.NoError(t, err)
+	require.NoError(t, database.Delete(&db.User{}, created.ID).Error)
+
+	stale := time.Now().Add(-24 * time.Hour).UTC()
+	require.NoError(t, database.Model(&db.PublicKey{}).Where("id = ?", createdKey.ID).
+		Update("last_used_at", stale).Error)
+
+	// This is what the ssh auth path hands UpdateUserActivity: the key still
+	// resolves, but its preloaded User is empty now that the user is gone.
+	user, key, err := repo.LoadUserByFingerprint(ctx, "activity_fp")
+	require.NoError(t, err)
+
+	repo.UpdateUserActivity(ctx, user, key)
+
+	var reloaded db.PublicKey
+	require.NoError(t, database.First(&reloaded, createdKey.ID).Error)
+	assert.True(t, reloaded.LastUsedAt.After(stale),
+		"the association write must not take the key's own update down with it")
+
+	var users []db.User
+	require.NoError(t, database.Unscoped().Find(&users).Error)
+	require.Len(t, users, 1, "updating a key must not insert a user")
+	assert.True(t, users[0].DeletedAt.Valid, "a deleted user must not come back on login")
+}
+
+func TestUserRepository_BestPlayersCachesShortTables(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := NewUserRepository(database)
+	ctx := context.Background()
+
+	game := &db.Game{Name: "ShortTable"}
+	require.NoError(t, database.Create(game).Error)
+	u := &db.User{Username: "only_player"}
+	require.NoError(t, database.Create(u).Error)
+	require.NoError(t, database.Create(&db.Ranking{UserID: u.ID, GameID: game.ID, Elo: 1700}).Error)
+
+	best, err := repo.BestPlayers(ctx, 25, "")
+	require.NoError(t, err)
+	require.Len(t, best, 1)
+
+	// Fewer rankings than the limit still counts as a warm cache, so pulling the
+	// rows out from under it must not change the answer.
+	require.NoError(t, database.Where("1 = 1").Delete(&db.Ranking{}).Error)
+
+	cached, err := repo.BestPlayers(ctx, 25, "")
+	require.NoError(t, err)
+	assert.Len(t, cached, 1, "a table shorter than the limit must still be cached")
+}
+
 func TestUserRepository_BestPlayers(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 	ctx := context.Background()
 
@@ -153,21 +212,54 @@ func TestUserRepository_BestPlayers(t *testing.T) {
 		database.Create(&db.Ranking{UserID: u.ID, GameID: game.ID, Elo: uint32(1000 + i*100)})
 	}
 
-	best, err := repo.BestPlayers(ctx, 3)
+	best, err := repo.BestPlayers(ctx, 3, "")
 	assert.NoError(t, err)
 	assert.Len(t, best, 3)
 	assert.Equal(t, uint32(1500), best[0].Elo)
 	assert.Equal(t, uint32(1400), best[1].Elo)
 	assert.Equal(t, uint32(1300), best[2].Elo)
 
-	bestCached, err := repo.BestPlayers(ctx, 2)
+	bestCached, err := repo.BestPlayers(ctx, 2, "")
 	assert.NoError(t, err)
 	assert.Len(t, bestCached, 2)
 }
 
+func TestUserRepository_BestPlayers_FiltersByGame(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := NewUserRepository(database)
+	ctx := context.Background()
+
+	poker := &db.Game{Name: "Poker"}
+	uno := &db.Game{Name: "Uno"}
+	require.NoError(t, database.Create(poker).Error)
+	require.NoError(t, database.Create(uno).Error)
+
+	alice := &db.User{Username: "alice"}
+	bob := &db.User{Username: "bob"}
+	require.NoError(t, database.Create(alice).Error)
+	require.NoError(t, database.Create(bob).Error)
+	require.NoError(t, database.Create(&db.Ranking{UserID: alice.ID, GameID: poker.ID, Elo: 1800}).Error)
+	require.NoError(t, database.Create(&db.Ranking{UserID: bob.ID, GameID: uno.ID, Elo: 1900}).Error)
+
+	unoOnly, err := repo.BestPlayers(ctx, 10, "Uno")
+	require.NoError(t, err)
+	require.Len(t, unoOnly, 1)
+	assert.Equal(t, "bob", unoOnly[0].User.Username)
+
+	all, err := repo.BestPlayers(ctx, 10, "")
+	require.NoError(t, err)
+	require.Len(t, all, 2)
+	assert.Equal(t, "bob", all[0].User.Username, "highest Elo across games wins the mixed board")
+
+	missing, err := repo.BestPlayers(ctx, 10, "Hearts")
+	require.NoError(t, err)
+	assert.Empty(t, missing)
+}
+
 func TestUserRepository_UserProfile(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 	ctx := context.Background()
 
@@ -190,7 +282,7 @@ func TestUserRepository_UserProfile(t *testing.T) {
 
 func TestUserRepository_UserMatchHistory(t *testing.T) {
 	t.Parallel()
-	database := testutil.SetupTestDB(t, &db.User{}, &db.PublicKey{}, &db.Ranking{}, &db.Game{}, &db.Match{}, &db.MatchParticipant{})
+	database := testutil.SetupTestDB(t)
 	repo := NewUserRepository(database)
 	ctx := context.Background()
 

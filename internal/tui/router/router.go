@@ -8,6 +8,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -35,15 +36,18 @@ type ChangeViewMsg struct {
 }
 
 type GlobalContext struct {
-	User            *db.User
-	UserRepository  db.UserRepository
-	MatchRepository db.MatchRepository
-	LobbyManager    *lobby.Manager
-	GameRegistry    *game.Registry
+	User           *db.User
+	UserRepository db.UserRepository
+	LobbyManager   *lobby.Manager
+	GameRegistry   *game.Registry
 	// SessionCtx is canceled when the SSH session ends.
 	SessionCtx context.Context
 	Width      int
 	Height     int
+	// Theme is per session, not global: two players can have opposite terminal
+	// backgrounds, and a shared palette would leave one of them reading white on
+	// white. It is resolved from tea.BackgroundColorMsg and defaults to dark.
+	Theme styles.Theme
 }
 
 // RequestContext returns the session context, or Background if unset.
@@ -71,6 +75,9 @@ type Router struct {
 }
 
 func New(global GlobalContext) *Router {
+	// Dark until the terminal says otherwise: most terminals are, and one that
+	// never answers the background query must still be legible.
+	global.Theme = styles.NewTheme(true)
 	r := &Router{
 		Global:       global,
 		views:        make(map[string]func(GlobalContext, any) tea.Model),
@@ -119,8 +126,9 @@ func (r *Router) Goto(name string, context any) tea.Cmd {
 }
 
 func (r *Router) Init() tea.Cmd {
-	var cmds []tea.Cmd
-	cmds = append(cmds, tick())
+	// Ask the terminal for its background so the theme can match it. Terminals
+	// that don't answer simply leave the dark default in place.
+	cmds := []tea.Cmd{tick(), tea.RequestBackgroundColor}
 	if r.active != nil {
 		if cmd := r.active.Init(); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -143,6 +151,11 @@ func (r *Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		r.Global.Width = msg.Width
 		r.Global.Height = msg.Height
+	case tea.BackgroundColorMsg:
+		// Arrives on start and again whenever the user switches terminal theme
+		// mid-session. Views hold their own copy of GlobalContext, so the message
+		// falls through to the active view too (see views.HandleCommonMsg).
+		r.Global.Theme = styles.NewTheme(msg.IsDark())
 	case ChangeViewMsg:
 		cmd := r.Goto(msg.ViewName, msg.Context)
 		cmds = append(cmds, cmd)
@@ -161,6 +174,14 @@ func (r *Router) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (r *Router) View() tea.View {
+	// Checked once here rather than in every view: below the minimum, lipgloss
+	// wraps tables into unreadable confetti instead of failing, so no view can
+	// render anything useful.
+	if styles.TooSmall(r.Global.Width, r.Global.Height) {
+		v := tea.NewView(r.Global.Theme.RenderTooSmall(r.Global.Width, r.Global.Height))
+		v.AltScreen = true
+		return v
+	}
 	if r.active != nil {
 		v := r.active.View()
 		v.AltScreen = true

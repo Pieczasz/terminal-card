@@ -7,16 +7,17 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBroadcaster_Subscribe(t *testing.T) {
 	t.Parallel()
 	b := New[string](10)
 
-	ch := b.Subscribe()
+	ch := mustSubscribe(t, b)
 	assert.NotNil(t, ch)
 
-	ch2 := b.Subscribe()
+	ch2 := mustSubscribe(t, b)
 	assert.NotNil(t, ch2)
 
 	b.mu.RLock()
@@ -28,8 +29,8 @@ func TestBroadcaster_Broadcast(t *testing.T) {
 	t.Parallel()
 	b := New[int](10)
 
-	ch1 := b.Subscribe()
-	ch2 := b.Subscribe()
+	ch1 := mustSubscribe(t, b)
+	ch2 := mustSubscribe(t, b)
 
 	b.Broadcast(42)
 
@@ -52,8 +53,8 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	t.Parallel()
 	b := New[string](10)
 
-	ch1 := b.Subscribe()
-	ch2 := b.Subscribe()
+	ch1 := mustSubscribe(t, b)
+	ch2 := mustSubscribe(t, b)
 
 	b.mu.RLock()
 	assert.Len(t, b.subscribers, 2)
@@ -65,8 +66,12 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	assert.Len(t, b.subscribers, 1)
 	b.mu.RUnlock()
 
-	_, ok := <-ch1
-	assert.False(t, ok, "channel should be closed")
+	select {
+	case _, ok := <-ch1:
+		assert.False(t, ok, "the unsubscribed channel must be closed")
+	case <-time.After(time.Second):
+		t.Fatal("Unsubscribe left ch1 open, so it closed the wrong subscriber")
+	}
 
 	b.Broadcast("hello")
 
@@ -83,11 +88,9 @@ func TestBroadcaster_SubscribeAfterClose(t *testing.T) {
 	b := New[int](10)
 	b.Close()
 
-	ch := b.Subscribe()
-	_, ok := <-ch
-	assert.False(t, ok)
-
-	// Double close is safe.
+	ch, err := b.Subscribe()
+	require.ErrorIs(t, err, ErrClosed, "a closed broadcaster must say so, not hand back a dead channel")
+	assert.Nil(t, ch)
 	b.Close()
 }
 
@@ -95,8 +98,8 @@ func TestBroadcaster_Close(t *testing.T) {
 	t.Parallel()
 	b := New[int](10)
 
-	ch1 := b.Subscribe()
-	ch2 := b.Subscribe()
+	ch1 := mustSubscribe(t, b)
+	ch2 := mustSubscribe(t, b)
 
 	b.Close()
 
@@ -115,13 +118,12 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 	t.Parallel()
 	b := New[int](1)
 
-	ch := b.Subscribe()
+	ch := mustSubscribe(t, b)
 
 	for i := range 256 {
 		b.Broadcast(i)
 	}
 
-	// This should not block even though the channel is full
 	done := make(chan bool)
 	go func() {
 		b.Broadcast(1001)
@@ -134,8 +136,6 @@ func TestBroadcaster_NonBlockingFullChannel(t *testing.T) {
 		t.Fatal("Broadcast blocked on a full channel")
 	}
 
-	// Latest-wins: the newest message must still be observable even though the
-	// buffer was full, so the oldest value (0) has been evicted instead.
 	var last int
 	for {
 		select {
@@ -153,11 +153,8 @@ func TestBroadcaster_LatestWins(t *testing.T) {
 	t.Parallel()
 	b := New[int](10)
 
-	ch := b.Subscribe()
+	ch := mustSubscribe(t, b)
 
-	// Overfill the subscriber buffer (256) without ever draining it. Under
-	// latest-wins the oldest messages get evicted, but the final value must
-	// remain enqueued.
 	const total = 512
 	for i := range total {
 		b.Broadcast(i)
@@ -192,7 +189,6 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 
 	var wg sync.WaitGroup
 
-	// Broadcasters hammer the broadcaster concurrently.
 	for range broadcasters {
 		wg.Go(func() {
 			for i := range iterations {
@@ -201,11 +197,13 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 		})
 	}
 
-	// Subscribers repeatedly subscribe, drain, and unsubscribe.
 	for range subscribers {
 		wg.Go(func() {
 			for range iterations {
-				ch := b.Subscribe()
+				ch, err := b.Subscribe()
+				if err != nil {
+					continue
+				}
 				select {
 				case <-ch:
 				default:
@@ -215,8 +213,6 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 		})
 	}
 
-	// Close concurrently once broadcasts are in flight; the broadcaster must
-	// stay panic- and deadlock-free.
 	go func() {
 		time.Sleep(time.Millisecond)
 		b.Close()
@@ -240,16 +236,16 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 func TestBroadcaster_MaxSubscribers(t *testing.T) {
 	t.Parallel()
 	b := New[int](2)
-	ch1 := b.Subscribe()
-	ch2 := b.Subscribe()
-	ch3 := b.Subscribe()
+	ch1 := mustSubscribe(t, b)
+	ch2 := mustSubscribe(t, b)
+	ch3, err := b.Subscribe()
 
 	assert.Equal(t, 2, b.Len())
-	_, ok := <-ch3
-	assert.False(t, ok, "over-capacity subscribe should return closed channel")
+	require.ErrorIs(t, err, ErrAtCapacity, "over-capacity subscribe must report why")
+	assert.Nil(t, ch3)
 
 	b.Unsubscribe(ch1)
-	ch4 := b.Subscribe()
+	ch4 := mustSubscribe(t, b)
 	assert.Equal(t, 2, b.Len())
 	select {
 	case <-ch4:
@@ -259,20 +255,32 @@ func TestBroadcaster_MaxSubscribers(t *testing.T) {
 	_ = ch2
 }
 
-// Broadcast is on the per-event fan-out path: every engine action reaches every
-// subscribed player, so its cost scales with table size.
+func TestBroadcaster_NonPositiveCapacityGetsTheDefault(t *testing.T) {
+	t.Parallel()
+
+	for _, capacity := range []int{0, -1} {
+		b := New[int](capacity)
+		t.Cleanup(b.Close)
+
+		_, err := b.Subscribe()
+		require.NoErrorf(t, err, "New(%d) must fall back to a usable capacity", capacity)
+		assert.Equal(t, defaultMaxSubscribers, b.maxSubscribers)
+	}
+}
+
 func BenchmarkBroadcast(b *testing.B) {
 	for _, subs := range []int{1, 4, 9} {
 		b.Run(fmt.Sprintf("subscribers=%d", subs), func(b *testing.B) {
 			bc := New[int](subs + 8)
 			defer bc.Close()
 
-			// Drain in the background so Broadcast measures fan-out, not queue-full
-			// drop handling.
 			done := make(chan struct{})
 			var wg sync.WaitGroup
 			for range subs {
-				ch := bc.Subscribe()
+				ch, err := bc.Subscribe()
+				if err != nil {
+					b.Fatal(err)
+				}
 				wg.Go(func() {
 					for {
 						select {
@@ -293,4 +301,11 @@ func BenchmarkBroadcast(b *testing.B) {
 			wg.Wait()
 		})
 	}
+}
+
+func mustSubscribe[T any](t *testing.T, b *Broadcaster[T]) <-chan T {
+	t.Helper()
+	ch, err := b.Subscribe()
+	require.NoError(t, err)
+	return ch
 }

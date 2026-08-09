@@ -31,6 +31,117 @@ func TestCalculate_MinFloor(t *testing.T) {
 	assert.LessOrEqual(t, got["winner"], MaxRating)
 }
 
+func TestCalculate_ConservesRatingAtTheBounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		players []Player
+	}{
+		{
+			name: "loser already on the floor",
+			players: []Player{
+				{ID: "winner", Rating: 1500},
+				{ID: "loser", Rating: MinRating},
+			},
+		},
+		{
+			name: "winner already on the ceiling",
+			players: []Player{
+				{ID: "winner", Rating: MaxRating},
+				{ID: "loser", Rating: 1500},
+			},
+		},
+		{
+			name: "both within a few points of the ceiling",
+			players: []Player{
+				{ID: "winner", Rating: MaxRating - 5},
+				{ID: "loser", Rating: MaxRating - 5},
+			},
+		},
+		{
+			name: "a whole field pinned to the floor",
+			players: []Player{
+				{ID: "p1", Rating: MinRating},
+				{ID: "p2", Rating: MinRating},
+				{ID: "p3", Rating: MinRating + 3},
+			},
+		},
+		{
+			name: "an ordinary mid-table field",
+			players: []Player{
+				{ID: "p1", Rating: 1800},
+				{ID: "p2", Rating: 1500},
+				{ID: "p3", Rating: 1200},
+				{ID: "p4", Rating: 900},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Calculate(tt.players)
+
+			var before, after float64
+			for _, p := range tt.players {
+				before += p.Rating
+				assert.GreaterOrEqual(t, got[p.ID], MinRating, "%s fell through the floor", p.ID)
+				assert.LessOrEqual(t, got[p.ID], MaxRating, "%s broke the ceiling", p.ID)
+				after += got[p.ID]
+			}
+			assert.InDelta(t, before, after, 1e-9, "the table's total rating must not change")
+		})
+	}
+}
+
+func TestCalculate_FlooredLoserPaysNothing(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "winner", Rating: 2000},
+		{ID: "loser", Rating: MinRating},
+	})
+
+	assert.InDelta(t, 2000.0, got["winner"], 1e-9, "there is no rating to take")
+	assert.InDelta(t, MinRating, got["loser"], 1e-9)
+}
+
+// The mirror image: a winner on the ceiling cannot take anything, so the loser
+// keeps it rather than having it deleted from the pool.
+func TestCalculate_CappedWinnerBurnsNothing(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "winner", Rating: MaxRating},
+		{ID: "loser", Rating: 1500},
+	})
+
+	assert.InDelta(t, MaxRating, got["winner"], 1e-9)
+	assert.InDelta(t, 1500.0, got["loser"], 1e-9, "nobody gained it, so nobody loses it")
+}
+
+func TestCalculate_DrawMovesRatingTowardsTheUnderdog(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "favourite", Rating: 1900, Place: 1},
+		{ID: "underdog", Rating: 1300, Place: 1},
+	})
+
+	assert.Less(t, got["favourite"], 1900.0, "a draw is a bad day for the favourite")
+	assert.Greater(t, got["underdog"], 1300.0)
+	assert.InDelta(t, 3200.0, got["favourite"]+got["underdog"], 1e-9, "a draw is still zero-sum")
+}
+
+func TestCalculate_ZeroPlacesAreNotAllDraws(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "p1", Rating: 1500},
+		{ID: "p2", Rating: 1500},
+	})
+
+	assert.InDelta(t, 1516.0, got["p1"], 1e-9)
+	assert.InDelta(t, 1484.0, got["p2"], 1e-9)
+}
+
 func TestExpectedScore(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -57,8 +168,6 @@ func TestExpectedScore(t *testing.T) {
 func TestCalculate_UnequalRatings(t *testing.T) {
 	t.Parallel()
 
-	// Lower-rated "winner" (1400) beats higher-rated "loser" (1600).
-	// Sorted best-to-worst: winner first, loser second.
 	got := Calculate([]Player{
 		{ID: "winner", Rating: 1400},
 		{ID: "loser", Rating: 1600},
@@ -74,18 +183,11 @@ func TestCalculate_UnequalRatings(t *testing.T) {
 	winnerDelta := got["winner"] - 1400.0
 	loserDelta := got["loser"] - 1600.0
 
-	// The underdog gains more than in the symmetric equal-rating case.
 	assert.Greater(t, winnerDelta, equalGain, "underdog should gain more than the equal-rating baseline")
-
-	// Signs are correct: winner up, loser down.
 	assert.Positive(t, winnerDelta, "winner should gain rating")
 	assert.Negative(t, loserDelta, "loser should lose rating")
-
-	// Magnitudes match the hand-computed values.
 	assert.InDelta(t, expectedWin, got["winner"], tolerance, "winner rating mismatch")
 	assert.InDelta(t, expectedLoss, got["loser"], tolerance, "loser rating mismatch")
-
-	// Zero-sum: what the winner gains, the loser loses.
 	assert.InDelta(t, 0.0, winnerDelta+loserDelta, tolerance, "two-player match must be zero-sum")
 }
 
@@ -273,7 +375,31 @@ func TestCalculate(t *testing.T) {
 			},
 			expected: map[string]float64{
 				"p1": 4000.0,
-				"p2": 3979.0,
+				"p2": 3990.0,
+			},
+		},
+		{
+			name: "Tied neighbours split the point",
+			players: []Player{
+				{ID: "p1", Rating: 1500, Place: 1},
+				{ID: "p2", Rating: 1500, Place: 1},
+			},
+			expected: map[string]float64{
+				"p1": 1500.0,
+				"p2": 1500.0,
+			},
+		},
+		{
+			name: "A tie inside the field keeps the places around it",
+			players: []Player{
+				{ID: "p1", Rating: 1500, Place: 1},
+				{ID: "p2", Rating: 1500, Place: 2},
+				{ID: "p3", Rating: 1500, Place: 2},
+			},
+			expected: map[string]float64{
+				"p1": 1516.0,
+				"p2": 1484.0,
+				"p3": 1500.0,
 			},
 		},
 	}
@@ -294,8 +420,6 @@ func TestCalculate(t *testing.T) {
 	}
 }
 
-// Calculate runs once per ranked game over every seat, and is O(n) in players with
-// a map allocation per call.
 func BenchmarkCalculate(b *testing.B) {
 	for _, n := range []int{2, 6, 9} {
 		b.Run(fmt.Sprintf("players=%d", n), func(b *testing.B) {
@@ -311,8 +435,6 @@ func BenchmarkCalculate(b *testing.B) {
 	}
 }
 
-// FuzzToUint32 pins the storage boundary: whatever arithmetic upstream produces, the
-// value written to the rankings table must sit inside [MinRating, MaxRating].
 func FuzzToUint32(f *testing.F) {
 	f.Add(1500.0)
 	f.Add(math.NaN())
@@ -325,4 +447,31 @@ func FuzzToUint32(f *testing.F) {
 		assert.GreaterOrEqual(t, got, uint32(MinRating), "stored Elo must not fall below MinRating")
 		assert.LessOrEqual(t, got, uint32(MaxRating), "stored Elo must not exceed MaxRating")
 	})
+}
+
+func TestCalculate_TiesAreOrderIndependent(t *testing.T) {
+	t.Parallel()
+
+	forward := []Player{
+		{ID: "a", Rating: 1600, Place: 1},
+		{ID: "b", Rating: 1500, Place: 1},
+		{ID: "c", Rating: 1400, Place: 1},
+	}
+	shuffled := []Player{
+		{ID: "a", Rating: 1600, Place: 1},
+		{ID: "c", Rating: 1400, Place: 1},
+		{ID: "b", Rating: 1500, Place: 1},
+	}
+
+	got, other := Calculate(forward), Calculate(shuffled)
+	for _, id := range []string{"a", "b", "c"} {
+		assert.InDelta(t, got[id], other[id], 1e-9,
+			"a draw must settle the same however the tied players were ordered")
+	}
+
+	var net float64
+	for _, p := range forward {
+		net += got[p.ID] - p.Rating
+	}
+	assert.InDelta(t, 0.0, net, 1e-9, "a reordered draw must still only transfer rating")
 }

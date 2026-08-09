@@ -4,51 +4,59 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+
 	lg "charm.land/lipgloss/v2"
 )
 
-// chipGlyph is a single casino chip. Colour carries the denomination, so the
-// raise rack doubles as the legend for the stacks drawn beside each seat.
-const chipGlyph = "●"
-
 // chipDenoms are the chips a player can push forward, largest first. Values map
-// onto the 25/50 blinds so a raise can always be built out of whole chips.
+// onto the 25/50 blinds so a raise can always be built out of whole chips. The
+// index into this slice is also the index into Theme.Chips.
 var chipDenoms = []struct {
 	Value uint
-	Style lg.Style
+	Glyph string
 }{
-	{100, lg.NewStyle().Foreground(lg.Color("#EDEDED"))},
-	{50, lg.NewStyle().Foreground(lg.Color("#5B8DEF"))},
-	{25, lg.NewStyle().Foreground(lg.Color("#6FBF73"))},
-	{10, lg.NewStyle().Foreground(lg.Color("#CC4444"))},
+	// Each denomination gets its own shape as well as its own colour: a stack read
+	// by hue alone is unreadable to a colour-blind player and to anyone on a
+	// terminal with a mangled palette. All four glyphs measure one cell wide, so
+	// swapping shapes never shifts the layout.
+	{Value: 100, Glyph: "●"},
+	{Value: 50, Glyph: "◆"},
+	{Value: 25, Glyph: "▲"},
+	{Value: 10, Glyph: "■"},
 }
 
 // renderChipStack draws amount as coloured chips, largest denomination first.
 // Change below the smallest chip is left out: the exact number is always printed
 // next to the stack anyway.
-func renderChipStack(amount uint) string {
+func renderChipStack(t styles.Theme, amount uint) string {
 	parts := make([]string, 0, len(chipDenoms))
-	for _, d := range chipDenoms {
+	for i, d := range chipDenoms {
 		count := amount / d.Value
 		if count == 0 {
 			continue
 		}
 		amount %= d.Value
-		parts = append(parts, d.Style.Render(fmt.Sprintf("%s%d", chipGlyph, count)))
+		parts = append(parts, chipStyle(t, i).Render(fmt.Sprintf("%s%d", d.Glyph, count)))
 	}
 	return strings.Join(parts, " ")
 }
 
-// renderChipRack is the raise prompt's keypad: which key pushes which chip.
-func renderChipRack() string {
+// renderChipRack is the raise prompt's keypad: which key pushes which chip. It
+// doubles as the legend for the shapes drawn beside each seat.
+func renderChipRack(t styles.Theme) string {
 	parts := make([]string, 0, len(chipDenoms))
 	for i, d := range chipDenoms {
 		parts = append(parts, fmt.Sprintf("%s %s",
-			d.Style.Render(fmt.Sprintf("%s%d", chipGlyph, d.Value)),
-			dimStyle.Render(fmt.Sprintf("[%d]", i+1)),
+			chipStyle(t, i).Render(fmt.Sprintf("%s%d", d.Glyph, d.Value)),
+			t.Dim.Render(fmt.Sprintf("[%d]", i+1)),
 		))
 	}
 	return strings.Join(parts, "  ")
+}
+
+func chipStyle(t styles.Theme, denomIndex int) lg.Style {
+	return lg.NewStyle().Foreground(t.Chips[denomIndex])
 }
 
 // chipForKey maps a rack key to its denomination. Keys run largest to smallest,

@@ -1,7 +1,6 @@
 package poker
 
 import (
-	"fmt"
 	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -12,8 +11,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 )
-
-type gameMsg game.Event
 
 // Seat is one player position around the table for rendering.
 type Seat struct {
@@ -33,11 +30,7 @@ type Seat struct {
 }
 
 type Model struct {
-	global router.GlobalContext
-	bound  *game.BoundEngine
-	events <-chan game.Event
-
-	baseState gameview.BaseState
+	gameview.Session
 
 	seats      []Seat
 	board      []deck.Card
@@ -59,48 +52,20 @@ type Model struct {
 	raiseAmount uint
 }
 
-func listenForEvents(ch <-chan game.Event) tea.Cmd {
-	return func() tea.Msg {
-		if ch == nil {
-			return nil
-		}
-		msg, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return gameMsg(msg)
-	}
-}
-
 // New creates a Hold'em TUI view bound to the session player.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
-	playerID := ""
-	if global.User != nil {
-		playerID = fmt.Sprint(global.User.ID)
-	}
-	bound := game.Bind(engine, playerID)
-
-	var ch <-chan game.Event
-	if bound != nil {
-		if b := bound.Broadcaster(); b != nil {
-			ch = b.Subscribe()
-		}
-	}
-	m := &Model{
-		global: global,
-		bound:  bound,
-		events: ch,
-	}
+	session, err := gameview.NewSession(global, engine, "poker")
+	m := &Model{Session: session, lastErr: err}
 	m.syncState()
 	return m
 }
 
 func (m *Model) Init() tea.Cmd {
-	return listenForEvents(m.events)
+	return tea.Batch(m.Listen(), gameview.ClockTick())
 }
 
 func (m *Model) syncState() {
-	m.baseState = gameview.SyncBaseState(m.global, m.bound)
+	m.SyncBase()
 	m.seats = nil
 	m.board = nil
 	m.pot = 0
@@ -111,42 +76,56 @@ func (m *Model) syncState() {
 	m.minRaise = 0
 	m.myChips = 0
 	m.handDone = false
-	m.matchDone = m.baseState.Phase == game.Finished
+	m.matchDone = m.Base.Phase == game.Finished
 	m.handNumber = 0
 	m.handsTotal = 0
-	m.winnerName = m.baseState.Winner
+	m.winnerName = m.Base.Winner
 
-	if m.bound == nil || m.bound.Engine() == nil {
+	if m.Bound == nil || m.Bound.Engine() == nil {
 		return
 	}
 
-	heroID := m.bound.PlayerID()
-	m.bound.Engine().WithState(func(state *game.State) {
-		extra, ok := state.Extra.(*logic.State)
-		if !ok || extra == nil {
+	heroID := m.Bound.PlayerID()
+
+	// One acquisition for the whole frame. Poker is the documented exception that
+	// reaches past BoundEngine into whole-table state, because rendering a table
+	// means rendering every seat - and since it holds that lock anyway, the betting
+	// scalars are read under it too. Splitting them across a WithHiddenState call
+	// and this one let an opponent act in between, so the pot could render a bet
+	// short of the seat that had already posted it, and the action bar could offer
+	// a call the engine had already moved past.
+	m.Bound.Engine().WithState(func(state *game.State) {
+		e, ok := state.Extra.(*logic.State)
+		if !ok || e == nil {
 			return
 		}
-		m.pot = extra.MainPool
-		m.sidePots = len(extra.Pots)
-		m.street = extra.Phase.String()
-		m.currentBet = extra.CurrentBet
-		m.minRaise = extra.MinRaise
-		m.toCall = logic.ToCall(extra, heroID)
-		m.myChips = extra.PlayerChips[heroID]
-		m.handDone = extra.HandComplete || state.Phase == game.Finished
-		m.matchDone = extra.MatchComplete || state.Phase == game.Finished
-		m.handNumber = extra.HandNumber
-		m.handsTotal = extra.HandsTotal
+		m.pot = e.MainPool
+		m.sidePots = len(e.Pots)
+		m.street = e.Phase.String()
+		m.currentBet = e.CurrentBet
+		m.minRaise = e.MinRaise
+		m.toCall = logic.ToCall(e, heroID)
+		m.myChips = e.PlayerChips[heroID]
+		m.handDone = e.HandComplete || m.Base.Phase == game.Finished
+		m.matchDone = e.MatchComplete || m.Base.Phase == game.Finished
+		m.handNumber = e.HandNumber
+		m.handsTotal = e.HandsTotal
 		// Winners holds whoever took the last pot; the match itself is won by the
 		// biggest stack, which is the winner the engine settles on.
-		if len(extra.Winners) > 0 && !m.matchDone {
-			m.winnerName = extra.Winners[0].Username()
+		if len(e.Winners) > 0 && !m.matchDone {
+			m.winnerName = e.Winners[0].DisplayName()
 		}
 
-		m.board = append(m.board, extra.Table...)
-		m.seats = buildSeats(state, extra, heroID)
+		m.board = append(m.board, e.Table...)
+
+		m.seats = buildSeats(state, e, heroID)
 	})
 
+	// A half-built raise belongs to the hero's turn: once the action has moved on,
+	// whether by folding, a timeout or the hand ending, the prompt goes with it.
+	if !m.Base.MyTurn {
+		m.raising = false
+	}
 	if m.raising {
 		m.raiseAmount = m.clampRaise(m.raiseAmount)
 	}
@@ -167,7 +146,7 @@ func buildSeats(state *game.State, extra *logic.State, heroID string) []Seat {
 		}
 		s := Seat{
 			PlayerID: p.ID,
-			Name:     p.Username(),
+			Name:     p.DisplayName(),
 			Chips:    extra.PlayerChips[p.ID],
 			Bet:      extra.PlayerBets[p.ID],
 			Folded:   extra.Folded[p.ID],
@@ -212,15 +191,15 @@ func (m *Model) heroSeat() *Seat {
 }
 
 func (m *Model) canCheck() bool {
-	return m.baseState.MyTurn && m.toCall == 0 && !m.handDone
+	return m.Base.MyTurn && m.toCall == 0 && !m.handDone
 }
 
 func (m *Model) canCall() bool {
-	return m.baseState.MyTurn && m.toCall > 0 && !m.handDone
+	return m.Base.MyTurn && m.toCall > 0 && !m.handDone
 }
 
 func (m *Model) canRaise() bool {
-	if !m.baseState.MyTurn || m.handDone {
+	if !m.Base.MyTurn || m.handDone {
 		return false
 	}
 	hero := m.heroSeat()
@@ -233,17 +212,17 @@ func (m *Model) canRaise() bool {
 
 func (m *Model) canAllIn() bool {
 	hero := m.heroSeat()
-	return m.baseState.MyTurn && !m.handDone && hero != nil && hero.Chips > 0
+	return m.Base.MyTurn && !m.handDone && hero != nil && hero.Chips > 0
 }
 
 func (m *Model) canFold() bool {
-	return m.baseState.MyTurn && !m.handDone
+	return m.Base.MyTurn && !m.handDone
 }
 
 // canDeal reports whether the hero is the one holding the button between hands,
 // and so the one who deals the next one.
 func (m *Model) canDeal() bool {
-	return m.handDone && !m.matchDone && m.baseState.MyTurn
+	return m.handDone && !m.matchDone && m.Base.MyTurn
 }
 
 // heroBusted reports whether the hero has lost their stack. They keep their seat

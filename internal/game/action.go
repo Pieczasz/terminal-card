@@ -9,7 +9,6 @@ type Action interface {
 type Event struct {
 	Type     EventType
 	PlayerID string
-	Action   Action
 }
 
 type EventType uint8
@@ -20,18 +19,24 @@ const (
 	EventActionApplied
 	EventGameEnded
 	EventGameStarted
+	EventTurnTimedOut
+	EventPlayerIdle
 )
 
 type PlayerSnapshot struct {
+	ID       string
 	Username string
 	HandSize int
 }
 
 type StateSnapshot struct {
-	Phase         Phase
-	CurrentPlayer string
-	TopDiscard    deck.Card
-	DeckSize      int
-	Players       []PlayerSnapshot
-	Winner        string
+	Phase Phase
+	// CurrentPlayer is a display name; CurrentPlayerID is what identifies the seat.
+	// Two players can share a name, so never decide whose turn it is from the former.
+	CurrentPlayer   string
+	CurrentPlayerID string
+	TopDiscard      deck.Card
+	DeckSize        int
+	Players         []PlayerSnapshot
+	Winner          string
 }
