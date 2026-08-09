@@ -31,6 +31,128 @@ func TestCalculate_MinFloor(t *testing.T) {
 	assert.LessOrEqual(t, got["winner"], MaxRating)
 }
 
+// A neighbour pair is one exchange, so the rating a table holds before a match is
+// the rating it holds after. Clamping each player's result instead of capping the
+// term is how a floored loser used to pay a winner with rating that did not exist,
+// and a capped winner used to burn the rating their opponent lost.
+func TestCalculate_ConservesRatingAtTheBounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		players []Player
+	}{
+		{
+			name: "loser already on the floor",
+			players: []Player{
+				{ID: "winner", Rating: 1500},
+				{ID: "loser", Rating: MinRating},
+			},
+		},
+		{
+			name: "winner already on the ceiling",
+			players: []Player{
+				{ID: "winner", Rating: MaxRating},
+				{ID: "loser", Rating: 1500},
+			},
+		},
+		{
+			name: "both within a few points of the ceiling",
+			players: []Player{
+				{ID: "winner", Rating: MaxRating - 5},
+				{ID: "loser", Rating: MaxRating - 5},
+			},
+		},
+		{
+			name: "a whole field pinned to the floor",
+			players: []Player{
+				{ID: "p1", Rating: MinRating},
+				{ID: "p2", Rating: MinRating},
+				{ID: "p3", Rating: MinRating + 3},
+			},
+		},
+		{
+			name: "an ordinary mid-table field",
+			players: []Player{
+				{ID: "p1", Rating: 1800},
+				{ID: "p2", Rating: 1500},
+				{ID: "p3", Rating: 1200},
+				{ID: "p4", Rating: 900},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := Calculate(tt.players)
+
+			var before, after float64
+			for _, p := range tt.players {
+				before += p.Rating
+				assert.GreaterOrEqual(t, got[p.ID], MinRating, "%s fell through the floor", p.ID)
+				assert.LessOrEqual(t, got[p.ID], MaxRating, "%s broke the ceiling", p.ID)
+				after += got[p.ID]
+			}
+			assert.InDelta(t, before, after, 1e-9, "the table's total rating must not change")
+		})
+	}
+}
+
+// A player on the floor has nothing left to lose, so the win above them pays
+// nothing. The old code paid the winner in full and clamped the loser, minting the
+// difference out of nothing on every match against a floored account.
+func TestCalculate_FlooredLoserPaysNothing(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "winner", Rating: 2000},
+		{ID: "loser", Rating: MinRating},
+	})
+
+	assert.InDelta(t, 2000.0, got["winner"], 1e-9, "there is no rating to take")
+	assert.InDelta(t, MinRating, got["loser"], 1e-9)
+}
+
+// The mirror image: a winner on the ceiling cannot take anything, so the loser
+// keeps it rather than having it deleted from the pool.
+func TestCalculate_CappedWinnerBurnsNothing(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "winner", Rating: MaxRating},
+		{ID: "loser", Rating: 1500},
+	})
+
+	assert.InDelta(t, MaxRating, got["winner"], 1e-9)
+	assert.InDelta(t, 1500.0, got["loser"], 1e-9, "nobody gained it, so nobody loses it")
+}
+
+// A draw between an overwhelming favourite and an underdog is a result for the
+// underdog: the favourite was expected to win outright and only scored half.
+func TestCalculate_DrawMovesRatingTowardsTheUnderdog(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "favourite", Rating: 1900, Place: 1},
+		{ID: "underdog", Rating: 1300, Place: 1},
+	})
+
+	assert.Less(t, got["favourite"], 1900.0, "a draw is a bad day for the favourite")
+	assert.Greater(t, got["underdog"], 1300.0)
+	assert.InDelta(t, 3200.0, got["favourite"]+got["underdog"], 1e-9, "a draw is still zero-sum")
+}
+
+// Place is opt-in: a caller that never sets it gets the strict ordering the slice
+// already carries, so every existing caller keeps its behaviour.
+func TestCalculate_ZeroPlacesAreNotAllDraws(t *testing.T) {
+	t.Parallel()
+	got := Calculate([]Player{
+		{ID: "p1", Rating: 1500},
+		{ID: "p2", Rating: 1500},
+	})
+
+	assert.InDelta(t, 1516.0, got["p1"], 1e-9)
+	assert.InDelta(t, 1484.0, got["p2"], 1e-9)
+}
+
 func TestExpectedScore(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -266,6 +388,8 @@ func TestCalculate(t *testing.T) {
 			},
 		},
 		{
+			// The winner can only take the five points of headroom they have left,
+			// so that is all the loser pays: the exchange is capped, not clamped.
 			name: "Max Rating Cap Reachable",
 			players: []Player{
 				{ID: "p1", Rating: 3995},
@@ -273,7 +397,33 @@ func TestCalculate(t *testing.T) {
 			},
 			expected: map[string]float64{
 				"p1": 4000.0,
-				"p2": 3979.0,
+				"p2": 3990.0,
+			},
+		},
+		{
+			name: "Tied neighbours split the point",
+			players: []Player{
+				{ID: "p1", Rating: 1500, Place: 1},
+				{ID: "p2", Rating: 1500, Place: 1},
+			},
+			expected: map[string]float64{
+				"p1": 1500.0,
+				"p2": 1500.0,
+			},
+		},
+		{
+			// Two draws in a row: the shared second place scores half a point both
+			// ways, while first place still beats the pair below it.
+			name: "A tie inside the field keeps the places around it",
+			players: []Player{
+				{ID: "p1", Rating: 1500, Place: 1},
+				{ID: "p2", Rating: 1500, Place: 2},
+				{ID: "p3", Rating: 1500, Place: 2},
+			},
+			expected: map[string]float64{
+				"p1": 1516.0,
+				"p2": 1484.0,
+				"p3": 1500.0,
 			},
 		},
 	}
@@ -325,4 +475,35 @@ func FuzzToUint32(f *testing.F) {
 		assert.GreaterOrEqual(t, got, uint32(MinRating), "stored Elo must not fall below MinRating")
 		assert.LessOrEqual(t, got, uint32(MaxRating), "stored Elo must not exceed MaxRating")
 	})
+}
+
+// SME only ever compares neighbours, so which pairs a tie produces - and therefore
+// how much rating it moves - would otherwise depend on the order the caller happened
+// to list the tied players in. Nothing else pins that, and the standings slice a
+// game hands over has no defined order among players it scored equally.
+func TestCalculate_TiesAreOrderIndependent(t *testing.T) {
+	t.Parallel()
+
+	forward := []Player{
+		{ID: "a", Rating: 1600, Place: 1},
+		{ID: "b", Rating: 1500, Place: 1},
+		{ID: "c", Rating: 1400, Place: 1},
+	}
+	shuffled := []Player{
+		{ID: "a", Rating: 1600, Place: 1},
+		{ID: "c", Rating: 1400, Place: 1},
+		{ID: "b", Rating: 1500, Place: 1},
+	}
+
+	got, other := Calculate(forward), Calculate(shuffled)
+	for _, id := range []string{"a", "b", "c"} {
+		assert.InDelta(t, got[id], other[id], 1e-9,
+			"a draw must settle the same however the tied players were ordered")
+	}
+
+	var net float64
+	for _, p := range forward {
+		net += got[p.ID] - p.Rating
+	}
+	assert.InDelta(t, 0.0, net, 1e-9, "a reordered draw must still only transfer rating")
 }
