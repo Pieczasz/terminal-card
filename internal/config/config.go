@@ -3,6 +3,8 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"runtime/debug"
 	"strconv"
@@ -147,14 +149,32 @@ func (c *Config) Validate() error {
 	if c.DBMaxOpenConnections < 1 {
 		return errors.New("DB_MAX_OPEN_CONNS must be at least 1")
 	}
+	// netutil.LimitListener treats a non-positive limit as "accept nothing", so the
+	// server would bind the port and then refuse every player.
+	if c.MaxConnections < 1 {
+		return errors.New("MAX_CONNECTIONS must be at least 1")
+	}
 	return nil
 }
 
 // DSN carries DBPassword in clear text. Never log the result; log the Config
 // itself, whose String method redacts it.
+//
+// It is a URL and not keyword/value pairs because those need quoting: an empty or
+// spaced password there swallows the keywords that follow it, so the server
+// silently connects to a different database than the one it was configured with.
 func (c *Config) DSN() string {
-	return fmt.Sprintf("host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=UTC",
-		c.DBHost, c.DBUser, c.DBPassword, c.DBName, c.DBPort, c.DBSSLMode)
+	dsn := url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(c.DBUser, c.DBPassword),
+		Host:   net.JoinHostPort(c.DBHost, strconv.Itoa(c.DBPort)),
+		Path:   "/" + c.DBName,
+		RawQuery: url.Values{
+			"sslmode":  {c.DBSSLMode},
+			"TimeZone": {"UTC"},
+		}.Encode(),
+	}
+	return dsn.String()
 }
 
 // String keeps the database password out of logs. Without it, any %v or

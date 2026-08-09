@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"net/url"
 	"os"
 	"path/filepath"
 	"testing"
@@ -84,19 +85,46 @@ func TestValidate_RateLimit(t *testing.T) {
 	assert.Contains(t, err.Error(), "RATE_LIMIT_CONNECTIONS")
 }
 
+// Every field has to survive the trip, whatever the password looks like: the old
+// keyword/value DSN let a blank or spaced password absorb the keywords after it, and
+// the server connected to a different database than the one it was configured with.
 func TestDSN(t *testing.T) {
 	t.Parallel()
-	cfg := &config.Config{
-		DBHost:     "localhost",
-		DBUser:     "postgres",
-		DBPassword: "secret",
-		DBName:     "terminal_card",
-		DBPort:     5432,
-		DBSSLMode:  "disable",
+
+	passwords := []struct {
+		name  string
+		value string
+	}{
+		{name: "ordinary", value: "secret"},
+		{name: "empty", value: ""},
+		{name: "spaced", value: "two words"},
+		{name: "looks like more keywords", value: " dbname=other sslmode=disable"},
 	}
-	assert.Contains(t, cfg.DSN(), "host=localhost")
-	assert.Contains(t, cfg.DSN(), "dbname=terminal_card")
-	assert.Contains(t, cfg.DSN(), "sslmode=disable")
+
+	for _, pw := range passwords {
+		t.Run(pw.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &config.Config{
+				DBHost:     "localhost",
+				DBUser:     "postgres",
+				DBPassword: pw.value,
+				DBName:     "terminal_card",
+				DBPort:     5432,
+				DBSSLMode:  "disable",
+			}
+
+			parsed, err := url.Parse(cfg.DSN())
+			require.NoError(t, err)
+
+			assert.Equal(t, "localhost:5432", parsed.Host)
+			assert.Equal(t, "/terminal_card", parsed.Path)
+			assert.Equal(t, "postgres", parsed.User.Username())
+			password, _ := parsed.User.Password()
+			assert.Equal(t, pw.value, password, "the driver must read back the configured password")
+			assert.Equal(t, "disable", parsed.Query().Get("sslmode"))
+			assert.Equal(t, "UTC", parsed.Query().Get("TimeZone"))
+		})
+	}
 }
 
 func TestValidate_InsecureDBRemoteHost(t *testing.T) {
@@ -231,6 +259,7 @@ func TestValidate_LowestAllowedValuesAreValid(t *testing.T) {
 			RateLimitCount:       1,
 			RateLimitWindow:      time.Millisecond,
 			DBMaxOpenConnections: 1,
+			MaxConnections:       1,
 		}
 	}
 
@@ -244,6 +273,10 @@ func TestValidate_LowestAllowedValuesAreValid(t *testing.T) {
 		{name: "no connections allowed", breakIt: func(c *config.Config) { c.RateLimitCount = 0 }, want: "RATE_LIMIT_CONNECTIONS"},
 		{name: "sub-millisecond window", breakIt: func(c *config.Config) { c.RateLimitWindow = time.Microsecond }, want: "RATE_LIMIT_WINDOW_MS"},
 		{name: "no db connections", breakIt: func(c *config.Config) { c.DBMaxOpenConnections = 0 }, want: "DB_MAX_OPEN_CONNS"},
+		// LimitListener accepts nothing at all with a non-positive limit, so the
+		// server would come up healthy and refuse every player.
+		{name: "no connections at all", breakIt: func(c *config.Config) { c.MaxConnections = 0 }, want: "MAX_CONNECTIONS"},
+		{name: "negative connections", breakIt: func(c *config.Config) { c.MaxConnections = -1 }, want: "MAX_CONNECTIONS"},
 	}
 
 	for _, tt := range tests {
@@ -287,6 +320,6 @@ func TestConfig_DSN_CarriesThePasswordAndStringDoesNot(t *testing.T) {
 
 	cfg := &config.Config{DBHost: "db", DBUser: "u", DBPassword: "pw", DBName: "n", DBPort: 5432, DBSSLMode: "require"}
 
-	assert.Contains(t, cfg.DSN(), "password=pw")
+	assert.Contains(t, cfg.DSN(), ":pw@")
 	assert.NotContains(t, cfg.String(), "pw")
 }
