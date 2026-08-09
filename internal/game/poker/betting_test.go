@@ -6,7 +6,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,7 +23,7 @@ type seat struct {
 }
 
 func seatedRound(currentBet uint, seats ...seat) (*game.State, *State) {
-	players := make([]*player.Player, 0, len(seats))
+	players := make([]*game.Player, 0, len(seats))
 	extra := &State{
 		CurrentBet:       currentBet,
 		BigBlind:         DefaultBigBlind,
@@ -39,7 +38,7 @@ func seatedRound(currentBet uint, seats ...seat) (*game.State, *State) {
 		ActedThisRound:   map[string]bool{},
 	}
 	for _, s := range seats {
-		players = append(players, &player.Player{ID: s.id})
+		players = append(players, &game.Player{ID: s.id})
 		extra.PlayerChips[s.id] = s.chips
 		extra.PlayerBets[s.id] = s.bet
 		extra.ActedThisRound[s.id] = s.acted
@@ -306,7 +305,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100}, "a", "b")
 		// A third player is in the hand without having contributed, so no pot layer
 		// forms around them and the folded chips have nowhere else to go.
-		state.Players = append(state.Players, &player.Player{ID: "c"})
+		state.Players = append(state.Players, &game.Player{ID: "c"})
 		extra.PlayerChips["c"] = 0
 
 		pots := buildSidePots(state, extra)
@@ -474,7 +473,7 @@ func TestValidateRaiseTo(t *testing.T) {
 			_, extra := seatedRound(tt.currentBet, seat{id: "a", chips: tt.chips, bet: tt.bet})
 			extra.MinRaise = tt.minRaise
 
-			err := validateRaiseTo(extra, &player.Player{ID: "a"}, tt.amount)
+			err := validateRaiseTo(extra, &game.Player{ID: "a"}, tt.amount)
 
 			if tt.wantErr == "" {
 				require.NoError(t, err)
@@ -525,7 +524,7 @@ func TestCallTo_MovesExactlyWhatIsOwed(t *testing.T) {
 		t.Parallel()
 		_, extra := seatedRound(200, seat{id: "a", chips: 500, bet: 50})
 
-		callTo(extra, &player.Player{ID: "a"}, 200)
+		callTo(extra, &game.Player{ID: "a"}, 200)
 
 		assert.Equal(t, uint(200), extra.PlayerBets["a"], "the bet lands on the amount owed")
 		assert.Equal(t, uint(350), extra.PlayerChips["a"], "only the difference leaves the stack")
@@ -537,7 +536,7 @@ func TestCallTo_MovesExactlyWhatIsOwed(t *testing.T) {
 		t.Parallel()
 		_, extra := seatedRound(500, seat{id: "a", chips: 100, bet: 50})
 
-		callTo(extra, &player.Player{ID: "a"}, 500)
+		callTo(extra, &game.Player{ID: "a"}, 500)
 
 		assert.Equal(t, uint(150), extra.PlayerBets["a"])
 		assert.Zero(t, extra.PlayerChips["a"])
@@ -578,6 +577,73 @@ func TestApplyBetIncrease_Boundaries(t *testing.T) {
 
 		assert.Equal(t, uint(100), extra.CurrentBet)
 		assert.True(t, extra.ActedThisRound["b"], "nobody gets to act again over a non-raise")
+	})
+}
+
+// A sub-minimum all-in advances what is owed without reopening the round, so the
+// players it passes owe the difference and may only call or fold. Letting them
+// raise instead turns a short shove into free extra action for the whole table.
+func TestValidateAction_NoRaiseWhenBettingIsNotReopened(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	// "a" opened to 200, "b" shoved their last 50 on top - a raise of 50 against a
+	// minimum of 150 - and the action came back round to "a".
+	notReopened := func() (*game.State, *State) {
+		state, extra := seatedRound(250,
+			seat{id: "a", chips: 800, bet: 200, acted: true},
+			seat{id: "b", chips: 0, bet: 250, acted: true, allIn: true},
+			seat{id: "c", chips: 800, bet: 200, acted: true},
+		)
+		extra.MinRaise = 150
+		state.CurrentTurn = 0
+		return state, extra
+	}
+
+	t.Run("a raise is refused", func(t *testing.T) {
+		t.Parallel()
+		state, _ := notReopened()
+
+		err := rules.ValidateAction(state, ActionRaiseTo{Amount: 400})
+
+		require.ErrorContains(t, err, "betting is not reopened")
+	})
+
+	t.Run("a shove is refused, because a shove above the bet is a raise", func(t *testing.T) {
+		t.Parallel()
+		state, _ := notReopened()
+
+		err := rules.ValidateAction(state, ActionAllIn{})
+
+		require.ErrorContains(t, err, "betting is not reopened")
+	})
+
+	t.Run("calling and folding stay open", func(t *testing.T) {
+		t.Parallel()
+		state, _ := notReopened()
+
+		require.NoError(t, rules.ValidateAction(state, ActionCall{}))
+		require.NoError(t, rules.ValidateAction(state, ActionFold{}))
+	})
+
+	t.Run("a shove that only calls is still allowed", func(t *testing.T) {
+		t.Parallel()
+		state, extra := notReopened()
+		// Short enough that going all-in cannot get past the current bet, so it is
+		// a call with everything rather than a raise.
+		extra.PlayerChips["a"] = 30
+
+		require.NoError(t, rules.ValidateAction(state, ActionAllIn{}))
+	})
+
+	t.Run("a full raise reopens the round for everyone it passed", func(t *testing.T) {
+		t.Parallel()
+		state, extra := notReopened()
+		// What a full-size raise does: applyBetIncrease clears ActedThisRound.
+		extra.ActedThisRound["a"] = false
+
+		require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 400}))
+		require.NoError(t, rules.ValidateAction(state, ActionAllIn{}))
 	})
 }
 

@@ -7,7 +7,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
-	"github.com/Pieczasz/terminal-card/internal/player"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -137,7 +136,7 @@ func TestFinishHand(t *testing.T) {
 
 // tableWithChips seats one player per stack, in order, ready for beginHand.
 func tableWithChips(stacks ...uint) (*game.State, *State) {
-	players := make([]*player.Player, 0, len(stacks))
+	players := make([]*game.Player, 0, len(stacks))
 	extra := &State{
 		SmallBlind:       DefaultSmallBlind,
 		BigBlind:         DefaultBigBlind,
@@ -152,7 +151,7 @@ func tableWithChips(stacks ...uint) (*game.State, *State) {
 	}
 	for i, chips := range stacks {
 		id := fmt.Sprintf("p%d", i)
-		players = append(players, &player.Player{ID: id})
+		players = append(players, &game.Player{ID: id})
 		extra.PlayerChips[id] = chips
 	}
 	state := game.NewState(&Rules{}, players, deck.StandardDeck())
@@ -175,6 +174,33 @@ func TestBeginHand_ShortBlindsDoNotMakeTheTableLookHeadsUp(t *testing.T) {
 	assert.Equal(t, 1, extra.SBIndex)
 	assert.Equal(t, 2, extra.BBIndex)
 	assert.Equal(t, 3, state.CurrentTurn, "the seat after the big blind is under the gun, not the button")
+}
+
+// Blinds that bust every funded seat run the board out inside beginHand, so the
+// deal returns a hand that is already over. It has to be closed the same way any
+// other hand is, or the match sits complete with nobody parked on turn: no dealer
+// to submit ActionNextHand and no MatchComplete to end it.
+func TestBeginHandOrFinish_ClosesAHandTheDealAlreadyFinished(t *testing.T) {
+	t.Parallel()
+	// Heads-up, both stacks smaller than the blind they owe. The deal runs the board
+	// out before anyone acts; beginHandOrFinish must call finishHand on that path
+	// or the match parks with nobody on turn.
+	state, extra := tableWithChips(20, 20)
+
+	require.NoError(t, (&Rules{}).beginHandOrFinish(state, extra, 0))
+
+	require.True(t, extra.HandComplete, "nobody could act, so the board ran out")
+	assert.Equal(t, Showdown, extra.Phase, "the hand was closed, not left hanging")
+	assert.NotEmpty(t, extra.Winners, "somebody took the chips")
+	// finishHand either ends the match (one funded seat) or parks the next dealer
+	// on turn — never leaves OverrideNextTurn nil while the match is still live.
+	if extra.MatchComplete {
+		assert.True(t, (&Rules{}).CheckWinCondition(state))
+		assert.Nil(t, state.OverrideNextTurn)
+	} else {
+		require.NotNil(t, state.OverrideNextTurn, "a live match needs a dealer for NextHand")
+		assert.Equal(t, *state.OverrideNextTurn, state.CurrentTurn)
+	}
 }
 
 func TestStandings_BustedPlayersRankByHowLongTheyLasted(t *testing.T) {
