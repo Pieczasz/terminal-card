@@ -4,9 +4,13 @@ package testutil
 
 import (
 	"context"
+	"io/fs"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/Pieczasz/terminal-card/internal/db"
 
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
@@ -16,7 +20,42 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
+// RequireContainer skips when the container failed to start because Docker is
+// absent, and fails on anything else - a broken image or a startup timeout is a
+// real failure and must not disappear into a skip.
+func RequireContainer(t *testing.T, err error) {
+	t.Helper()
+	if err == nil {
+		return
+	}
+	errStr := strings.ToLower(err.Error())
+
+	// A reply from the daemon means Docker is there and something else went wrong: a
+	// bad image tag, a registry outage, a startup timeout. Those have to fail. The
+	// bare substrings "docker" and "daemon" match those replies too - "error response
+	// from daemon: manifest for postgres:16-alpine not found" contains both - which
+	// turned every real failure into a skip and a green pipeline. Since these tests
+	// are the only thing checking the SQL migrations against the GORM models, that is
+	// exactly the failure that must not be silent.
+	if !strings.Contains(errStr, "response from daemon") {
+		for _, marker := range []string{
+			"cannot connect to the docker daemon",
+			"is the docker daemon running",
+			"docker daemon is not running",
+			"rootless docker not found",
+			"failed to find a viable docker provider",
+		} {
+			if strings.Contains(errStr, marker) {
+				t.Skipf("skipping test because Docker is not available or not running: %v", err)
+			}
+		}
+	}
+	t.Fatalf("failed to start postgres container: %v", err)
+}
+
+// SetupTestDB brings up a Postgres container and applies the production
+// migrations, so tests see the constraints and indexes the deployed schema has.
+func SetupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping DB integration test in short mode")
@@ -40,15 +79,7 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 				WithStartupTimeout(time.Second*60),
 		),
 	)
-	if err != nil {
-		errStr := strings.ToLower(err.Error())
-		for _, marker := range []string{"docker", "daemon", "provider"} {
-			if strings.Contains(errStr, marker) {
-				t.Skipf("skipping test because Docker is not available or not running: %v", err)
-			}
-		}
-		t.Fatalf("failed to start postgres container: %v", err)
-	}
+	RequireContainer(t, err)
 
 	t.Cleanup(func() {
 		if err := postgresContainer.Terminate(ctx); err != nil {
@@ -81,12 +112,27 @@ func SetupTestDB(t *testing.T, models ...any) *gorm.DB {
 		}
 	})
 
-	if len(models) > 0 {
-		err = gormDB.AutoMigrate(models...)
-		if err != nil {
-			t.Fatalf("failed to run migrations: %v", err)
-		}
-	}
+	applyMigrations(t, gormDB)
 
 	return gormDB
+}
+
+func applyMigrations(t *testing.T, gormDB *gorm.DB) {
+	t.Helper()
+
+	steps, err := fs.Glob(db.Migrations, "migrations/*.up.sql")
+	if err != nil {
+		t.Fatalf("failed to list migrations: %v", err)
+	}
+	slices.Sort(steps)
+
+	for _, step := range steps {
+		sql, err := db.Migrations.ReadFile(step)
+		if err != nil {
+			t.Fatalf("failed to read migration %s: %v", step, err)
+		}
+		if err := gormDB.Exec(string(sql)).Error; err != nil {
+			t.Fatalf("failed to apply migration %s: %v", step, err)
+		}
+	}
 }
