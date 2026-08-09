@@ -21,8 +21,6 @@ type finalizedMatch struct {
 	userIDs  []uint
 }
 
-// finalizeSignal announces each completed ranked write so a test waits on the write
-// itself rather than polling for what it produced.
 type finalizeSignal struct {
 	signal chan struct{}
 }
@@ -34,7 +32,7 @@ func newFinalizeSignal() finalizeSignal {
 func (s finalizeSignal) fire() {
 	select {
 	case s.signal <- struct{}{}:
-	default: // no test is waiting; never block the game
+	default:
 	}
 }
 
@@ -47,8 +45,6 @@ func (s finalizeSignal) awaitFinalize(t *testing.T) {
 	}
 }
 
-// rankedFinalizeRecorder narrows the persistence boundary to the ranked write
-// exercised by the non-database system tests.
 type rankedFinalizeRecorder struct {
 	db.MatchRepository
 	finalizeSignal
@@ -130,13 +126,6 @@ func awaitGameStart(t *testing.T, events <-chan lobby.Event) *game.Engine {
 	}
 }
 
-// chipsInPlay is the invariant every betting path must preserve: a chip is either in
-// a stack or in the pool, so the two together are constant for the whole match.
-//
-// State.Pots is deliberately not counted. awardPots pays each layer into the winners'
-// stacks and zeroes MainPool, but leaves Pots populated for the showdown screen to
-// read, so a hand that has been paid out reports its last pots alongside the stacks
-// that already hold those chips. Adding them would double-count.
 func chipsInPlay(t *testing.T, engine *game.Engine) uint {
 	t.Helper()
 	var total uint

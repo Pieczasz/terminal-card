@@ -32,11 +32,6 @@ func SetupOTel(ctx context.Context, cfg *config.Config) (shutdown func(context.C
 		shutdownFuncs = nil
 		return errs
 	}
-
-	// Every error path below returns a nil shutdown func, so providers already
-	// started have to be torn down here or they leak for the process lifetime.
-	// The closure must call cleanup rather than the named return, which is nil
-	// on exactly those paths.
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, cleanup(ctx))
@@ -145,8 +140,6 @@ func newMeterProvider(ctx context.Context, cfg *config.Config, res *resource.Res
 	), nil
 }
 
-// registerAppMetrics exposes the process counters as OTel observable
-// instruments, read from their atomics on each collection cycle.
 func registerAppMetrics(mp metric.MeterProvider) error {
 	meter := mp.Meter("terminal-card")
 

@@ -10,9 +10,7 @@ import (
 
 const (
 	DefaultBrowseLimit = 20
-	// MaxBrowseLimit is the hardest cap on how many public tables the finder will
-	// hold; the on-screen window is still visibleRows and scrolls inside that set.
-	MaxBrowseLimit = 200
+	MaxBrowseLimit     = 200
 )
 
 type BrowseMode uint8

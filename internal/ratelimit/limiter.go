@@ -92,15 +92,6 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 	}
 }
 
-// evictLeastRecentLocked makes room for one more key by dropping the one whose most
-// recent request is oldest. Refusing the new key instead is how a burst of throwaway
-// addresses used to lock out every caller the table had not seen yet.
-//
-// The victim choice is the whole security of that trade. Evicting an arbitrary key
-// forgives a full budget at random, so a caller cycling more than maxKeys addresses
-// reclaims one every rotation and stops being limited at all. The least recently
-// active key is the one closest to ageing out of its own window, so it is the
-// smallest budget the table can forgive.
 func (s *SlidingWindowLimiter) evictLeastRecentLocked() {
 	var victim string
 	var oldest time.Time

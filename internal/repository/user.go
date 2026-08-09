@@ -23,11 +23,9 @@ var (
 )
 
 const (
-	// pgUniqueViolationCode is the Postgres SQLSTATE for a unique constraint violation.
 	pgUniqueViolationCode = "23505"
-
-	bestPlayersCacheSize = 200
-	bestPlayersCacheTTL  = 5 * time.Minute
+	bestPlayersCacheSize  = 200
+	bestPlayersCacheTTL   = 5 * time.Minute
 )
 
 func isUniqueViolation(err error) bool {
@@ -57,10 +55,6 @@ func (q *gormUserRepository) LoadUserByFingerprint(ctx context.Context, fingerpr
 	ctx, span := tracer.Start(ctx, "db.LoadUserByFingerprint")
 	defer span.End()
 
-	// Rankings and their Game come along because lobby.NewPlayer flattens them into
-	// game.Player.Ratings at login, and that map is the only rating the lobby roster,
-	// the table average and the browse ordering ever see. Preloading only "User" left
-	// it empty, so every seat rendered at the default rating.
 	var dbKey db.PublicKey
 	err := q.db.WithContext(ctx).Where("fingerprint = ?", fingerprint).
 		Preload("User").
@@ -141,7 +135,6 @@ func (q *gormUserRepository) BestPlayers(ctx context.Context, limit int, gameNam
 
 	limit = max(limit, 0)
 
-	// One window per game filter: "all" and "Uno" must not share a cache entry.
 	cached := func() ([]db.Ranking, bool) {
 		entry, ok := q.bestPlayersCache[gameName]
 		if !ok || time.Since(entry.at) >= bestPlayersCacheTTL {
@@ -176,13 +169,6 @@ func (q *gormUserRepository) BestPlayers(ctx context.Context, limit int, gameNam
 		return nil, fmt.Errorf("get best players: %w", err)
 	}
 
-	// An empty result is never cached, which is doing two jobs. It keeps the first
-	// ranked match visible immediately instead of hiding behind a "fresh" empty
-	// window for the rest of the TTL; and because gameName reaches here straight
-	// from an unauthenticated ?game= parameter, it means a name nobody has ranked
-	// under - every junk one - leaves no entry behind, so the map is bounded by the
-	// games that actually exist rather than by what a caller can invent. The cost is
-	// re-running a query that by definition matches nothing.
 	if len(rankings) > 0 {
 		q.bestPlayersCache[gameName] = bestPlayersCacheEntry{rankings: rankings, at: time.Now()}
 	}
@@ -211,9 +197,6 @@ func (q *gormUserRepository) UpdateUserActivity(ctx context.Context, user *db.Us
 	if err := q.db.WithContext(ctx).Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
 		slog.Error("unexpected error while trying to update LastSeenAt field", "user_id", user.ID, "error", err)
 	}
-	// key.User is populated by LoadUserByFingerprint's Preload, and GORM would
-	// upsert that association alongside the update - resurrecting a soft-deleted
-	// user on every login.
 	if err := q.db.WithContext(ctx).Model(key).Omit("User").Update("LastUsedAt", time.Now()).Error; err != nil {
 		slog.Error("unexpected error while trying to update LastUsedAt field", "user_id", user.ID, "error", err)
 	}
@@ -223,9 +206,6 @@ func (q *gormUserRepository) UserMatchHistory(ctx context.Context, userID uint, 
 	ctx, span := tracer.Start(ctx, "db.UserMatchHistory")
 	defer span.End()
 
-	// The profile is the only caller, and it renders the game, the placement and
-	// the rating swing. Preloading everyone else at every match would be two more
-	// queries per profile view for rows nothing reads.
 	var history []db.MatchParticipant
 	err := q.db.WithContext(ctx).Where("user_id = ?", userID).
 		Preload("Match").

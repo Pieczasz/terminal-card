@@ -31,10 +31,6 @@ func TestCalculate_MinFloor(t *testing.T) {
 	assert.LessOrEqual(t, got["winner"], MaxRating)
 }
 
-// A neighbour pair is one exchange, so the rating a table holds before a match is
-// the rating it holds after. Clamping each player's result instead of capping the
-// term is how a floored loser used to pay a winner with rating that did not exist,
-// and a capped winner used to burn the rating their opponent lost.
 func TestCalculate_ConservesRatingAtTheBounds(t *testing.T) {
 	t.Parallel()
 
@@ -99,9 +95,6 @@ func TestCalculate_ConservesRatingAtTheBounds(t *testing.T) {
 	}
 }
 
-// A player on the floor has nothing left to lose, so the win above them pays
-// nothing. The old code paid the winner in full and clamped the loser, minting the
-// difference out of nothing on every match against a floored account.
 func TestCalculate_FlooredLoserPaysNothing(t *testing.T) {
 	t.Parallel()
 	got := Calculate([]Player{
@@ -126,8 +119,6 @@ func TestCalculate_CappedWinnerBurnsNothing(t *testing.T) {
 	assert.InDelta(t, 1500.0, got["loser"], 1e-9, "nobody gained it, so nobody loses it")
 }
 
-// A draw between an overwhelming favourite and an underdog is a result for the
-// underdog: the favourite was expected to win outright and only scored half.
 func TestCalculate_DrawMovesRatingTowardsTheUnderdog(t *testing.T) {
 	t.Parallel()
 	got := Calculate([]Player{
@@ -140,8 +131,6 @@ func TestCalculate_DrawMovesRatingTowardsTheUnderdog(t *testing.T) {
 	assert.InDelta(t, 3200.0, got["favourite"]+got["underdog"], 1e-9, "a draw is still zero-sum")
 }
 
-// Place is opt-in: a caller that never sets it gets the strict ordering the slice
-// already carries, so every existing caller keeps its behaviour.
 func TestCalculate_ZeroPlacesAreNotAllDraws(t *testing.T) {
 	t.Parallel()
 	got := Calculate([]Player{
@@ -179,8 +168,6 @@ func TestExpectedScore(t *testing.T) {
 func TestCalculate_UnequalRatings(t *testing.T) {
 	t.Parallel()
 
-	// Lower-rated "winner" (1400) beats higher-rated "loser" (1600).
-	// Sorted best-to-worst: winner first, loser second.
 	got := Calculate([]Player{
 		{ID: "winner", Rating: 1400},
 		{ID: "loser", Rating: 1600},
@@ -196,18 +183,11 @@ func TestCalculate_UnequalRatings(t *testing.T) {
 	winnerDelta := got["winner"] - 1400.0
 	loserDelta := got["loser"] - 1600.0
 
-	// The underdog gains more than in the symmetric equal-rating case.
 	assert.Greater(t, winnerDelta, equalGain, "underdog should gain more than the equal-rating baseline")
-
-	// Signs are correct: winner up, loser down.
 	assert.Positive(t, winnerDelta, "winner should gain rating")
 	assert.Negative(t, loserDelta, "loser should lose rating")
-
-	// Magnitudes match the hand-computed values.
 	assert.InDelta(t, expectedWin, got["winner"], tolerance, "winner rating mismatch")
 	assert.InDelta(t, expectedLoss, got["loser"], tolerance, "loser rating mismatch")
-
-	// Zero-sum: what the winner gains, the loser loses.
 	assert.InDelta(t, 0.0, winnerDelta+loserDelta, tolerance, "two-player match must be zero-sum")
 }
 
@@ -388,8 +368,6 @@ func TestCalculate(t *testing.T) {
 			},
 		},
 		{
-			// The winner can only take the five points of headroom they have left,
-			// so that is all the loser pays: the exchange is capped, not clamped.
 			name: "Max Rating Cap Reachable",
 			players: []Player{
 				{ID: "p1", Rating: 3995},
@@ -412,8 +390,6 @@ func TestCalculate(t *testing.T) {
 			},
 		},
 		{
-			// Two draws in a row: the shared second place scores half a point both
-			// ways, while first place still beats the pair below it.
 			name: "A tie inside the field keeps the places around it",
 			players: []Player{
 				{ID: "p1", Rating: 1500, Place: 1},
@@ -444,8 +420,6 @@ func TestCalculate(t *testing.T) {
 	}
 }
 
-// Calculate runs once per ranked game over every seat, and is O(n) in players with
-// a map allocation per call.
 func BenchmarkCalculate(b *testing.B) {
 	for _, n := range []int{2, 6, 9} {
 		b.Run(fmt.Sprintf("players=%d", n), func(b *testing.B) {
@@ -461,8 +435,6 @@ func BenchmarkCalculate(b *testing.B) {
 	}
 }
 
-// FuzzToUint32 pins the storage boundary: whatever arithmetic upstream produces, the
-// value written to the rankings table must sit inside [MinRating, MaxRating].
 func FuzzToUint32(f *testing.F) {
 	f.Add(1500.0)
 	f.Add(math.NaN())
@@ -477,10 +449,6 @@ func FuzzToUint32(f *testing.F) {
 	})
 }
 
-// SME only ever compares neighbours, so which pairs a tie produces - and therefore
-// how much rating it moves - would otherwise depend on the order the caller happened
-// to list the tied players in. Nothing else pins that, and the standings slice a
-// game hands over has no defined order among players it scored equally.
 func TestCalculate_TiesAreOrderIndependent(t *testing.T) {
 	t.Parallel()
 

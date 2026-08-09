@@ -18,10 +18,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSystemRankedResultReachesLeaderboardAndProfile closes the loop the unit
-// tiers cannot: a real ranked hand is played through the lobby and engine against a
-// live Postgres, and the result has to show up in the two screens players read -
-// the leaderboard and their own profile.
 func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t)
 
@@ -31,7 +27,6 @@ func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	manager := lobby.NewManager(ctx, matchRepo)
 	registry := realRegistry(t)
 
-	// Register real users the way the SSH layer does, by public key.
 	players := make([]*game.Player, 0, 3)
 	for _, name := range []string{"alice", "bob", "carol"} {
 		user, _, err := userRepo.RegisterUserWithKey(ctx, name, "fingerprint-"+name)
@@ -59,10 +54,8 @@ func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	}
 	engine := awaitGameStart(t, events)
 
-	// Check/call every hand of the match through to the end.
 	playOutMatch(t, engine)
 
-	// Wait for the write itself rather than polling the database.
 	matchRepo.awaitFinalize(t)
 	require.True(t, manager.WaitForFinalizers(30*time.Second), "ranked write must drain")
 

@@ -20,9 +20,6 @@ import (
 	"gorm.io/gorm/logger"
 )
 
-// RequireContainer skips when the container failed to start because Docker is
-// absent, and fails on anything else - a broken image or a startup timeout is a
-// real failure and must not disappear into a skip.
 func RequireContainer(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -30,13 +27,6 @@ func RequireContainer(t *testing.T, err error) {
 	}
 	errStr := strings.ToLower(err.Error())
 
-	// A reply from the daemon means Docker is there and something else went wrong: a
-	// bad image tag, a registry outage, a startup timeout. Those have to fail. The
-	// bare substrings "docker" and "daemon" match those replies too - "error response
-	// from daemon: manifest for postgres:16-alpine not found" contains both - which
-	// turned every real failure into a skip and a green pipeline. Since these tests
-	// are the only thing checking the SQL migrations against the GORM models, that is
-	// exactly the failure that must not be silent.
 	if !strings.Contains(errStr, "response from daemon") {
 		for _, marker := range []string{
 			"cannot connect to the docker daemon",
@@ -53,8 +43,6 @@ func RequireContainer(t *testing.T, err error) {
 	t.Fatalf("failed to start postgres container: %v", err)
 }
 
-// SetupTestDB brings up a Postgres container and applies the production
-// migrations, so tests see the constraints and indexes the deployed schema has.
 func SetupTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
 	if testing.Short() {
@@ -99,8 +87,6 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		t.Fatalf("failed to connect to database: %v", err)
 	}
 
-	// Close the pool before the container goes away. Without this each test leaks
-	// sql.DB's connection-opener and cleaner goroutines for the rest of the run.
 	t.Cleanup(func() {
 		sqlDB, err := gormDB.DB()
 		if err != nil {

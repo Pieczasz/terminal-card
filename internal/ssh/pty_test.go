@@ -16,8 +16,6 @@ import (
 	"gorm.io/gorm"
 )
 
-// The client picks these numbers and the renderer allocates from them, so an
-// unbounded pty-req is a remote out-of-memory rather than a cosmetic problem.
 func TestBoundedPty_RefusesGeometryNoTerminalHas(t *testing.T) {
 	t.Parallel()
 
@@ -45,8 +43,6 @@ func TestBoundedPty_RefusesGeometryNoTerminalHas(t *testing.T) {
 	}
 }
 
-// window-change carries the same numbers as pty-req and arrives at any time, so the
-// bound has to hold for every resize and not just for the first one.
 func TestClampWindowSize(t *testing.T) {
 	t.Parallel()
 
@@ -71,8 +67,6 @@ func TestClampWindowSize(t *testing.T) {
 			want: tea.WindowSizeMsg{Width: maxTerminalWidth, Height: 40},
 		},
 		{
-			// The filter this one replaces owned that answer; there is no shell
-			// behind an ssh session to suspend into.
 			name: "suspend is still answered with resume",
 			msg:  tea.SuspendMsg{},
 			want: tea.ResumeMsg{},
@@ -96,9 +90,6 @@ type panickyModel struct{}
 
 func (panickyModel) Close() { panic("closing the view exploded") }
 
-// Cleanup that panics must not cost the player their session slot: the tracker entry
-// is what refuses their next login, so it is released by a defer of its own rather
-// than sharing one with the view teardown.
 func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker()
@@ -114,8 +105,6 @@ func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.
 		}),
 	}
 
-	// The panic is expected to be contained, so the session ending badly is fine;
-	// what matters is everything the session held being handed back.
 	_ = testsession.New(t, srv, nil).Run("")
 
 	require.Eventually(t, func() bool { return tracker.Count() == 0 }, 2*time.Second, 10*time.Millisecond,

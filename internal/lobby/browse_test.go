@@ -12,7 +12,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// openTable creates a public lobby whose leader holds rating in gameName.
 func openTable(t *testing.T, m *Manager, id string, dbID uint, gameName string, rating uint32, opts ...Option) *Lobby {
 	t.Helper()
 	leader := mockPlayer(id, dbID)
@@ -33,13 +32,10 @@ func codesOf(entries []BrowseEntry) []string {
 	return codes
 }
 
-// The cap has to keep the tables nearest the player's rating, not the first found.
 func TestBrowseLobbies_CapsToTheClosestTables(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 
-	// Ratings walk away from 1500 in both directions, so the nearest tables are in the
-	// middle of creation order rather than at either end.
 	for i := range 30 {
 		rating := uint32(1000 + i*50)
 		openTable(t, m, fmt.Sprintf("p%d", i), uint(i+1), "Poker", rating)
@@ -135,7 +131,6 @@ func TestBrowseLobbies_Filters(t *testing.T) {
 	}
 }
 
-// A row carries everything the list shows, so nothing needs the lobby again.
 func TestBrowseLobbies_RowCarriesWhatTheListShows(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -152,7 +147,6 @@ func TestBrowseLobbies_RowCarriesWhatTheListShows(t *testing.T) {
 	assert.Equal(t, 4, entry.MaxPlayers)
 	assert.True(t, entry.Ranked)
 	assert.True(t, entry.HasRoom())
-	// Leader 1800, guest unrated so the starting rating: the average of the two.
 	assert.Equal(t, (1800+elo.ToUint32(elo.DefaultRating))/2, entry.AvgElo)
 }
 
@@ -163,7 +157,6 @@ func TestBrowseEntry_HasRoom(t *testing.T) {
 	assert.False(t, BrowseEntry{Players: 3, MaxPlayers: 2}.HasRoom())
 }
 
-// Matching an unrated player at zero would rank the weakest tables first for them.
 func TestBrowseLobbies_UnratedPlayerIsMatchedAtTheStartingRating(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -177,7 +170,6 @@ func TestBrowseLobbies_UnratedPlayerIsMatchedAtTheStartingRating(t *testing.T) {
 	assert.Zero(t, entries[0].EloDelta)
 }
 
-// The list re-reads every two seconds under a cursor the player is aiming with.
 func TestBrowseLobbies_EqualRatingsKeepAStableOrder(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -192,7 +184,6 @@ func TestBrowseLobbies_EqualRatingsKeepAStableOrder(t *testing.T) {
 	}
 }
 
-// The game filter is driven by this, so it must name only joinable games.
 func TestManager_GameNames(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
@@ -208,8 +199,6 @@ func TestManager_GameNames(t *testing.T) {
 		"sorted, deduplicated, and public only")
 }
 
-// Visibility is access control, not decoration: a table the leader just hid must
-// leave the browse at once rather than whenever the cache window happens to lapse.
 func TestBrowseLobbies_VisibilityChangeShowsUpImmediately(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
