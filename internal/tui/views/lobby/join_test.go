@@ -6,17 +6,18 @@ import (
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
-	"github.com/Pieczasz/terminal-card/internal/player"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func openPublicTable(t *testing.T, m *lobby.Manager, id string, dbID uint, gameName string, opts ...lobby.Option) *lobby.Lobby {
 	t.Helper()
-	leader := &player.Player{ID: id, DatabaseUser: testUser(dbID, id)}
+	leader := &game.Player{ID: id, UserID: dbID, Name: id}
 	opts = append([]lobby.Option{lobby.WithPrivate(false), lobby.WithCardGame(&db.Game{Name: gameName})}, opts...)
 	l, err := m.New(leader, opts...)
 	require.NoError(t, err)
@@ -67,7 +68,7 @@ func TestJoin_RefreshDropsTablesThatStarted(t *testing.T) {
 	t.Parallel()
 	m := lobby.NewManager(context.Background(), nil)
 	l := openPublicTable(t, m, "host", 1, testGameName, lobby.WithMaxPlayers(2))
-	guest := &player.Player{ID: "guest", DatabaseUser: testUser(2, "guest")}
+	guest := &game.Player{ID: "guest", UserID: 2, Name: "guest"}
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	view := newJoinModel(t, m)
@@ -203,7 +204,9 @@ func TestJoin_GameFilterWithNoTablesFallsBackToAny(t *testing.T) {
 	assert.Empty(t, view.filter.GameName)
 }
 
-// The mode tag is how a player tells ranked from casual before joining.
+// The mode tag is how a player tells ranked from casual before joining. Codes stay
+// off this screen: JoinLobbyByCode does not check privacy, so a browsed code would
+// still work after the leader flipped the table private.
 func TestJoin_ViewShowsTheColumns(t *testing.T) {
 	t.Parallel()
 	m := lobby.NewManager(context.Background(), nil)
@@ -212,11 +215,49 @@ func TestJoin_ViewShowsTheColumns(t *testing.T) {
 	view := newJoinModel(t, m)
 	rendered := stripANSI(view.View().Content)
 
-	assert.Contains(t, rendered, ranked.Code(), "the code is what a player joins by")
+	assert.NotContains(t, rendered, ranked.Code(), "public browse must not advertise join codes")
+	assert.NotContains(t, rendered, "CODE", "the code column is gone")
+	assert.Contains(t, rendered, "Game")
+	assert.Contains(t, rendered, "Seats")
 	assert.Contains(t, rendered, "Poker")
 	assert.Contains(t, rendered, "1/4", "seats taken over seats available")
 	assert.Contains(t, rendered, "ranked", "ranked or casual has to be visible before joining")
 	assert.Contains(t, rendered, "game: any", "the active filters are on screen")
+	assert.Contains(t, rendered, ">", "the selection marker sits left of the table")
+}
+
+// A focused text field used to swallow every message, so ctrl+c did nothing and a
+// player who had opened the code prompt could not quit without disconnecting.
+func TestJoin_GlobalKeysSurviveTheCodePrompt(t *testing.T) {
+	t.Parallel()
+	m := lobby.NewManager(context.Background(), nil)
+	view := newJoinModel(t, m)
+
+	pressJoin(t, view, "c")
+	require.True(t, view.writingCode, "the code prompt has to be open for this to mean anything")
+
+	_, cmd := view.Update(keyMsg("ctrl+c"))
+	require.NotNil(t, cmd, "ctrl+c has to quit from a focused field too")
+	assert.IsType(t, tea.QuitMsg{}, cmd())
+
+	view.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+	assert.Equal(t, 100, view.global.Width, "a resize still has to reach the layout")
+	assert.Equal(t, 30, view.global.Height)
+}
+
+// Typing must still reach the field: the shared handler only claims ctrl+c, the
+// theme and resizes, and a letter it claimed would be a letter never typed.
+func TestJoin_TypingReachesTheCodeField(t *testing.T) {
+	t.Parallel()
+	m := lobby.NewManager(context.Background(), nil)
+	view := newJoinModel(t, m)
+
+	pressJoin(t, view, "c")
+	for _, key := range []string{"a", "b"} {
+		pressJoin(t, view, key)
+	}
+
+	assert.Equal(t, "AB", view.textInput.Value(), "codes are upper-cased as they are typed")
 }
 
 func TestJoin_ViewSaysWhenNothingMatches(t *testing.T) {

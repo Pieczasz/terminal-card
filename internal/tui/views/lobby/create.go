@@ -1,6 +1,7 @@
 package lobby
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -34,11 +35,11 @@ type createModel struct {
 	gameIndex   int
 }
 
+// NewCreate builds the lobby form. The games on offer come from the registry and
+// nowhere else: a hardcoded fallback here would be a second place a game is
+// declared, and it would offer a game the registry cannot build.
 func NewCreate(global router.GlobalContext) tea.Model {
 	gameOptions := global.GameRegistry.GameNames()
-	if len(gameOptions) == 0 {
-		gameOptions = []string{"Crazy Eights"}
-	}
 	return &createModel{
 		global:      global,
 		cursor:      0,
@@ -114,9 +115,27 @@ func (m *createModel) adjustSetting(delta int) {
 	}
 }
 
+// errNoGames is what the form says when the registry is empty. It is a broken
+// deployment rather than a player mistake, but it still has to read as something.
+var errNoGames = errors.New("no games are available right now")
+
+// selectedGame is the highlighted game, or empty when there are none to highlight.
+func (m *createModel) selectedGame() string {
+	if m.gameIndex < 0 || m.gameIndex >= len(m.gameOptions) {
+		return ""
+	}
+	return m.gameOptions[m.gameIndex]
+}
+
 func (m *createModel) createLobby() (tea.Model, tea.Cmd) {
+	name := m.selectedGame()
+	if name == "" {
+		m.err = errNoGames
+		return m, nil
+	}
+
 	l, err := m.global.LobbyManager.New(views.SessionPlayer(m.global),
-		lobby.WithCardGame(&db.Game{Name: m.gameOptions[m.gameIndex]}),
+		lobby.WithCardGame(&db.Game{Name: name}),
 		lobby.WithMaxPlayers(m.maxPlayers),
 		lobby.WithPrivate(m.isPrivate),
 		lobby.WithRanked(m.isRanked),
@@ -129,7 +148,7 @@ func (m *createModel) createLobby() (tea.Model, tea.Cmd) {
 }
 
 func (m *createModel) gameMaxPlayers() int {
-	rules, err := m.global.GameRegistry.Create(m.gameOptions[m.gameIndex])
+	rules, err := m.global.GameRegistry.Create(m.selectedGame())
 	if err != nil {
 		return 8
 	}
@@ -139,7 +158,7 @@ func (m *createModel) gameMaxPlayers() int {
 func (m *createModel) clampMaxPlayers() {
 	maxP := m.gameMaxPlayers()
 	minP := 2
-	if rules, err := m.global.GameRegistry.Create(m.gameOptions[m.gameIndex]); err == nil {
+	if rules, err := m.global.GameRegistry.Create(m.selectedGame()); err == nil {
 		minP = rules.MinPlayers()
 	}
 	// minP is applied last so it wins if a game's bounds ever cross.
@@ -157,7 +176,11 @@ func (m *createModel) View() tea.View {
 		return fmt.Sprintf("%s%s: < %s >", cursor, label, value)
 	}
 
-	gameStr := renderOption(createCursorGame, "Game", m.gameOptions[m.gameIndex])
+	gameName := m.selectedGame()
+	if gameName == "" {
+		gameName = "none available"
+	}
+	gameStr := renderOption(createCursorGame, "Game", gameName)
 	playersStr := renderOption(createCursorPlayers, "Max Players", strconv.Itoa(m.maxPlayers))
 
 	vis := fmt.Sprintf("%-7s", "Public")
