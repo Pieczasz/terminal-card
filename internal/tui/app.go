@@ -29,12 +29,11 @@ type ModelDependencies struct {
 
 func Model(deps ModelDependencies) tea.Model {
 	global := router.GlobalContext{
-		User:            &deps.User,
-		UserRepository:  deps.UserRepo,
-		MatchRepository: deps.MatchRepo,
-		LobbyManager:    deps.LobbyManager,
-		GameRegistry:    deps.GameRegistry,
-		SessionCtx:      deps.SessionCtx,
+		User:           &deps.User,
+		UserRepository: deps.UserRepo,
+		LobbyManager:   deps.LobbyManager,
+		GameRegistry:   deps.GameRegistry,
+		SessionCtx:     deps.SessionCtx,
 	}
 
 	r := router.New(global)
