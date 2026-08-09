@@ -80,14 +80,29 @@ func TestSlidingWindowLimiter_WindowExpiryEvicts(t *testing.T) {
 	assert.Equal(t, 1, limiter.Size())
 }
 
+// A full key table must not become a global lockout: filling it with throwaway
+// addresses is cheap, and refusing every unseen caller from then on denies the
+// service to everybody. Capacity is held by evicting instead.
 func TestSlidingWindowLimiter_MaxKeys(t *testing.T) {
 	t.Parallel()
 	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(2)
 
 	require.True(t, limiter.Allow("a"))
 	require.True(t, limiter.Allow("b"))
-	require.False(t, limiter.Allow("c"), "new key should be rejected when at capacity")
-	require.False(t, limiter.Allow("a"), "existing key still rate-limited")
+	require.True(t, limiter.Allow("c"), "a caller the table has no room for is still served")
+	assert.LessOrEqual(t, limiter.Size(), 2, "and the table stays bounded")
+}
+
+// Eviction is what keeps the cap meaningful: a long flood of one-off keys must
+// neither grow the table nor start refusing the callers behind it.
+func TestSlidingWindowLimiter_EvictionKeepsTheTableBounded(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Minute).WithMaxKeys(64)
+
+	for i := range 1_000 {
+		require.True(t, limiter.Allow(strconv.Itoa(i)), "every first request is within budget")
+		require.LessOrEqual(t, limiter.Size(), 64)
+	}
 }
 
 func BenchmarkAllow(b *testing.B) {

@@ -56,9 +56,7 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 	_, exists := s.logs[ip]
 	if !exists && len(s.logs) >= s.maxKeys {
 		s.evictExpiredLocked(threshold)
-		if len(s.logs) >= s.maxKeys {
-			return false
-		}
+		s.evictLeastRecentLocked()
 	}
 
 	s.logs[ip] = append(timestamps, now)
@@ -91,6 +89,33 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 		} else {
 			s.logs[ip] = valid
 		}
+	}
+}
+
+// evictLeastRecentLocked makes room for one more key by dropping the one whose most
+// recent request is oldest. Refusing the new key instead is how a burst of throwaway
+// addresses used to lock out every caller the table had not seen yet.
+//
+// The victim choice is the whole security of that trade. Evicting an arbitrary key
+// forgives a full budget at random, so a caller cycling more than maxKeys addresses
+// reclaims one every rotation and stops being limited at all. The least recently
+// active key is the one closest to ageing out of its own window, so it is the
+// smallest budget the table can forgive.
+func (s *SlidingWindowLimiter) evictLeastRecentLocked() {
+	var victim string
+	var oldest time.Time
+	for ip, timestamps := range s.logs {
+		if len(timestamps) == 0 {
+			delete(s.logs, ip)
+			continue
+		}
+		last := timestamps[len(timestamps)-1]
+		if victim == "" || last.Before(oldest) {
+			victim, oldest = ip, last
+		}
+	}
+	if len(s.logs) >= s.maxKeys && victim != "" {
+		delete(s.logs, victim)
 	}
 }
 
