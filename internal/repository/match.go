@@ -27,12 +27,14 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 }
 
 func (q *gormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
-	return getOrCreateGameTx(q.db.WithContext(ctx), name)
+	return getOrCreateGame(q.db.WithContext(ctx), name)
 }
 
-// getOrCreateGameTx resolves a game by its unique name, race-safe via
-// ON CONFLICT DO NOTHING plus a read-back when another transaction won the insert.
-func getOrCreateGameTx(tx *gorm.DB, name string) (*db.Game, error) {
+// getOrCreateGame takes the handle rather than reaching for q.db, because callers
+// inside a transaction must reuse its connection. Going back to the pool there holds
+// one connection while waiting for a second, so DBMaxOpenConnections concurrent
+// finalizes deadlock until they time out, and the game row would outlive a rollback.
+func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
 	game := db.Game{Name: name}
 	if err := tx.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "name"}},
@@ -78,7 +80,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 	defer span.End()
 
 	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGameTx(tx, gameName)
+		game, err := getOrCreateGame(tx, gameName)
 		if err != nil {
 			return err
 		}
