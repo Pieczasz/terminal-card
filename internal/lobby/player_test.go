@@ -5,8 +5,6 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 
-	"gorm.io/gorm"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -22,7 +20,7 @@ func TestNewPlayer(t *testing.T) {
 		t.Parallel()
 
 		p := NewPlayer(&db.User{
-			Model:    gorm.Model{ID: 7},
+			ID:       7,
 			Username: "alice",
 			Rankings: []db.Ranking{
 				{Game: db.Game{Name: "Uno"}, Elo: 1700},
@@ -44,7 +42,7 @@ func TestNewPlayer(t *testing.T) {
 		t.Parallel()
 
 		p := NewPlayer(&db.User{
-			Model:    gorm.Model{ID: 9},
+			ID:       9,
 			Username: "bob",
 			Rankings: []db.Ranking{
 				{Game: db.Game{}, Elo: 3000},
@@ -60,7 +58,7 @@ func TestNewPlayer(t *testing.T) {
 	t.Run("no rankings gives an empty map, not nil lookups", func(t *testing.T) {
 		t.Parallel()
 
-		p := NewPlayer(&db.User{Model: gorm.Model{ID: 3}, Username: "carol"})
+		p := NewPlayer(&db.User{ID: 3, Username: "carol"})
 
 		require.NotNil(t, p)
 		assert.Empty(t, p.Ratings)

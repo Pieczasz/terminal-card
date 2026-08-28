@@ -15,7 +15,7 @@ import (
 func TestUpdate_Navigation(t *testing.T) {
 	t.Parallel()
 	m := Model{
-		Session: gameview.Session{Base: gameview.BaseState{
+		Base: gameview.BaseState{
 			Hand: []deck.Card{
 				{Rank: deck.Two, Suit: deck.Hearts},
 				{Rank: deck.Three, Suit: deck.Clubs},
@@ -23,7 +23,7 @@ func TestUpdate_Navigation(t *testing.T) {
 			},
 			MyTurn: true,
 			Phase:  game.Playing,
-		}},
+		},
 		handPhase: logic.AwaitingDiscard,
 	}
 
@@ -38,9 +38,8 @@ func TestUpdate_Navigation(t *testing.T) {
 
 func TestUpdate_NumberSelection(t *testing.T) {
 	t.Parallel()
-	m := Model{Session: gameview.Session{
-		Base: gameview.BaseState{Hand: make([]deck.Card, 10)},
-	}}
+	m := Model{
+		Base: gameview.BaseState{Hand: make([]deck.Card, 10)}}
 	msg := tea.KeyPressMsg{Code: rune("5"[0]), Text: "5"}
 	newM, _ := m.Update(msg)
 	assert.Equal(t, 5, newM.(*Model).Selected)

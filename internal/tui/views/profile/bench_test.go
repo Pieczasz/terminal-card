@@ -7,12 +7,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
-
-	"gorm.io/gorm"
 )
 
 func BenchmarkProfileView_Render(b *testing.B) {
-	user := &db.User{Model: gorm.Model{ID: 1}, Username: "alice"}
+	user := &db.User{ID: 1, Username: "alice"}
 	for i := range 3 {
 		user.Rankings = append(user.Rankings, db.Ranking{
 			Elo: uint32(1500 + i*40), Game: db.Game{Name: fmt.Sprintf("Game%d", i)},

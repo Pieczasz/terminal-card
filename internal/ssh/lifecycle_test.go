@@ -15,7 +15,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
-	"gorm.io/gorm"
 )
 
 // fakeSession is enough of an ssh.Session for the teardown helpers, which only ever
@@ -40,7 +39,7 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	t.Parallel()
 
 	tracker := NewSessionTracker(0)
-	user := &db.User{Model: gorm.Model{ID: 11}, Username: "shared"}
+	user := &db.User{ID: 11, Username: "shared"}
 	require.NoError(t, tracker.Connect(user.ID))
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 
@@ -75,8 +74,8 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	t.Parallel()
 
 	manager := lobby.NewManager(context.Background(), nil)
-	host := &db.User{Model: gorm.Model{ID: 1}, Username: "host"}
-	guest := &db.User{Model: gorm.Model{ID: 2}, Username: "guest"}
+	host := &db.User{ID: 1, Username: "host"}
+	guest := &db.User{ID: 2, Username: "guest"}
 	guestPlayer := lobby.NewPlayer(guest)
 
 	table, err := manager.New(lobby.NewPlayer(host), lobby.WithCardGame(&db.Game{Name: "Mock"}))

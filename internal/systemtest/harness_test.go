@@ -13,7 +13,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 type finalizedMatch struct {
@@ -102,7 +101,7 @@ func realRegistry(t *testing.T) *game.Registry {
 }
 
 func newPlayer(id uint, name string) *game.Player {
-	return lobby.NewPlayer(&db.User{Model: gorm.Model{ID: id}, Username: name})
+	return lobby.NewPlayer(&db.User{ID: id, Username: name})
 }
 
 func awaitGameStart(t *testing.T, events <-chan lobby.Event) *game.Engine {

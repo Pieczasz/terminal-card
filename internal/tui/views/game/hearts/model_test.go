@@ -13,11 +13,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func testUser(id uint, name string) *db.User {
-	return &db.User{Model: gorm.Model{ID: id}, Username: name}
+	return &db.User{ID: id, Username: name}
 }
 
 func startedTable(t *testing.T) (*game.Engine, *Model) {
@@ -71,7 +70,7 @@ func TestPassSelection_FollowsTheCardsNotThePositions(t *testing.T) {
 		{Rank: deck.Nine, Suit: deck.Diamonds},
 	}
 	m := &Model{
-		Session:      gameview.Session{Base: gameview.BaseState{Hand: slices.Clone(hand), MyTurn: true}},
+		Base:         gameview.BaseState{Hand: slices.Clone(hand), MyTurn: true},
 		passSelected: map[deck.Card]struct{}{},
 		stage:        logic.StagePassing,
 	}

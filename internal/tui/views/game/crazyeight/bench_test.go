@@ -12,7 +12,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // benchTable seats n players and returns the first player's view. Rendering is the
@@ -31,7 +30,7 @@ func benchTable(b *testing.B, n int) *Model {
 	b.Cleanup(engine.Close)
 
 	global := router.GlobalContext{
-		User:  &db.User{Model: gorm.Model{ID: 1}, Username: "p1"},
+		User:  &db.User{ID: 1, Username: "p1"},
 		Width: 120, Height: 40, Theme: styles.NewTheme(true),
 	}
 	m, ok := New(global, engine).(*Model)

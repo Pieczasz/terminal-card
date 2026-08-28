@@ -13,13 +13,12 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 const testGameName = "Crazy Eights"
 
 func testUser(id uint, name string) *db.User {
-	return &db.User{Model: gorm.Model{ID: id}, Username: name}
+	return &db.User{ID: id, Username: name}
 }
 
 func testRegistry() *game.Registry {

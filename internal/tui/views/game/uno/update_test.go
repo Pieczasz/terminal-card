@@ -15,20 +15,18 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestUpdate_Navigation(t *testing.T) {
 	t.Parallel()
-	m := Model{Session: gameview.Session{
+	m := Model{
 		Base: gameview.BaseState{
 			Hand: []deck.Card{
 				{Rank: deck.Two, Suit: logic.ColorRed},
 				{Rank: deck.Three, Suit: logic.ColorBlue},
 				{Rank: deck.Four, Suit: logic.ColorGreen},
 			},
-		},
-	}}
+		}}
 
 	msg := tea.KeyPressMsg{Code: rune("l"[0]), Text: "l"}
 	newM, _ := m.Update(msg)
@@ -68,7 +66,7 @@ func tableOnTurn(t *testing.T) (*game.Engine, *Model) {
 	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
 	require.NoError(t, err)
 
-	global := router.GlobalContext{User: &db.User{Model: gorm.Model{ID: uint(id)}, Username: "hero"}}
+	global := router.GlobalContext{User: &db.User{ID: uint(id), Username: "hero"}}
 	m, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	require.True(t, m.Base.MyTurn, "the view has to be bound to the seat on turn")
@@ -112,7 +110,7 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: &db.User{Model: gorm.Model{ID: 1}, Username: "alice"}}
+	global := router.GlobalContext{User: &db.User{ID: 1, Username: "alice"}}
 	m, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	require.Equal(t, 1, engine.Broadcaster().Len())

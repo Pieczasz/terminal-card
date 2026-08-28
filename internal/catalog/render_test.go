@@ -20,7 +20,6 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // Every game view is checked here rather than in its own package because the bug this
@@ -150,7 +149,7 @@ func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*
 	t.Cleanup(engine.Close)
 
 	global := router.GlobalContext{
-		User:   &db.User{Model: gorm.Model{ID: 1}, Username: "player1"},
+		User:   &db.User{ID: 1, Username: "player1"},
 		Theme:  styles.NewTheme(true),
 		Width:  width,
 		Height: height,
