@@ -18,7 +18,23 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelection bool) string {
+// fanFits reports whether maxRows leaves room for a fanned hand and its index row.
+// Zero rows means unbounded.
+func fanFits(maxRows int) bool {
+	return maxRows <= 0 || maxRows >= components.FanRows+1
+}
+
+// RenderHand draws the hero's hand into at most maxWidth columns and maxRows rows,
+// with the index row under it. A hand that will not fit as a fan - too narrow even at
+// the tightest overlap, or too short for the card art - falls back to the compact
+// rank-and-suit strip, which has no index row to line up.
+func RenderHand(
+	t styles.Theme,
+	hand []deck.Card,
+	selectedIdx int,
+	disableSelection bool,
+	maxWidth, maxRows int,
+) string {
 	if len(hand) == 0 {
 		return ""
 	}
@@ -27,13 +43,18 @@ func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelect
 		selected = -1
 	}
 
-	fan := components.RenderFan(t, hand, selected)
+	tuck := components.FanTuck(len(hand), maxWidth)
+	if tuck == 0 || !fanFits(maxRows) {
+		return components.RenderStrip(t, hand, nil, selected, maxWidth)
+	}
+
+	fan := components.RenderFan(t, hand, selected, tuck)
 
 	// The index row sits under the fan, one number centred in each card's visible slot,
 	// so a player can see which key picks which card.
 	var labels strings.Builder
 	for i := range hand {
-		slot := components.CardSlotWidth(i, len(hand), selected)
+		slot := components.CardSlotWidth(i, len(hand), selected, tuck)
 		label := " "
 		if i < 10 {
 			style := t.Dim
@@ -50,15 +71,24 @@ func RenderHand(t styles.Theme, hand []deck.Card, selectedIdx int, disableSelect
 
 // RenderHandMulti is RenderHand for multi-select (Hearts pass phase). selected marks
 // which cards are currently staged for the pass; cursor highlights the focused index.
-func RenderHandMulti(t styles.Theme, hand []deck.Card, selected map[int]struct{}, cursor int) string {
+func RenderHandMulti(
+	t styles.Theme,
+	hand []deck.Card,
+	selected map[int]struct{},
+	cursor, maxWidth, maxRows int,
+) string {
 	if len(hand) == 0 {
 		return ""
 	}
-	fan := components.RenderFanMulti(t, hand, selected)
+	tuck := components.FanTuck(len(hand), maxWidth)
+	if tuck == 0 || !fanFits(maxRows) {
+		return components.RenderStrip(t, hand, selected, cursor, maxWidth)
+	}
+	fan := components.RenderFanMulti(t, hand, selected, tuck)
 
 	var labels strings.Builder
 	for i := range hand {
-		slot := components.CardSlotWidthMulti(i, len(hand), selected)
+		slot := components.CardSlotWidthMulti(i, len(hand), tuck, selected)
 		label := " "
 		if i < 10 {
 			style := t.Dim
@@ -83,7 +113,18 @@ const (
 	OrientationRight
 )
 
-func renderTopCards(t styles.Theme, count int) string {
+// topCardsFrame is the columns a top-edge stack costs beyond its card count: the
+// left edge, the seven columns of back on the last card, and its right edge.
+const topCardsFrame = 8
+
+// renderTopCards draws count face-down cards along the top edge, in at most maxWidth
+// columns. Past the budget the stack is cut short rather than run off the screen -
+// the seat prints its hand count beside the art, which is what a player actually
+// reads off somebody else's seat. maxWidth of zero or less means unbounded.
+func renderTopCards(t styles.Theme, count, maxWidth int) string {
+	if maxWidth > 0 {
+		count = min(count, maxWidth-topCardsFrame)
+	}
 	if count <= 0 {
 		return ""
 	}
@@ -112,7 +153,15 @@ func renderTopCards(t styles.Theme, count int) string {
 	return sb.String()
 }
 
-func renderLeftCards(t styles.Theme, count int) string {
+// sideCardsFrame is the rows a side stack costs beyond its card count: the four rows
+// of exposed back on the last card, plus the two edges.
+const sideCardsFrame = 5
+
+// renderLeftCards draws count face-down cards down the left edge in at most maxRows
+// rows. Unbounded stacks were the one place a table could grow taller than the
+// terminal: an Uno hand runs past twenty cards, and each one is another row.
+func renderLeftCards(t styles.Theme, count, maxRows int) string {
+	count = capSideCards(count, maxRows)
 	if count <= 0 {
 		return ""
 	}
@@ -125,7 +174,8 @@ func renderLeftCards(t styles.Theme, count int) string {
 	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
 }
 
-func renderRightCards(t styles.Theme, count int) string {
+func renderRightCards(t styles.Theme, count, maxRows int) string {
+	count = capSideCards(count, maxRows)
 	if count <= 0 {
 		return ""
 	}
@@ -136,6 +186,13 @@ func renderRightCards(t styles.Theme, count int) string {
 	cardBody := lg.NewStyle().Foreground(t.CardFace).Render("│") + lg.NewStyle().Foreground(t.CardBack).Render("░░░░░")
 
 	return buildVerticalCardsString(count, topEdge, midEdge, botEdge, cardBody)
+}
+
+func capSideCards(count, maxRows int) int {
+	if maxRows > 0 {
+		return min(count, maxRows-sideCardsFrame)
+	}
+	return count
 }
 
 func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody string) string {
@@ -161,7 +218,17 @@ func buildVerticalCardsString(count int, topEdge, midEdge, botEdge, cardBody str
 	return sb.String()
 }
 
-func RenderOpponent(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn bool, orientation Orientation, remaining time.Duration) string {
+// RenderOpponent draws one opponent's seat. budget is how much room the card art may
+// take: columns across for a seat on the top edge, rows down for one stacked at a
+// side. Zero means unbounded.
+func RenderOpponent(
+	t styles.Theme,
+	o game.PlayerSnapshot,
+	isCurrentTurn bool,
+	orientation Orientation,
+	remaining time.Duration,
+	budget int,
+) string {
 	nameStyle := t.SectionHeading
 	if isCurrentTurn {
 		nameStyle = t.TurnName
@@ -174,11 +241,11 @@ func RenderOpponent(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn bool, o
 	var cardsView string
 	switch orientation {
 	case OrientationTop:
-		cardsView = renderTopCards(t, o.HandSize)
+		cardsView = renderTopCards(t, o.HandSize, budget)
 	case OrientationLeft:
-		cardsView = renderLeftCards(t, o.HandSize)
+		cardsView = renderLeftCards(t, o.HandSize, budget)
 	case OrientationRight:
-		cardsView = renderRightCards(t, o.HandSize)
+		cardsView = renderRightCards(t, o.HandSize, budget)
 	}
 
 	var block string
@@ -206,19 +273,6 @@ func RenderOpponentMinimal(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn 
 	cardsCountView := t.Muted.Render(fmt.Sprintf("[%d cards]", o.HandSize))
 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
-}
-
-// RenderCardBacks draws count face-down card backs oriented for a table edge,
-// so every game view shows opponents' hidden cards the same way.
-func RenderCardBacks(t styles.Theme, count int, orientation Orientation) string {
-	switch orientation {
-	case OrientationLeft:
-		return renderLeftCards(t, count)
-	case OrientationRight:
-		return renderRightCards(t, count)
-	default:
-		return renderTopCards(t, count)
-	}
 }
 
 // RenderStatus names whose turn it is. When it is the hero's turn the countdown sits
