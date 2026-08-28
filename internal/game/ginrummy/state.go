@@ -16,14 +16,18 @@ const (
 )
 
 const (
-	KnockThreshold  = 10
-	GinBonus        = 25
-	UndercutBonus   = 25
-	TargetScore     = 100
-	WallStockSize   = 2
-	dealCount       = 10
-	MaxHandTurns    = 100
-	HandOverTimeout = time.Minute
+	knockThreshold = 10
+	ginBonus       = 25
+	undercutBonus  = 25
+	targetScore    = 100
+	wallStockSize  = 2
+	dealCount      = 10
+	maxHandTurns   = 100
+	// maxHands bounds the match. Two players who never knock never score, so the
+	// target alone is not a termination condition: a table that walls every hand
+	// redeals forever. At the cap the standings settle on the totals as they are.
+	maxHands        = 50
+	handOverTimeout = time.Minute
 )
 
 type State struct {
@@ -55,8 +59,6 @@ type State struct {
 
 // HandResult is the settle-up summary shown between hands.
 type HandResult struct {
-	Knocker string // player ID; empty on Wall
-
 	KnockerMelds          [][]deck.Card
 	KnockerDeadwood       []deck.Card
 	KnockerDeadwoodPoints int

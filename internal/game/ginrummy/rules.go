@@ -3,6 +3,7 @@ package ginrummy
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"time"
 
@@ -16,6 +17,7 @@ var (
 	_ game.Rules               = (*Rules)(nil)
 	_ game.TurnTimeoutHandler  = (*Rules)(nil)
 	_ game.TurnDurationHandler = (*Rules)(nil)
+	_ game.StandingScorer      = (*Rules)(nil)
 	// No PlayerLeaveHandler: gin is strictly 2-player (MinPlayers == MaxPlayers == 2).
 	// When a player leaves mid-hand, the match ends immediately via the engine's
 	// last-player-standing path. There is no shared state to clean up.
@@ -104,7 +106,7 @@ func (r *Rules) beginHand(state *game.State, extra *State) error {
 func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 
 	if _, isNext := action.(ActionNextHand); isNext {
@@ -126,8 +128,8 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		if extra.HandPhase != AwaitingDraw {
 			return errors.New("must discard first")
 		}
-		// WallStockSize cards stay undealt: drawing them would strand the hand.
-		if state.Deck.Size() <= WallStockSize {
+		// wallStockSize cards stay undealt: drawing them would strand the hand.
+		if state.Deck.Size() <= wallStockSize {
 			return errors.New("stock is at the wall")
 		}
 		return nil
@@ -158,9 +160,9 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 			return err
 		}
 		remaining := deck.RemoveOne(p.Cards, action.Discard)
-		_, _, deadwoodPts := BestMeldSplit(remaining)
-		if deadwoodPts > KnockThreshold {
-			return fmt.Errorf("deadwood %d exceeds limit %d", deadwoodPts, KnockThreshold)
+		_, _, deadwoodPts := bestMeldSplit(remaining)
+		if deadwoodPts > knockThreshold {
+			return fmt.Errorf("deadwood %d exceeds limit %d", deadwoodPts, knockThreshold)
 		}
 		return nil
 	default:
@@ -177,10 +179,10 @@ func validateNotTakenUpcard(extra *State, card deck.Card) error {
 	return nil
 }
 
-func (r *Rules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return
+		return game.ErrInvalidState
 	}
 	p := state.Players[state.CurrentTurn]
 
@@ -216,6 +218,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionNextHand:
 		// dealt in AfterAction
 	}
+	return nil
 }
 
 func (r *Rules) applyKnock(state *game.State, extra *State, action ActionKnock) {
@@ -228,6 +231,11 @@ func (r *Rules) applyKnock(state *game.State, extra *State, action ActionKnock) 
 	result, remaining := computeKnockOutcome(knockerID, opponentID, knockerHand, opponentHand, action.Discard)
 
 	state.Players[state.CurrentTurn].Cards = remaining
+	// The knock card leaves play with the pile it was laid on: the hand is over,
+	// nobody may draw from it again, and beginHand deals from a fresh 52. So the card
+	// vanishes from the record - acceptable, because HandResult already carries every
+	// card that scored, and it is why conservation here is a per-hand property rather
+	// than a per-match one.
 	state.Discard = deck.New([]deck.Card{})
 	extra.TakenUpcard = nil
 	extra.HandPhase = HandOver
@@ -235,7 +243,21 @@ func (r *Rules) applyKnock(state *game.State, extra *State, action ActionKnock) 
 	extra.LastHandResult = result
 
 	extra.CumulativeScores[result.Winner] += result.ScoreDelta
-	if handTargetReached(extra) {
+
+	// A knock is the only scoring event in the game and the one players argue about,
+	// so both deadwood counts and the direction the points went are recorded.
+	slog.Info("gin rummy knock",
+		"hand", extra.HandNumber,
+		"knocker", knockerID,
+		"winner", result.Winner,
+		"gin", result.Gin,
+		"undercut", result.Undercut,
+		"knocker_deadwood", result.KnockerDeadwoodPoints,
+		"opponent_deadwood", result.OpponentDeadwoodPoints,
+		"laid_off", len(result.LaidOffCards),
+		"delta", result.ScoreDelta)
+
+	if matchOver(extra) {
 		extra.MatchComplete = true
 		state.OverrideNextTurn = nil
 		return
@@ -253,11 +275,10 @@ func computeKnockOutcome(
 	discard deck.Card,
 ) (*HandResult, []deck.Card) {
 	remaining := deck.RemoveOne(knockerHand, discard)
-	knockerMelds, knockerDW, knockerPts := BestMeldSplit(remaining)
-	oppMelds, oppDW, oppPts := BestMeldSplit(opponentHand)
+	knockerMelds, knockerDW, knockerPts := bestMeldSplit(remaining)
+	oppMelds, oppDW, oppPts := bestMeldSplit(opponentHand)
 
 	result := &HandResult{
-		Knocker:                knockerID,
 		KnockerMelds:           knockerMelds,
 		KnockerDeadwood:        knockerDW,
 		KnockerDeadwoodPoints:  knockerPts,
@@ -269,21 +290,21 @@ func computeKnockOutcome(
 
 	if result.Gin {
 		// Gin blocks layoffs: opponent scores raw deadwood + bonus to knocker.
-		result.ScoreDelta = oppPts + GinBonus
+		result.ScoreDelta = oppPts + ginBonus
 		result.Winner = knockerID
 		return result, remaining
 	}
 
-	_, remDW := ApplyLayoffs(oppDW, knockerMelds)
+	_, remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
 	remPts := sumDeadwood(remDW)
-	result.LaidOffCards = laidOffDiff(oppDW, remDW)
+	result.LaidOffCards = laidOff
 	result.OpponentDeadwood = remDW
 	result.OpponentDeadwoodPoints = remPts
 
 	if remPts <= knockerPts {
 		result.Undercut = true
 		result.Winner = opponentID
-		result.ScoreDelta = (knockerPts - remPts) + UndercutBonus
+		result.ScoreDelta = (knockerPts - remPts) + undercutBonus
 	} else {
 		result.Winner = knockerID
 		result.ScoreDelta = remPts - knockerPts
@@ -291,14 +312,18 @@ func computeKnockOutcome(
 	return result, remaining
 }
 
-func handTargetReached(extra *State) bool {
-	return game.AnyScoreAtLeast(extra.CumulativeScores, TargetScore)
+// matchOver reports whether the match is settled: somebody crossed the target, or
+// the table has played maxHands hands trying to. Without the cap the wall path
+// redeals forever - a hand nobody knocks in scores nothing, so the target on its own
+// is not a termination condition.
+func matchOver(extra *State) bool {
+	return game.AnyScoreAtLeast(extra.CumulativeScores, targetScore) || extra.HandNumber >= maxHands
 }
 
 func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 
 	switch action.(type) {
@@ -309,23 +334,51 @@ func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 			return errors.New("draw failed: the pile came up empty")
 		}
 	case ActionDiscard:
-		if handHitTheWall(state, extra) {
-			extra.HandComplete = true
-			extra.HandPhase = HandOver
-			extra.LastHandResult = &HandResult{Wall: true}
-			nextFirst := 1 - extra.FirstActor
-			extra.FirstActor = nextFirst
-			state.CurrentTurn = nextFirst
-			state.OverrideNextTurn = &nextFirst
+		if cause, hit := handHitTheWall(state, extra); hit {
+			r.settleWall(state, extra, cause)
 		}
 	}
 	return nil
 }
 
-// handHitTheWall reports whether the hand is out of road: the stock is down to its
-// reserve, or the table has spent MaxHandTurns without anyone knocking.
-func handHitTheWall(state *game.State, extra *State) bool {
-	return state.Deck.Size() <= WallStockSize || extra.TurnsThisHand >= MaxHandTurns
+// handHitTheWall reports whether the hand is out of road, and why. A stock that ran
+// out and a table that spent a hundred turns trading the upcard are very different
+// hands, and the cause is the only place they are told apart.
+func handHitTheWall(state *game.State, extra *State) (cause string, hit bool) {
+	switch {
+	case state.Deck.Size() <= wallStockSize:
+		return "stock exhausted", true
+	case extra.TurnsThisHand >= maxHandTurns:
+		return "turn limit", true
+	default:
+		return "", false
+	}
+}
+
+// settleWall ends a hand nobody knocked in. Nothing scores, so the match can only end
+// here on the hand cap - which is what stops a table that walls every time from
+// dealing forever.
+func (r *Rules) settleWall(state *game.State, extra *State, cause string) {
+	slog.Info("gin rummy hand walled",
+		"hand", extra.HandNumber,
+		"cause", cause,
+		"turns", extra.TurnsThisHand,
+		"stock", state.Deck.Size())
+
+	extra.HandComplete = true
+	extra.HandPhase = HandOver
+	extra.LastHandResult = &HandResult{Wall: true}
+
+	if matchOver(extra) {
+		extra.MatchComplete = true
+		state.OverrideNextTurn = nil
+		return
+	}
+
+	nextFirst := 1 - extra.FirstActor
+	extra.FirstActor = nextFirst
+	state.CurrentTurn = nextFirst
+	state.OverrideNextTurn = &nextFirst
 }
 
 func (r *Rules) CheckWinCondition(state *game.State) bool {
@@ -333,16 +386,15 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return ok && extra.MatchComplete
 }
 
+// Standings ranks by cumulative score descending: gin rummy is a high-score-wins
+// game and StandingsByScore sorts ascending, so the score is negated.
 func (r *Rules) Standings(state *game.State) []*game.Player {
-	extra, ok := state.Extra.(*State)
-	if !ok {
+	if _, ok := state.Extra.(*State); !ok {
 		return nil
 	}
-	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *game.Player) int {
-		return extra.CumulativeScores[b.ID] - extra.CumulativeScores[a.ID]
+	return game.StandingsByScore(state.Players, func(p *game.Player) int {
+		return -r.StandingScore(state, p)
 	})
-	return standings
 }
 
 func (r *Rules) TimeoutAction(state *game.State) game.Action {
@@ -362,10 +414,18 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 	p := state.Players[state.CurrentTurn]
 	switch extra.HandPhase {
 	case AwaitingDraw:
-		if state.Deck.Size() > WallStockSize {
+		if state.Deck.Size() > wallStockSize {
 			return ActionDrawStock{}
 		}
-		return ActionDrawDiscard{}
+		if _, ok := state.Discard.Peek(); ok {
+			return ActionDrawDiscard{}
+		}
+		// At the wall with an empty pile nothing is legal: the stock is off limits,
+		// there is nothing to take, and a knock needs the card drawn first. AfterAction
+		// ends a walled hand before anyone is asked to draw, so this is unreachable in
+		// play - handing back a move the validator refuses is what would turn it into
+		// a silent kick if it ever were reached.
+		return nil
 	case AwaitingDiscard:
 		card, ok := autoDiscard(p.Cards, extra.TakenUpcard)
 		if !ok {
@@ -385,7 +445,7 @@ func autoDiscard(hand []deck.Card, forbidden *deck.Card) (deck.Card, bool) {
 
 	// Split the real hand, then choose among its deadwood: splitting a pre-filtered
 	// hand would optimise melds the player does not actually hold.
-	_, deadwood, _ := BestMeldSplit(hand)
+	_, deadwood, _ := bestMeldSplit(hand)
 	if shed := slices.DeleteFunc(deadwood, func(c deck.Card) bool { return !allowed(c) }); len(shed) > 0 {
 		return highestPointCard(shed), true
 	}
@@ -396,12 +456,14 @@ func autoDiscard(hand []deck.Card, forbidden *deck.Card) (deck.Card, bool) {
 	return deck.Card{}, false
 }
 
+// TurnTimeout stretches the between-hands prompt. Zero everywhere else means
+// "engine default", not "no clock".
 func (r *Rules) TurnTimeout(state *game.State) time.Duration {
 	extra, ok := state.Extra.(*State)
-	if !ok || !extra.HandComplete || extra.MatchComplete {
+	if !ok || !extra.HandComplete {
 		return 0
 	}
-	return HandOverTimeout
+	return handOverTimeout
 }
 
 // StandingScore is the value Standings sorted by. Only equality is read, so the

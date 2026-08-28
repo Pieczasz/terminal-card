@@ -21,7 +21,6 @@ func TestHandResult_Clone(t *testing.T) {
 	t.Run("copies every field", func(t *testing.T) {
 		t.Parallel()
 		result := &HandResult{
-			Knocker:                "p1",
 			KnockerMelds:           [][]deck.Card{{c(deck.Two, deck.Hearts)}},
 			KnockerDeadwood:        []deck.Card{c(deck.King, deck.Clubs)},
 			KnockerDeadwoodPoints:  10,
