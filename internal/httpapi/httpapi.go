@@ -14,7 +14,10 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
 
 const (
@@ -39,7 +42,11 @@ type LobbyCounter interface {
 type Deps struct {
 	Sessions SessionCounter
 	Lobbies  LobbyCounter
-	Users    db.UserRepository
+	// Users is the concrete db interface while Sessions and Lobbies are local
+	// one-method interfaces. That asymmetry is deliberate and shipped: the two
+	// counters exist only to keep this package from importing ssh and lobby, whereas
+	// db.UserRepository is already the contract every consumer depends on.
+	Users db.UserRepository
 
 	AllowOrigin       string
 	RequestsPerMinute int
@@ -72,7 +79,39 @@ func Handler(deps Deps) http.Handler {
 	clientAddr := clientIPFunc(deps.TrustedProxy)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /v1/stats", func(w http.ResponseWriter, r *http.Request) {
+	mux.Handle("GET /v1/stats", statsHandler(deps))
+	mux.Handle("GET /v1/leaderboard", leaderboardHandler(deps))
+
+	// The preflight answer is a route rather than a short-circuit in withCORS, so
+	// that OPTIONS is spent against the same budget as every other request.
+	mux.HandleFunc("OPTIONS /", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		writeError(w, r, http.StatusNotFound, "not found")
+	})
+
+	return otelhttp.NewHandler(
+		withCORS(deps.AllowOrigin, withRateLimit(limiter, clientAddr, mux)),
+		"stats-api",
+		otelhttp.WithSpanNameFormatter(routeSpanName),
+	)
+}
+
+// routeSpanName names a span after the route, never after the raw path: anything
+// else lets a caller mint unbounded span names by inventing URLs.
+func routeSpanName(operation string, r *http.Request) string {
+	switch r.URL.Path {
+	case "/v1/stats", "/v1/leaderboard":
+		return r.Method + " " + r.URL.Path
+	default:
+		return operation
+	}
+}
+
+func statsHandler(deps Deps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		inGame, waiting := 0, 0
 		if deps.Lobbies != nil {
 			inGame, waiting = deps.Lobbies.Stats()
@@ -87,8 +126,10 @@ func Handler(deps Deps) http.Handler {
 			TablesOpen:    waiting,
 		})
 	})
+}
 
-	mux.HandleFunc("GET /v1/leaderboard", func(w http.ResponseWriter, r *http.Request) {
+func leaderboardHandler(deps Deps) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		limit := defaultLimit
 		if raw := r.URL.Query().Get("limit"); raw != "" {
 			n, err := strconv.Atoi(raw)
@@ -106,34 +147,22 @@ func Handler(deps Deps) http.Handler {
 
 		rankings, err := deps.Users.BestPlayers(r.Context(), limit, r.URL.Query().Get("game"))
 		if err != nil {
-			slog.Error("leaderboard query failed", "error", err)
+			slog.ErrorContext(r.Context(), "leaderboard query failed", "error", err)
 			writeError(w, r, http.StatusServiceUnavailable, "leaderboard unavailable")
 			return
 		}
 
 		out := make([]leaderboardEntry, 0, len(rankings))
-		for i, r := range rankings {
+		for i, entry := range rankings {
 			out = append(out, leaderboardEntry{
 				Rank:     i + 1,
-				Username: r.User.Username,
-				Game:     r.Game.Name,
-				Elo:      r.Elo,
+				Username: entry.User.Username,
+				Game:     entry.Game.Name,
+				Elo:      entry.Elo,
 			})
 		}
 		writeJSON(w, r, out)
 	})
-
-	// The preflight answer is a route rather than a short-circuit in withCORS, so
-	// that OPTIONS is spent against the same budget as every other request.
-	mux.HandleFunc("OPTIONS /", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	})
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, r, http.StatusNotFound, "not found")
-	})
-
-	return withCORS(deps.AllowOrigin, withRateLimit(limiter, clientAddr, mux))
 }
 
 func clientIPFunc(trustProxy bool) func(*http.Request) string {
@@ -179,6 +208,7 @@ func writeJSON(w http.ResponseWriter, r *http.Request, v any) {
 // including on the 429 and 503 paths it is most likely to have to parse.
 func writeError(w http.ResponseWriter, r *http.Request, status int, msg string) {
 	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Add("Vary", "Origin")
 	encodeJSON(w, r, status, errorResponse{Error: msg})
 }
 
@@ -191,7 +221,7 @@ func encodeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 		return
 	}
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		slog.Warn("failed to encode api response", "error", err, "path", r.URL.Path)
+		slog.WarnContext(r.Context(), "failed to encode api response", "error", err, "path", r.URL.Path)
 	}
 }
 
@@ -214,6 +244,7 @@ func withRateLimit(
 ) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !limiter.Allow(ratelimit.NetKey(clientAddr(r))) {
+			observability.RateLimitReject(r.Context(), "http")
 			w.Header().Set("Retry-After", "60")
 			writeError(w, r, http.StatusTooManyRequests, "too many requests")
 			return
