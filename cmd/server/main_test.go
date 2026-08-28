@@ -36,7 +36,9 @@ func testConfig() *config.Config {
 func runServe(t *testing.T, server sshServer) error {
 	t.Helper()
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve(context.Background(), testConfig(), server) }()
+	go func() {
+		errCh <- serve(context.Background(), serveDeps{config: testConfig(), sshServer: server})
+	}()
 
 	select {
 	case err := <-errCh:
@@ -88,4 +90,31 @@ func TestServe_UnexpectedCleanStopIsReturned(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "accept loop failed")
 	assert.Contains(t, err.Error(), "unexpectedly")
+}
+
+// A stats api that cannot bind used to be a log line nobody reads and a website whose
+// numbers quietly stopped moving.
+func TestServe_StatsAPIFailureStopsTheServer(t *testing.T) {
+	t.Parallel()
+	boom := errors.New("bind: address already in use")
+	apiErr := make(chan error, 1)
+	apiErr <- boom
+
+	server := &fakeServer{}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve(context.Background(), serveDeps{
+			config:    testConfig(),
+			sshServer: server,
+			apiErr:    apiErr,
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		require.ErrorIs(t, err, boom)
+		assert.True(t, server.closed, "the ssh server was left running")
+	case <-time.After(5 * time.Second):
+		t.Fatal("a stats api failure never reached the error path")
+	}
 }

@@ -28,11 +28,16 @@ import (
 	"golang.org/x/net/netutil"
 )
 
+// Shutdown spends these budgets sequentially, in this order: the ssh drain, the
+// stats api, the match finalizers, then the OTel flush. Worst case that is
+// 30+5+15+5 = 55s, plus a second finalizer window of the same 15s if the first one
+// lapses. compose's stop_grace_period must exceed the total or the runtime kills the
+// process in the middle of a match write.
 const (
+	sshDrainTimeout      = 30 * time.Second
+	apiDrainTimeout      = 5 * time.Second
 	finalizeDrainTimeout = 15 * time.Second
-	// sshDrainTimeout plus finalizeDrainTimeout is what compose's stop_grace_period
-	// (50s) is sized for, so the two must be read together when either changes.
-	sshDrainTimeout = 30 * time.Second
+	otelDrainTimeout     = 5 * time.Second
 )
 
 func main() {
@@ -42,34 +47,31 @@ func main() {
 }
 
 func run() (err error) {
+	// First statement in the process: a config or OTel failure below has to reach the
+	// JSON handler rather than the default text one. The level starts at info and is
+	// raised or lowered once the config is readable.
+	logLevel := installLogging()
+
 	cfg, err := config.Load()
 	if err != nil {
-		slog.Error("failed to load configuration", "error", err)
 		return fmt.Errorf("load configuration: %w", err)
 	}
+	logLevel.Set(cfg.LogLevel)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	otelShutdown, err := observability.SetupOTel(ctx, cfg)
+	// This defer chain is LIFO and load-bearing; do not reorder it.
+	otelCleanup, err := setupOTel(ctx, cfg)
 	if err != nil {
-		slog.Error("failed to setup OpenTelemetry", "error", err)
 		return fmt.Errorf("setup OpenTelemetry: %w", err)
 	}
-	defer func() {
-		shutdownOTelCtx, otelCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer otelCancel()
-		if err := otelShutdown(shutdownOTelCtx); err != nil {
-			slog.Error("failed to shutdown OpenTelemetry", "error", err)
-		}
-	}()
+	defer otelCleanup()
 	defer func() {
 		if err != nil {
-			slog.Error("server exited with error", "error", err)
+			slog.ErrorContext(ctx, "server exited with error", "error", err)
 		}
 	}()
-
-	installLogging()
 
 	database, err := db.Connect(cfg)
 	if err != nil {
@@ -81,9 +83,14 @@ func run() (err error) {
 	}
 	defer func() {
 		if err := sqlDB.Close(); err != nil {
-			slog.Error("failed to close database", "error", err)
+			slog.ErrorContext(ctx, "failed to close database", "error", err)
 		}
 	}()
+	// The pool is a hard cap that queues silently, so these gauges are the only
+	// warning before saturation. Losing them is not worth failing a boot over.
+	if err := observability.RegisterDBStats(sqlDB); err != nil {
+		slog.ErrorContext(ctx, "failed to register database pool metrics", "error", err)
+	}
 
 	userRepo := repository.NewUserRepository(database)
 	matchRepo := repository.NewMatchRepository(database)
@@ -93,35 +100,91 @@ func run() (err error) {
 	// and drains registered ones before the handle they write through is closed.
 	defer waitForFinalizers(lobbyManager)
 
-	gameRegistry := buildRegistry()
-	tracker := ssh.NewSessionTracker()
-	deps := ssh.ServerDependencies{
-		Config:          cfg,
-		UserRepository:  userRepo,
-		MatchRepository: matchRepo,
-		LobbyManager:    lobbyManager,
-		GameRegistry:    gameRegistry,
-		Tracker:         tracker,
-	}
-	server, err := ssh.SetupServer(deps)
+	server, tracker, err := newSSHServer(cfg, userRepo, matchRepo, lobbyManager)
 	if err != nil {
-		return fmt.Errorf("setup ssh server: %w", err)
+		return err
 	}
 
-	stopAPI := startStatsAPI(cfg, tracker, lobbyManager, userRepo)
+	stopAPI, apiErr := startStatsAPI(cfg, tracker, lobbyManager, userRepo)
 	defer stopAPI()
 
-	return serve(ctx, cfg, server)
+	return serve(ctx, serveDeps{
+		config:     cfg,
+		sshServer:  server,
+		apiErr:     apiErr,
+		onShutdown: lobbyManager.BeginShutdown,
+	})
 }
 
 // installLogging fans slog output to stderr and to the OTel logger provider, so a
 // line is both visible to the container runtime and exported. MultiHandler clones
 // the record per sink and joins their errors, so one broken sink never hides another.
-func installLogging() {
+// The returned LevelVar is shared by both sinks and settable once config is loaded.
+func installLogging() *slog.LevelVar {
+	level := new(slog.LevelVar)
+	level.Set(slog.LevelInfo)
 	slog.SetDefault(slog.New(slog.NewMultiHandler(
-		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
-		otelslog.NewHandler("terminal-card"),
+		slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}),
+		levelGate{Handler: otelslog.NewHandler("terminal-card"), level: level},
 	)))
+	return level
+}
+
+// levelGate applies a level to a handler that has none of its own. The otelslog
+// bridge exports whatever it is handed, so without this LOG_LEVEL would only quiet
+// stderr while still shipping every debug line to the collector.
+type levelGate struct {
+	slog.Handler
+	level slog.Leveler
+}
+
+func (g levelGate) Enabled(_ context.Context, l slog.Level) bool { return l >= g.level.Level() }
+
+func (g levelGate) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return levelGate{Handler: g.Handler.WithAttrs(attrs), level: g.level}
+}
+
+func (g levelGate) WithGroup(name string) slog.Handler {
+	return levelGate{Handler: g.Handler.WithGroup(name), level: g.level}
+}
+
+// setupOTel pairs export setup with the cleanup to defer, so the shutdown budget
+// cannot drift away from the one the drain comment accounts for.
+func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
+	shutdown, err := observability.SetupOTel(ctx, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("setup otel: %w", err)
+	}
+	return func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), otelDrainTimeout)
+		defer cancel()
+		if err := shutdown(shutdownCtx); err != nil {
+			slog.ErrorContext(shutdownCtx, "failed to shutdown OpenTelemetry", "error", err)
+		}
+	}, nil
+}
+
+// newSSHServer wires the game registry and repositories into the ssh server. The
+// tracker comes back because the stats api shares it to count who is online.
+func newSSHServer(
+	cfg *config.Config,
+	userRepo db.UserRepository,
+	matchRepo db.MatchRepository,
+	lobbyManager *lobby.Manager,
+) (*charmssh.Server, *ssh.SessionTracker, error) {
+	tracker := ssh.NewSessionTracker()
+	server, err := ssh.SetupServer(ssh.ServerDependencies{
+		Config:          cfg,
+		UserRepository:  userRepo,
+		MatchRepository: matchRepo,
+		LobbyManager:    lobbyManager,
+		GameRegistry:    buildRegistry(),
+		Tracker:         tracker,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("setup ssh server: %w", err)
+	}
+	return server, tracker, nil
 }
 
 // buildRegistry turns the catalog into the registry. catalog.All is the only place a
@@ -134,42 +197,53 @@ func buildRegistry() *game.Registry {
 	return registry
 }
 
+// startStatsAPI returns the shutdown hook and a channel carrying a serve failure. A
+// bind error used to be a log line nobody reads and a website whose numbers silently
+// stopped moving, so it reaches run's error path instead.
 func startStatsAPI(
 	cfg *config.Config,
 	tracker *ssh.SessionTracker,
 	lobbyManager *lobby.Manager,
 	userRepo db.UserRepository,
-) func() {
+) (func(), <-chan error) {
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.APIPort)
 	srv := httpapi.Serve(addr, httpapi.Handler(httpapi.Deps{
-		Sessions:     tracker,
-		Lobbies:      lobbyManager,
-		Users:        userRepo,
-		AllowOrigin:  cfg.APIAllowOrigin,
-		TrustedProxy: cfg.APITrustProxy,
+		Sessions:          tracker,
+		Lobbies:           lobbyManager,
+		Users:             userRepo,
+		AllowOrigin:       cfg.APIAllowOrigin,
+		RequestsPerMinute: cfg.APIRequestsPerMinute,
+		TrustedProxy:      cfg.APITrustProxy,
 	}))
 
+	serveErr := make(chan error, 1)
 	go func() {
 		slog.Info("starting stats api", "address", addr)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			slog.Error("stats api stopped", "error", err)
+			serveErr <- fmt.Errorf("stats api stopped: %w", err)
 		}
 	}()
 
 	return func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), apiDrainTimeout)
 		defer cancel()
 		if err := srv.Shutdown(shutdownCtx); err != nil {
 			slog.Warn("stats api shutdown was not clean", "error", err)
 		}
-	}
+	}, serveErr
 }
 
 func waitForFinalizers(lobbyManager *lobby.Manager) {
+	if lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
+		return
+	}
+	slog.Warn("match finalizers exceeded their deadline; giving them one more window",
+		"timeout", finalizeDrainTimeout)
+	// Capped rather than unbounded: a wedged write must not hold the process open
+	// past the runtime's kill timer, which would lose the log line explaining why.
 	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-		slog.Warn("match finalizers exceeded their deadline; waiting for exit",
+		slog.Error("abandoning match finalizers; a finished match may be missing from history",
 			"timeout", finalizeDrainTimeout)
-		lobbyManager.WaitForFinalizers(0)
 	}
 }
 
@@ -179,7 +253,17 @@ type sshServer interface {
 	Close() error
 }
 
-func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
+type serveDeps struct {
+	config    *config.Config
+	sshServer sshServer
+	apiErr    <-chan error
+	// onShutdown runs the moment a signal arrives, before any session is drained: a
+	// match ending because of the deploy must not be rated.
+	onShutdown func()
+}
+
+func serve(ctx context.Context, d serveDeps) error {
+	cfg, server := d.config, d.sshServer
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.ServerPort)
 	lc := net.ListenConfig{}
 	listener, err := lc.Listen(ctx, "tcp", addr)
@@ -187,10 +271,17 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 		return fmt.Errorf("create tcp listener: %w", err)
 	}
 	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
-	proxyListener := &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+	// The default proxyproto policy is REQUIRE: every connection must open with a
+	// PROXY header, which is right behind nginx (and is why 6969 must never be
+	// published - any peer's header is honored). PROXY_PROTOCOL=false is the local
+	// development escape hatch for bare ssh clients.
+	acceptListener := limitListener
+	if cfg.ProxyProtocol {
+		acceptListener = &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
+	}
 	defer func() {
-		if err := proxyListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
-			slog.Warn("failed to close listener", "error", err)
+		if err := acceptListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			slog.WarnContext(ctx, "failed to close listener", "error", err)
 		}
 	}()
 
@@ -198,14 +289,14 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(done)
 
-	slog.Info("starting ssh server",
+	slog.InfoContext(ctx, "starting ssh server",
 		"address", addr,
 		"max_connections", cfg.MaxConnections,
 		"version", cfg.ServiceVersion,
 	)
 	serveErr := make(chan error, 1)
 	go func() {
-		err := server.Serve(proxyListener)
+		err := server.Serve(acceptListener)
 		if errors.Is(err, charmssh.ErrServerClosed) {
 			// Expected: our own Shutdown below unblocks Serve this way.
 			err = nil
@@ -219,9 +310,15 @@ func serve(ctx context.Context, cfg *config.Config, server sshServer) error {
 			return fmt.Errorf("ssh accept loop failed: %w", err)
 		}
 		return errors.New("ssh server stopped accepting connections unexpectedly")
+	case err := <-d.apiErr:
+		stopServer(server)
+		return err
 	case <-done:
 	}
 
+	if d.onShutdown != nil {
+		d.onShutdown()
+	}
 	stopServer(server)
 	return nil
 }
@@ -236,7 +333,7 @@ func stopServer(server sshServer) {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), sshDrainTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Warn("sessions outlasted the drain window; closing them",
+		slog.WarnContext(shutdownCtx, "sessions outlasted the drain window; closing them",
 			"error", err, "timeout", sshDrainTimeout)
 	}
 	// Shutdown waits, Close is what lets go, so it runs on both paths.
