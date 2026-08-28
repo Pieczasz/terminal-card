@@ -60,6 +60,18 @@ type Theme struct {
 	Dim                lg.Style
 	Accented           lg.Style
 	TurnName           lg.Style
+
+	// CardFrame is the border a card-sized box wears: a rendered card, poker's
+	// empty board slot and its face-down hole card all have to agree on it, or the
+	// board jumps by a column when a card lands. Callers add the margins.
+	CardFrame lg.Style
+	// PickerBox and PickerCell are the modal grid picker (Crazy Eights' suits,
+	// Uno's colours). PickerCell carries no colour: the caller sets the border and
+	// foreground from whether the cell is under the cursor.
+	PickerBox  lg.Style
+	PickerCell lg.Style
+	// MeldBox frames one Gin Rummy meld on the hand-over screen.
+	MeldBox lg.Style
 }
 
 // NewTheme resolves the palette for a terminal background.
@@ -127,6 +139,11 @@ func NewTheme(isDark bool) Theme {
 	t.Dim = lg.NewStyle().Foreground(t.TextDim)
 	t.Accented = lg.NewStyle().Bold(true).Foreground(t.Accent)
 	t.TurnName = lg.NewStyle().Bold(true).Foreground(t.TurnFg).Background(t.TurnBg).Padding(0, 1)
+
+	t.CardFrame = lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(t.CardFace)
+	t.PickerBox = lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(t.Selection).Padding(1, 2)
+	t.PickerCell = lg.NewStyle().Border(lg.RoundedBorder()).Padding(0, 1)
+	t.MeldBox = lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(t.BorderMuted).Padding(0, 1)
 
 	return t
 }

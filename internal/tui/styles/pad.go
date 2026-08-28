@@ -117,3 +117,26 @@ func PadVertical(height int, pos lg.Position, s string) string {
 func Place(width, height int, hPos, vPos lg.Position, s string) string {
 	return PadVertical(height, vPos, PadHorizontal(width, hPos, s))
 }
+
+// Clamp trims s to at most width columns and height rows.
+//
+// It is the last line of defence for a frame that does not fit: PadCenter and Place
+// both hand overwide content straight through, and the terminal then wraps it, which
+// shifts every row below it and turns a table into confetti. Cutting is ugly; wrapping
+// is unreadable.
+//
+// Rows are dropped from the top, because the bottom of a table screen is the hero's
+// own hand and the keys they act with.
+func Clamp(width, height int, s string) string {
+	if width > 0 && lg.Width(s) > width {
+		s = lg.NewStyle().MaxWidth(width).Render(s)
+	}
+	if height <= 0 {
+		return s
+	}
+	lines := strings.Split(s, "\n")
+	if len(lines) <= height {
+		return s
+	}
+	return strings.Join(lines[len(lines)-height:], "\n")
+}
