@@ -64,18 +64,29 @@ type Manager struct {
 	// finalizersStopped: a match ending during the drain must still be recorded, just
 	// not rated. See persistFinishedMatch.
 	shuttingDown atomic.Bool
+	// pendingLeaves holds the grace timers of players whose session dropped
+	// mid-game: the seat is kept for DisconnectGrace so a wifi blip does not
+	// forfeit a live match. Guarded by mu.
+	pendingLeaves map[string]*time.Timer
 }
+
+// DisconnectGrace is how long a mid-game seat survives its session. The engine's
+// turn clock auto-plays for the absent player the whole time, and its idle removal
+// (3 missed turns) is the harder backstop, so this mostly decides how long a lobby
+// keeps a seat for someone who never comes back between hands.
+const DisconnectGrace = 90 * time.Second
 
 func NewManager(ctx context.Context, matchRepo db.MatchRepository) *Manager {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	return &Manager{
-		lobbies:     make(map[string]*Lobby),
-		playerLobby: make(map[string]*Lobby),
-		matchRepo:   matchRepo,
-		appCtx:      ctx,
-		joinLimiter: ratelimit.NewSlidingWindowLimiter(joinRateLimitCount, joinRateLimitWindow),
+		lobbies:       make(map[string]*Lobby),
+		playerLobby:   make(map[string]*Lobby),
+		pendingLeaves: make(map[string]*time.Timer),
+		matchRepo:     matchRepo,
+		appCtx:        ctx,
+		joinLimiter:   ratelimit.NewSlidingWindowLimiter(joinRateLimitCount, joinRateLimitWindow),
 	}
 }
 
@@ -236,12 +247,84 @@ func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
 // the documented manager-then-lobby order), so the two can never disagree about
 // where a player is. The engine and broadcast calls run with both locks dropped, the
 // way Kick does it.
+// DisconnectPlayer is what a dropped session calls instead of LeaveLobby: a seat
+// in a running game is kept for DisconnectGrace so the player can reconnect, while
+// a seat in a waiting lobby is given up immediately (nothing is lost by leaving).
+// During shutdown the grace is skipped so the drain still forfeits cleanly.
+func (m *Manager) DisconnectPlayer(p *game.Player) {
+	if p == nil {
+		return
+	}
+	if m.shuttingDown.Load() {
+		m.LeaveLobby(p)
+		return
+	}
+
+	m.mu.Lock()
+	l, ok := m.playerLobby[p.ID]
+	if !ok || l == nil {
+		m.mu.Unlock()
+		return
+	}
+	l.mu.Lock()
+	inGame := l.state == InGame
+	if inGame {
+		// The session is gone, so its event channels must close now - but the seat
+		// stays, and the engine's turn clock plays for it until they return.
+		l.unsubscribePlayerLocked(p.ID)
+	}
+	l.mu.Unlock()
+	if !inGame {
+		m.mu.Unlock()
+		m.LeaveLobby(p)
+		return
+	}
+	if t, ok := m.pendingLeaves[p.ID]; ok {
+		t.Stop()
+	}
+	m.pendingLeaves[p.ID] = time.AfterFunc(DisconnectGrace, func() { m.expireLeave(p) })
+	m.mu.Unlock()
+	slog.Info("session dropped mid-game, holding the seat",
+		"player_id", p.ID, "grace", DisconnectGrace.String())
+}
+
+// expireLeave is the grace timer's body, separate so tests can drive the expiry
+// without waiting out the window.
+func (m *Manager) expireLeave(p *game.Player) {
+	m.mu.Lock()
+	delete(m.pendingLeaves, p.ID)
+	m.mu.Unlock()
+	slog.Info("disconnect grace expired, giving up the seat", "player_id", p.ID)
+	m.LeaveLobby(p)
+}
+
+// ResumePlayer cancels a pending disconnect leave and returns the lobby the player
+// still occupies, or nil. A reconnecting session calls it before routing, so the
+// player lands back at their table instead of a fresh home screen.
+func (m *Manager) ResumePlayer(p *game.Player) *Lobby {
+	if p == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if t, ok := m.pendingLeaves[p.ID]; ok {
+		t.Stop()
+		delete(m.pendingLeaves, p.ID)
+		slog.Info("player reconnected inside the grace window", "player_id", p.ID)
+	}
+	return m.playerLobby[p.ID]
+}
+
 func (m *Manager) LeaveLobby(p *game.Player) {
 	if p == nil {
 		return
 	}
 
 	m.mu.Lock()
+	if t, ok := m.pendingLeaves[p.ID]; ok {
+		t.Stop()
+		delete(m.pendingLeaves, p.ID)
+	}
 	l, ok := m.playerLobby[p.ID]
 	if !ok || l == nil {
 		m.mu.Unlock()

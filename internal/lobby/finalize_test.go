@@ -273,3 +273,61 @@ func TestFinalize_InterruptedRankedMatchIsRecordedWithoutElo(t *testing.T) {
 	repo.AssertNotCalled(t, "FinalizeRankedMatch",
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
+
+// A dropped session must not forfeit a live match: the seat survives for the grace
+// window and a reconnect cancels the pending leave.
+func TestDisconnectPlayer_MidGameSeatSurvivesTheGraceWindow(t *testing.T) {
+	t.Parallel()
+
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	require.Equal(t, InGame, l.state)
+
+	m.DisconnectPlayer(guest)
+
+	assert.True(t, l.HasPlayer(guest), "the seat is held for the grace window")
+	assert.Equal(t, l, m.FindLobbyByPlayer(guest), "and stays indexed")
+
+	resumed := m.ResumePlayer(guest)
+	require.Equal(t, l, resumed, "a reconnect lands back at the same lobby")
+	m.mu.Lock()
+	_, pending := m.pendingLeaves[guest.ID]
+	m.mu.Unlock()
+	assert.False(t, pending, "the pending leave is cancelled by the resume")
+}
+
+func TestDisconnectPlayer_GraceExpiryForfeitsTheSeat(t *testing.T) {
+	t.Parallel()
+
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+
+	m.DisconnectPlayer(guest)
+	m.expireLeave(guest)
+
+	assert.False(t, l.HasPlayer(guest), "the expired seat is given up")
+	assert.Nil(t, m.FindLobbyByPlayer(guest))
+	assert.Nil(t, m.ResumePlayer(guest), "nothing to resume after expiry")
+}
+
+func TestDisconnectPlayer_WaitingLobbyLeavesImmediately(t *testing.T) {
+	t.Parallel()
+
+	m, l, _ := newTestLobby(t, 2)
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.Equal(t, Waiting, l.state)
+
+	m.DisconnectPlayer(guest)
+
+	assert.False(t, l.HasPlayer(guest), "nothing is lost by leaving a waiting lobby")
+	assert.Nil(t, m.FindLobbyByPlayer(guest))
+}
