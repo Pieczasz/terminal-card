@@ -3,8 +3,10 @@ package repository
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
@@ -124,7 +126,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 			return err
 		}
 
-		deltas, err := q.updateRankingsTx(tx, game.ID, orderedUserIDs, places)
+		deltas, err := q.updateRankingsTx(ctx, tx, game.ID, orderedUserIDs, places)
 		if err != nil {
 			return err
 		}
@@ -156,8 +158,22 @@ func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
 	return nil
 }
 
+const (
+	// provisionalMatches is how many ranked results a ranking row needs before
+	// beating its owner pays anything. Identity here is a free SSH keypair, so a
+	// fresh 1500-rated account is free to mint and farming it must not be
+	// profitable until it has a track record of its own.
+	provisionalMatches = 5
+
+	// maxSamePairingPerDay is how many ranked matches between the exact same set of
+	// players still move rating inside a 24h window. The same pair trading wins is
+	// either farming or a private rivalry; either way the ladder stops paying after
+	// three a day.
+	maxSamePairingPerDay = 3
+)
+
 func (q *gormMatchRepository) updateRankingsTx(
-	tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
+	ctx context.Context, tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
 ) (map[uint]int, error) {
 	if err := seedRankingRows(tx, gameID, orderedUserIDs); err != nil {
 		return nil, err
@@ -168,7 +184,18 @@ func (q *gormMatchRepository) updateRankingsTx(
 		return nil, fmt.Errorf("fetch rankings: %w", err)
 	}
 
+	pairings, err := samePairingCountLast24h(tx, orderedUserIDs)
+	if err != nil {
+		return nil, err
+	}
+	damped := pairings >= maxSamePairingPerDay
+	if damped {
+		slog.WarnContext(ctx, "ranked match damped: same players again inside 24h",
+			"user_ids", orderedUserIDs, "game_id", gameID, "recent_pairings", pairings)
+	}
+
 	newRatings := q.calculateNewElos(orderedUserIDs, places, rankingMap)
+	provisional := anyProvisional(orderedUserIDs, rankingMap)
 
 	deltas := make(map[uint]int, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
@@ -185,15 +212,74 @@ func (q *gormMatchRepository) updateRankingsTx(
 			return nil, fmt.Errorf("no elo result for user %d", userID)
 		}
 
-		oldElo := r.Elo
-		stored := elo.ToUint32(newRating)
-		if err := tx.Model(r).Update("elo", stored).Error; err != nil {
+		// The increment rides the row this transaction already holds FOR UPDATE, and
+		// happens whether or not the rating moved: a damped or unpaid match is still a
+		// match played, and it is what lets a provisional account graduate.
+		update := map[string]any{"matches_played": gorm.Expr("matches_played + 1")}
+
+		// A provisional player's own rating still converges; only the established
+		// players around them go unpaid. This deliberately breaks conservation - the
+		// zero-sum property of Elo is worth less than an unfarmable ladder.
+		if !damped && (!provisional || r.MatchesPlayed < provisionalMatches) {
+			stored := elo.ToUint32(newRating)
+			update["elo"] = stored
+			deltas[userID] = int(stored) - int(r.Elo)
+		}
+		if err := tx.Model(r).Updates(update).Error; err != nil {
 			return nil, fmt.Errorf("update ranking: %w", err)
 		}
-
-		deltas[userID] = int(stored) - int(oldElo)
 	}
 	return deltas, nil
+}
+
+// anyProvisional reports whether any seat is still inside its provisional window.
+func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool {
+	for _, userID := range orderedUserIDs {
+		if r, ok := rankingMap[userID]; ok && r.MatchesPlayed < provisionalMatches {
+			return true
+		}
+	}
+	return false
+}
+
+// samePairingCountLast24h counts recent ranked matches whose participant set is
+// exactly userIDs, across every game - a pair farming each other does not become
+// legitimate by switching table. One participant's recent matches bound the scan and
+// the sets are compared in Go, which is cheap at these volumes. Plain reads inside
+// the caller's transaction: locking history rows would buy nothing, since a
+// concurrent finalize that started a millisecond earlier is not in them yet either.
+func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
+	var matchIDs []uint
+	if err := tx.Model(&db.MatchParticipant{}).
+		Joins("JOIN matches ON matches.id = match_participants.match_id").
+		Where(`match_participants.user_id = ? AND matches.ranked
+			AND matches.deleted_at IS NULL AND matches.created_at > ?`,
+			userIDs[0], time.Now().Add(-24*time.Hour)).
+		Pluck("match_participants.match_id", &matchIDs).Error; err != nil {
+		return 0, fmt.Errorf("query recent pairings: %w", err)
+	}
+	if len(matchIDs) == 0 {
+		return 0, nil
+	}
+
+	var rows []db.MatchParticipant
+	if err := tx.Where("match_id IN ?", matchIDs).Find(&rows).Error; err != nil {
+		return 0, fmt.Errorf("query pairing participants: %w", err)
+	}
+
+	seats := make(map[uint][]uint, len(matchIDs))
+	for _, row := range rows {
+		seats[row.MatchID] = append(seats[row.MatchID], row.UserID)
+	}
+
+	want := slices.Sorted(slices.Values(userIDs))
+	count := 0
+	for _, got := range seats {
+		if slices.Equal(want, slices.Sorted(slices.Values(got))) {
+			count++
+		}
+	}
+	return count, nil
 }
 
 func (q *gormMatchRepository) recordMatchTx(

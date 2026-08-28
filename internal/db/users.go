@@ -31,6 +31,11 @@ type Ranking struct {
 
 	Elo uint32 `gorm:"check:elo_valid,elo >= 0 AND elo <= 4000;default:1500"`
 
+	// MatchesPlayed is the ranked track record this row has earned. Below
+	// repository.provisionalMatches the account is provisional and beating it pays
+	// nobody - a free SSH keypair is a free 1500-rated opponent otherwise.
+	MatchesPlayed uint64 `gorm:"not null;default:0"`
+
 	User User `gorm:"foreignKey:UserID"`
 	Game Game `gorm:"foreignKey:GameID"`
 

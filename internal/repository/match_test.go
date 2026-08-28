@@ -4,6 +4,7 @@ package repository_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestMatchRepositoryRecordCasualMatch(t *testing.T) {
@@ -161,7 +163,10 @@ func TestMatchRepositoryConcurrentFinalizeFirstEverMatch(t *testing.T) {
 // Proves the FOR UPDATE lock actually serializes: concurrent finalizes on an
 // existing ranking must land on the same Elo as running them one after another.
 func TestMatchRepositoryConcurrentFinalizeMatchesSequential(t *testing.T) {
-	const rounds = 4
+	// Two rounds on top of the seed keeps the pair under maxSamePairingPerDay in both
+	// orders: run sequentially the fourth would be damped, run concurrently the
+	// uncommitted siblings are invisible to each other and none would be.
+	const rounds = 2
 
 	elos := func(t *testing.T, concurrent bool) (uint32, uint32) {
 		t.Helper()
@@ -240,4 +245,155 @@ func TestRankedMatchReadsBackAsRankedInHistory(t *testing.T) {
 		"the profile reads Match.Ranked from here, so it has to survive the preload")
 	assert.Equal(t, "Poker", history[0].Match.Game.Name)
 	assert.NotZero(t, history[0].EloDelta, "a ranked match moved the rating")
+}
+
+// seat is a starting ranking row: matches_played below the provisional threshold is
+// what makes the seat provisional, and distinct Elos keep every seat's natural delta
+// nonzero (equal ratings cancel out to zero for the middle seats of a table, which
+// would make "the delta was zeroed" unfalsifiable).
+type seat struct {
+	elo    uint32
+	played uint64
+}
+
+// antiFarmTable creates the game and one user per seat, pre-seeding the ranking rows
+// so a track record does not cost five real matches to build.
+func antiFarmTable(t *testing.T, gormDB *gorm.DB, gameName string, seats ...seat) (uint, []uint) {
+	t.Helper()
+
+	game := db.Game{Name: gameName}
+	require.NoError(t, gormDB.Create(&game).Error)
+
+	userIDs := make([]uint, 0, len(seats))
+	for i, s := range seats {
+		u := db.User{Username: fmt.Sprintf("seat%d", i)}
+		require.NoError(t, gormDB.Create(&u).Error)
+		require.NoError(t, gormDB.Create(&db.Ranking{
+			UserID: u.ID, GameID: game.ID, Elo: s.elo, MatchesPlayed: s.played,
+		}).Error)
+		userIDs = append(userIDs, u.ID)
+	}
+	return game.ID, userIDs
+}
+
+func rankingOf(t *testing.T, gormDB *gorm.DB, userID, gameID uint) db.Ranking {
+	t.Helper()
+	var r db.Ranking
+	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userID, gameID).First(&r).Error)
+	return r
+}
+
+// lastMatchDeltas is the elo_delta history of the most recent match, which is where a
+// damped or unpaid result has to show up as a zero rather than as nothing at all.
+func lastMatchDeltas(t *testing.T, gormDB *gorm.DB) map[uint]int {
+	t.Helper()
+	var match db.Match
+	require.NoError(t, gormDB.Preload("Participants").Order("id DESC").First(&match).Error)
+
+	deltas := make(map[uint]int, len(match.Participants))
+	for _, p := range match.Participants {
+		deltas[p.UserID] = p.EloDelta
+	}
+	return deltas
+}
+
+// Minting an account is free, so beating a fresh one must pay nothing - while the
+// fresh account's own rating still converges.
+func TestFinalizeRankedMatchProvisionalOpponentPaysNothing(t *testing.T) {
+	tests := []struct {
+		name  string
+		seats []seat
+	}{
+		{"heads up against a fresh account", []seat{{1500, 10}, {1500, 0}}},
+		{"one fresh account at a table of four", []seat{{1500, 10}, {1450, 0}, {1300, 12}, {1100, 7}}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			gormDB := testutil.SetupTestDB(t)
+			gameID, userIDs := antiFarmTable(t, gormDB, "Poker", tt.seats...)
+
+			repo := repository.NewMatchRepository(gormDB)
+			require.NoError(t, repo.FinalizeRankedMatch(context.Background(), "Poker", userIDs, nil))
+
+			deltas := lastMatchDeltas(t, gormDB)
+			require.Len(t, deltas, len(tt.seats), "history is written either way")
+
+			for i, s := range tt.seats {
+				r := rankingOf(t, gormDB, userIDs[i], gameID)
+				assert.Equal(t, s.played+1, r.MatchesPlayed, "seat %d has played another match", i)
+
+				if s.played < 5 {
+					assert.NotEqual(t, s.elo, r.Elo, "the provisional seat %d still converges", i)
+					assert.NotZero(t, deltas[userIDs[i]], "and its own history records the move")
+					continue
+				}
+				assert.Equal(t, s.elo, r.Elo, "established seat %d must not be paid by a provisional", i)
+				assert.Zero(t, deltas[userIDs[i]], "and its history delta is zeroed too")
+			}
+		})
+	}
+}
+
+// Two accounts trading wins all day is farming or a private rivalry; either way the
+// fourth match of the day between the same set stops paying.
+func TestFinalizeRankedMatchDampsRepeatedPairing(t *testing.T) {
+	gormDB := testutil.SetupTestDB(t)
+	gameID, userIDs := antiFarmTable(t, gormDB, "Poker", seat{1500, 10}, seat{1500, 10})
+
+	repo := repository.NewMatchRepository(gormDB)
+	ctx := context.Background()
+
+	for range 3 {
+		require.NoError(t, repo.FinalizeRankedMatch(ctx, "Poker", userIDs, nil))
+	}
+	before := []db.Ranking{
+		rankingOf(t, gormDB, userIDs[0], gameID),
+		rankingOf(t, gormDB, userIDs[1], gameID),
+	}
+	require.NotEqual(t, uint32(1500), before[0].Elo, "the first three still move rating")
+
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, "Poker", userIDs, nil))
+
+	deltas := lastMatchDeltas(t, gormDB)
+	require.Len(t, deltas, 2, "the damped match is still recorded")
+	for i, userID := range userIDs {
+		after := rankingOf(t, gormDB, userID, gameID)
+		assert.Equal(t, before[i].Elo, after.Elo, "the fourth pairing of the day moves nothing")
+		assert.Zero(t, deltas[userID], "and records a zero delta")
+		assert.Equal(t, before[i].MatchesPlayed+1, after.MatchesPlayed,
+			"a damped match is still a match played, or a farmer never graduates")
+	}
+
+	var matches int64
+	require.NoError(t, gormDB.Model(&db.Match{}).Count(&matches).Error)
+	assert.Equal(t, int64(4), matches)
+}
+
+// matches_played is what a provisional account graduates on, so a finalize that
+// forgot to increment it would leave every account provisional forever.
+func TestFinalizeRankedMatchCountsMatchesPlayed(t *testing.T) {
+	gormDB := testutil.SetupTestDB(t)
+
+	u1 := &db.User{Username: "counted1"}
+	u2 := &db.User{Username: "counted2"}
+	require.NoError(t, gormDB.Create(u1).Error)
+	require.NoError(t, gormDB.Create(u2).Error)
+
+	repo := repository.NewMatchRepository(gormDB)
+	ctx := context.Background()
+
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, "Poker", []uint{u1.ID, u2.ID}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, "Poker", []uint{u1.ID, u2.ID}, nil))
+
+	var game db.Game
+	require.NoError(t, gormDB.Where("name = ?", "Poker").First(&game).Error)
+
+	for _, u := range []*db.User{u1, u2} {
+		r := rankingOf(t, gormDB, u.ID, game.ID)
+		assert.Equal(t, uint64(2), r.MatchesPlayed, "a seeded row starts at zero and counts up")
+		// Both seats are provisional, so both ratings still move.
+		assert.NotEqual(t, uint32(elo.DefaultRating), r.Elo)
+	}
 }

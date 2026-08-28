@@ -89,6 +89,7 @@ func TestSchemaNullabilityMatchesStructs(t *testing.T) {
 		{"match_participants", "placement"},
 		{"match_participants", "elo_delta"},
 		{"matches", "ranked"},
+		{"rankings", "matches_played"},
 	}
 
 	for _, want := range notNull {
