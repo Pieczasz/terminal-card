@@ -9,6 +9,9 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
+// BoundEngine is a session-scoped handle: it only submits as its player and only
+// returns that player's hand. Bind is the sole constructor and refuses a nil
+// engine, so a non-nil BoundEngine always has one.
 type BoundEngine struct {
 	engine   *Engine
 	playerID string
@@ -43,7 +46,7 @@ func (b *BoundEngine) PlayerID() string {
 // not reachable from here: a view only ever needs its own channel, and handing it
 // the broadcaster would let it Broadcast or Close the feed for the whole table.
 func (b *BoundEngine) Subscribe() (<-chan Event, error) {
-	if b == nil || b.engine == nil {
+	if b == nil {
 		return nil, errors.New("no active game")
 	}
 	ch, err := b.engine.broadcaster.Subscribe()
@@ -54,54 +57,59 @@ func (b *BoundEngine) Subscribe() (<-chan Event, error) {
 }
 
 func (b *BoundEngine) Unsubscribe(events <-chan Event) {
-	if b == nil || b.engine == nil || events == nil {
+	if b == nil || events == nil {
 		return
 	}
 	b.engine.broadcaster.Unsubscribe(events)
 }
 
 func (b *BoundEngine) Submit(action Action) error {
-	if b == nil || b.engine == nil {
+	if b == nil {
 		return errors.New("no active game")
 	}
 	return b.engine.SubmitAction(b.playerID, action)
 }
 
-func (b *BoundEngine) IsMyTurn() bool {
-	if b == nil || b.engine == nil {
-		return false
-	}
-	return b.engine.CurrentPlayerID() == b.playerID
-}
-
 func (b *BoundEngine) Snapshot() StateSnapshot {
-	if b == nil || b.engine == nil {
+	if b == nil {
 		return StateSnapshot{}
 	}
 	return b.engine.Snapshot()
 }
 
 func (b *BoundEngine) Hand() []deck.Card {
-	if b == nil || b.engine == nil {
+	if b == nil {
 		return nil
 	}
 	var hand []deck.Card
 	b.engine.WithState(func(state *State) {
-		for _, p := range state.Players {
-			if p != nil && p.ID == b.playerID {
-				hand = slices.Clone(p.Cards)
-				return
-			}
+		if i := slices.IndexFunc(state.Players, func(p *Player) bool {
+			return p != nil && p.ID == b.playerID
+		}); i != -1 {
+			hand = slices.Clone(state.Players[i].Cards)
 		}
 	})
 	return hand
 }
 
+// Frame is one consistent read of everything a view renders - the public snapshot,
+// this player's hand, and the turn clock - plus, through fn (which may be nil), the
+// per-game state under the WithHiddenState contract. One lock hold, so the pieces
+// cannot describe different moments the way separate reads can.
+func (b *BoundEngine) Frame(fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
+	if b == nil {
+		return StateSnapshot{}, nil, 0
+	}
+	return b.engine.Frame(b.playerID, fn)
+}
+
 // WithHiddenState reads the per-game slice of engine state under the engine lock.
 // State.Extra is unredacted table state - every other player's hand included, where
-// the rules keep one there - so a view that reaches in takes on the redaction itself.
+// the rules keep one there - so a view that reaches in takes on the redaction
+// itself. It is also live and mutable: treat it as read-only and copy anything kept
+// past the callback.
 func (b *BoundEngine) WithHiddenState(fn func(extra any)) {
-	if b == nil || b.engine == nil || fn == nil {
+	if b == nil || fn == nil {
 		return
 	}
 	b.engine.WithState(func(state *State) {
@@ -110,7 +118,7 @@ func (b *BoundEngine) WithHiddenState(fn func(extra any)) {
 }
 
 func (b *BoundEngine) TurnRemaining() time.Duration {
-	if b == nil || b.engine == nil {
+	if b == nil {
 		return 0
 	}
 	deadline := b.engine.TurnDeadline()
