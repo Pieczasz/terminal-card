@@ -4,12 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"slices"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/catalog"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
@@ -108,10 +107,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "g":
-			m.gameFilterIdx = (m.gameFilterIdx + 1) % len(m.gameFilters)
+			m.gameFilterIdx = components.CycleIndex(m.gameFilterIdx, 1, len(m.gameFilters))
 			return m, nil
 		case "r":
-			m.resultIdx = (m.resultIdx + 1) % len(m.resultFilters)
+			m.resultIdx = components.CycleIndex(m.resultIdx, 1, len(m.resultFilters))
 			return m, nil
 		}
 		if cmd, ok := views.NavigateOn(msg.String()); ok {
@@ -122,19 +121,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	titleFig := styles.RenderFigureASCII("User Profile", styles.InnerWidth(m.global.Width))
-	titleText := m.global.Theme.Title.Render(titleFig)
-	header := titleText
-	footer := m.global.Theme.RenderActionFooter(slices.Concat(
-		[]string{"g - Game", "r - Result"},
-		styles.GlobalActions,
-	))
-
-	content := m.renderContent(header, footer)
-	return tea.NewView(views.RenderCenteredLayout(m.global, header, content, footer))
+	actions := []string{"g - Game", "r - Result"}
+	return tea.NewView(views.RenderScreen(m.global, "User Profile", actions, m.renderContent))
 }
 
-func (m model) renderContent(header, footer string) string {
+func (m model) renderContent(contentHeight int) string {
 	if m.err != nil {
 		return "Unable to load profile. Please try again."
 	}
@@ -143,11 +134,11 @@ func (m model) renderContent(header, footer string) string {
 	}
 
 	const extraVerticalLines = 5 // userInfo, spacer, filter, spacer, headers
-	maxItems := max(styles.AvailableContentHeight(m.global.Height, header, footer)-extraVerticalLines, 1)
+	maxItems := max(contentHeight-extraVerticalLines, 1)
 
-	rankingsCol := lg.NewStyle().Align(lg.Left).Width(rankingsTableWidth).MarginRight(4).
+	rankingsCol := lg.NewStyle().Align(lg.Left).Width(rankingsTable.Width()).MarginRight(4).
 		Render(lg.JoinVertical(lg.Left, m.rankingRows(maxItems)...))
-	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTableWidth).
+	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTable.Width()).
 		Render(lg.JoinVertical(lg.Left, m.historyRows(maxItems)...))
 	tables := lg.JoinHorizontal(lg.Top, rankingsCol, historyCol)
 
@@ -160,28 +151,29 @@ func (m model) renderContent(header, footer string) string {
 	return lg.JoinVertical(lg.Left, userInfo, "", filters, "", tables)
 }
 
-const (
-	rankingsTableWidth = colGame + 3 + colElo // "Game | Elo"
-	historyTableWidth  = colGame + 3 + colPlace + 3 + colResult
+// The two tables' cells are fixed so cycling a filter cannot resize the layout.
+var (
+	rankingsTable = components.Table{Cols: []components.Column{
+		{Title: "Game", Width: colGame},
+		{Title: "Elo", Width: colElo},
+	}}
+	historyTable = components.Table{Cols: []components.Column{
+		{Title: "Game", Width: colGame},
+		{Title: "Place", Width: colPlace},
+		{Title: "Result", Width: colResult},
+	}}
 )
 
 func (m model) rankingRows(maxItems int) []string {
-	rows := make([]string, 0, 2+maxItems)
-	rows = append(rows,
-		m.global.Theme.SectionHeading.Render(fmt.Sprintf("%-*s | %s", colGame, "Game", "Elo")),
-		strings.Repeat("-", rankingsTableWidth),
-	)
+	rows := []string{rankingsTable.Header(m.global.Theme)}
 	if len(m.userProfile.Rankings) == 0 {
-		return append(rows, styles.PadTruncate("No games yet.", rankingsTableWidth))
+		return append(rows, styles.PadTruncate("No games yet.", rankingsTable.Width()))
 	}
 	for i, r := range m.userProfile.Rankings {
 		if i >= maxItems {
 			return append(rows, "... and more")
 		}
-		rows = append(rows, fmt.Sprintf("%s | %s",
-			styles.PadTruncate(r.Game.Name, colGame),
-			styles.PadTruncate(strconv.FormatUint(uint64(r.Elo), 10), colElo),
-		))
+		rows = append(rows, rankingsTable.Cells(r.Game.Name, strconv.FormatUint(uint64(r.Elo), 10)))
 	}
 	return rows
 }
@@ -211,28 +203,20 @@ func (m model) filteredHistory() []db.MatchParticipant {
 }
 
 func (m model) historyRows(maxItems int) []string {
-	rows := make([]string, 0, 2+maxItems)
-	rows = append(rows,
-		m.global.Theme.SectionHeading.Render(
-			fmt.Sprintf("%-*s | %-*s | %s", colGame, "Game", colPlace, "Place", "Result")),
-		strings.Repeat("-", historyTableWidth),
-	)
+	rows := []string{historyTable.Header(m.global.Theme)}
 	if m.historyErr != nil {
 		return append(rows, m.global.Theme.ErrorText.Render("Unable to load match history."))
 	}
 	filtered := m.filteredHistory()
 	if len(filtered) == 0 {
-		return append(rows, styles.PadTruncate("No matches for this filter.", historyTableWidth))
+		return append(rows, styles.PadTruncate("No matches for this filter.", historyTable.Width()))
 	}
 	for i, h := range filtered {
 		if i >= maxItems {
 			return append(rows, "... and more")
 		}
-		rows = append(rows, fmt.Sprintf("%s | %s | %s",
-			styles.PadTruncate(h.Match.Game.Name, colGame),
-			styles.PadTruncate(placementPlain(h.Placement), colPlace),
-			styles.PadTruncate(resultPlain(h), colResult),
-		))
+		rows = append(rows, historyTable.Cells(
+			h.Match.Game.Name, placementPlain(h.Placement), resultPlain(h)))
 	}
 	return rows
 }

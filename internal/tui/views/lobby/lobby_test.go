@@ -237,3 +237,26 @@ func TestView_NoActiveLobby(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, m.View().Content, "No active lobby")
 }
+
+// A view with no lobby used to return a ChangeViewMsg for every message it was handed,
+// resize messages included, so the router rebuilt the home view on every keystroke and
+// every terminal resize for as long as the view stayed on screen.
+func TestUpdate_WithoutALobbyNavigatesHomeOnce(t *testing.T) {
+	t.Parallel()
+
+	m := &model{global: router.GlobalContext{}}
+
+	_, cmd := m.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
+	require.NotNil(t, cmd, "the first message takes the player home")
+	msg, ok := cmd().(router.ChangeViewMsg)
+	require.True(t, ok)
+	assert.Equal(t, router.RouteHome, msg.ViewName)
+
+	for _, next := range []tea.Msg{
+		tea.WindowSizeMsg{Width: 100, Height: 30},
+		tea.KeyPressMsg{Code: rune("j"[0]), Text: "j"},
+	} {
+		_, cmd = m.Update(next)
+		assert.Nil(t, cmd, "the navigation is asked for once, not on every message")
+	}
+}
