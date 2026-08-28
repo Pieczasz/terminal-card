@@ -16,7 +16,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // registerGame registers rules under a display name. These tests only ever look
@@ -41,7 +40,10 @@ func (m *MockRules) OnGameStart(state *game.State) error { return m.Called(state
 func (m *MockRules) ValidateAction(state *game.State, action game.Action) error {
 	return m.Called(state, action).Error(0)
 }
-func (m *MockRules) ApplyAction(state *game.State, action game.Action) { m.Called(state, action) }
+func (m *MockRules) ApplyAction(state *game.State, action game.Action) error {
+	m.Called(state, action)
+	return nil
+}
 func (m *MockRules) AfterAction(state *game.State, action game.Action) error {
 	return m.Called(state, action).Error(0)
 }
@@ -54,15 +56,10 @@ type MockMatchRepo struct {
 	mock.Mock
 }
 
-func (m *MockMatchRepo) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
-	args := m.Called(ctx, name)
-	return args.Get(0).(*db.Game), args.Error(1)
-}
-
-func (m *MockMatchRepo) RecordMatch(
-	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
+func (m *MockMatchRepo) RecordCasualMatch(
+	ctx context.Context, gameName string, orderedUserIDs []uint,
 ) error {
-	return m.Called(ctx, gameID, orderedUserIDs, eloDeltas, ranked).Error(0)
+	return m.Called(ctx, gameName, orderedUserIDs).Error(0)
 }
 
 func (m *MockMatchRepo) FinalizeRankedMatch(
@@ -255,8 +252,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("GetOrCreateGame", mock.Anything, "MockGame").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
-	mockRepo.On("RecordMatch", mock.Anything, uint(7), []uint{1, 2}, map[uint]int(nil), false).
+	mockRepo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
 		Run(func(mock.Arguments) { close(done) }).
 		Return(nil)
 
@@ -621,24 +617,15 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 		{
 			name: "casual success",
 			setup: func(r *MockMatchRepo) {
-				r.On("GetOrCreateGame", mock.Anything, "Mock").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
-				r.On("RecordMatch", mock.Anything, uint(7), []uint{1}, map[uint]int(nil), false).Return(nil)
+				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(nil)
 			},
 		},
 		{
 			name: "casual failure is reported",
 			setup: func(r *MockMatchRepo) {
-				r.On("GetOrCreateGame", mock.Anything, "Mock").Return(&db.Game{Model: gorm.Model{ID: 7}}, nil)
-				r.On("RecordMatch", mock.Anything, uint(7), []uint{1}, map[uint]int(nil), false).Return(assert.AnError)
+				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
 			},
 			wantErr: "record casual match",
-		},
-		{
-			name: "an unresolvable game is reported",
-			setup: func(r *MockMatchRepo) {
-				r.On("GetOrCreateGame", mock.Anything, "Mock").Return((*db.Game)(nil), assert.AnError)
-			},
-			wantErr: "resolve game",
 		},
 	}
 
@@ -704,7 +691,7 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
 	t.Cleanup(engine.Close)
 
-	l.finalizeFinishedGame(engine)
+	l.finalizeFinishedGame(engine, game.EndReasonWin)
 
 	assert.Contains(t, logged.String(), "failed to record finished match",
 		"a lost match result has to be shouted about")
@@ -721,7 +708,7 @@ func (stubRules) InitialDeck() []deck.Card                      { return deck.St
 func (stubRules) InitialDealCount() int                         { return 1 }
 func (stubRules) OnGameStart(*game.State) error                 { return nil }
 func (stubRules) ValidateAction(*game.State, game.Action) error { return nil }
-func (stubRules) ApplyAction(*game.State, game.Action)          {}
+func (stubRules) ApplyAction(*game.State, game.Action) error    { return nil }
 func (stubRules) AfterAction(*game.State, game.Action) error    { return nil }
 func (stubRules) CheckWinCondition(*game.State) bool            { return false }
 func (stubRules) Standings(s *game.State) []*game.Player        { return s.Players }
