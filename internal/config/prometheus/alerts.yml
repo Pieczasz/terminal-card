@@ -1,0 +1,56 @@
+# First-line alert rules. There is no Alertmanager yet, so these surface in the
+# Prometheus UI and Grafana's alert list; wiring a receiver is a config change here,
+# not a code change.
+groups:
+  - name: terminal-card
+    rules:
+      # A finished match that never reached the database. Any occurrence is a bug
+      # or a shutdown-drain problem; this must stay at zero.
+      - alert: MatchResultLost
+        expr: increase(terminalcard_match_finalize_total{outcome=~"dropped|error"}[5m]) > 0
+        labels:
+          severity: page
+        annotations:
+          summary: "match results are being lost ({{ $value }} in 5m)"
+
+      # App metrics arrive by remote-write, so there is no up{} for the backend;
+      # the sessions gauge disappearing is the only liveness signal.
+      - alert: BackendMetricsAbsent
+        expr: absent(terminalcard_ssh_sessions_active)
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: "backend stopped reporting metrics"
+
+      - alert: SSHSessionPanics
+        expr: increase(terminalcard_ssh_session_panics_total[5m]) > 0
+        labels:
+          severity: warn
+        annotations:
+          summary: "panics recovered in SSH sessions"
+
+      # The pool is a hard cap that queues silently; waits are the only early
+      # warning before gameplay stalls on the database.
+      - alert: DBPoolSaturation
+        expr: increase(db_client_connections_wait_count_total[5m]) > 10
+        labels:
+          severity: warn
+        annotations:
+          summary: "queries are waiting for free database connections"
+
+      - alert: BroadcasterDroppingEvents
+        expr: increase(terminalcard_broadcaster_events_dropped_total[10m]) > 0
+        labels:
+          severity: warn
+        annotations:
+          summary: "slow subscribers are losing game events"
+
+      # A leak from a view that skipped Close() shows up here first.
+      - alert: GoroutineGrowth
+        expr: go_goroutine_count > 2000
+        for: 15m
+        labels:
+          severity: warn
+        annotations:
+          summary: "goroutine count is abnormally high"

@@ -26,7 +26,7 @@
     {
       "id": 2,
       "type": "stat",
-      "title": "Games started (total)",
+      "title": "Games started (since deploy)",
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "gridPos": {"h": 8, "w": 8, "x": 8, "y": 0},
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
