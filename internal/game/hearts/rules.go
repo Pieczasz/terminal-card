@@ -17,6 +17,7 @@ var (
 	_ game.PlayerLeaveHandler  = (*Rules)(nil)
 	_ game.TurnTimeoutHandler  = (*Rules)(nil)
 	_ game.TurnDurationHandler = (*Rules)(nil)
+	_ game.StandingScorer      = (*Rules)(nil)
 )
 
 func (r *Rules) MinPlayers() int { return playerCount }
@@ -97,7 +98,7 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 
 	if _, isNextHand := action.(ActionNextHand); isNextHand {
@@ -159,31 +160,43 @@ func validatePlayCard(_ *game.State, extra *State, p *game.Player, card deck.Car
 	}
 
 	leading := extra.leadingTrick()
-	if leading && extra.TricksPlayed == 0 && card != twoOfClubs {
+	firstTrick := extra.TricksPlayed == 0
+	// Both first-trick rules have an exemption for the hand that has nothing else:
+	// a player holding only hearts may lead one, and a player holding only points
+	// must be allowed to play one on trick 1.
+	openingLead := leading && firstTrick
+	unbrokenHeartLead := leading && card.Suit == deck.Hearts &&
+		!extra.HeartsBroken && !onlyHearts(p.Cards)
+	revoke := !leading && card.Suit != extra.LedSuit && handHasSuit(p.Cards, extra.LedSuit)
+	dumpingPointsOnTrickOne := firstTrick && isPenaltyCard(card) && hasNonPenaltyCard(p.Cards)
+
+	switch {
+	case openingLead && card != twoOfClubs:
 		return errors.New("must lead the 2 of clubs on trick 1")
-	}
-	if leading && card.Suit == deck.Hearts && !extra.HeartsBroken && !onlyHearts(p.Cards) {
+	case unbrokenHeartLead:
 		return errors.New("hearts have not been broken yet")
-	}
-	if !leading && card.Suit != extra.LedSuit && handHasSuit(p.Cards, extra.LedSuit) {
+	case revoke:
 		return errors.New("must follow suit")
-	}
-	if extra.TricksPlayed == 0 && isPenaltyCard(card) && hasNonPenaltyCard(p.Cards) {
+	case dumpingPointsOnTrickOne:
 		return errors.New("cannot play a point card on trick 1")
+	default:
+		return nil
 	}
-	return nil
 }
 
-func (r *Rules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return
+		return game.ErrInvalidState
 	}
 	switch a := action.(type) {
 	case ActionPassCards:
 		p := state.Players[state.CurrentTurn]
 		p.Cards = deck.RemoveEach(p.Cards, a.Cards)
-		extra.PendingPasses[p.ID] = a.Cards
+		// Cloned: these cards sit in engine state for up to three turns before
+		// applyAllPasses delivers them, and a caller that retains its slice must
+		// not be able to rewrite another seat's incoming cards.
+		extra.PendingPasses[p.ID] = slices.Clone(a.Cards)
 		extra.Passed[p.ID] = true
 	case ActionPlayCard:
 		p := state.Players[state.CurrentTurn]
@@ -200,12 +213,13 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionNextHand:
 		// dealt in AfterAction
 	}
+	return nil
 }
 
 func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 	switch action.(type) {
 	case ActionPassCards:
@@ -257,7 +271,7 @@ func (r *Rules) afterPlay(state *game.State, extra *State) error {
 	extra.Stage = StageHandOver
 	extra.HandComplete = true
 
-	if handTargetReached(extra) {
+	if game.AnyScoreAtLeast(extra.CumulativeScores, extra.TargetScore) {
 		extra.MatchComplete = true
 		state.OverrideNextTurn = nil
 		return nil
@@ -274,16 +288,15 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 	return ok && extra.MatchComplete
 }
 
+// Standings ranks by cumulative score ascending: hearts is a low-score-wins game,
+// so the seat that took the fewest points is first.
 func (r *Rules) Standings(state *game.State) []*game.Player {
-	extra, ok := state.Extra.(*State)
-	if !ok {
+	if _, ok := state.Extra.(*State); !ok {
 		return nil
 	}
-	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *game.Player) int {
-		return extra.CumulativeScores[a.ID] - extra.CumulativeScores[b.ID]
+	return game.StandingsByScore(state.Players, func(p *game.Player) int {
+		return r.StandingScore(state, p)
 	})
-	return standings
 }
 
 func (r *Rules) TimeoutAction(state *game.State) game.Action {
@@ -318,12 +331,12 @@ func (r *Rules) TurnTimeout(state *game.State) time.Duration {
 	}
 	switch extra.Stage {
 	case StagePassing:
-		return PassTurnTimeout
+		return passTurnTimeout
 	case StageHandOver:
-		if extra.MatchComplete {
-			return 0
-		}
-		return HandOverTurnTimeout
+		// The between-hands prompt is a decision, not a play, and it needs longer
+		// than a turn. Every other stage returns zero, which means "engine default"
+		// rather than "no clock".
+		return handOverTurnTimeout
 	default:
 		return 0
 	}
