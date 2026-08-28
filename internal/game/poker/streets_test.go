@@ -244,7 +244,7 @@ func TestBuildSidePots_LayeredWithDeadMoney(t *testing.T) {
 	}
 	state.Extra = extra
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	require.Len(t, pots, 4)
 	// Layer 0-50: everyone in (incl. p4's dead money), eligible = live players.
@@ -279,7 +279,7 @@ func TestBuildSidePots_UncalledOvershoveReturned(t *testing.T) {
 	}
 	state.Extra = extra
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	require.Len(t, pots, 2)
 	// Contested layer up to the call amount.
@@ -411,17 +411,6 @@ func TestSmoke_PassiveHands(t *testing.T) {
 	}
 }
 
-// chipsInPlay is the invariant every betting path must preserve: chips only ever
-// move between a player's stack and the pool, so the two together are constant for
-// the whole hand. A pot that pays out more or less than it collected shows up here.
-func chipsInPlay(extra *State) uint {
-	total := extra.MainPool
-	for _, c := range extra.PlayerChips {
-		total += c
-	}
-	return total
-}
-
 func startTable(t testingT, n int) *game.Engine {
 	t.Helper()
 	players := make([]*game.Player, 0, n)
@@ -434,7 +423,8 @@ func startTable(t testingT, n int) *game.Engine {
 }
 
 // candidateActions is every action worth attempting, cheapest first. Illegal ones
-// are rejected by the engine, so the driver can just try the next.
+// are rejected by the engine, so the driver can just try the next. ActionNextHand is not in
+// here: only the parked dealer may submit it, so the driver handles it separately.
 func candidateActions(raiseTo uint) []game.Action {
 	return []game.Action{
 		ActionCheck{},
@@ -456,13 +446,21 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 
 		require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "blinds must not create or destroy chips")
 
-		for step := range 200 {
+		for step := range 400 {
 			if engine.IsFinished() {
 				break
 			}
+			id := engine.CurrentPlayerID()
 			extra := extraOf(rt, engine)
+
 			if extra.HandComplete {
-				break
+				// The pot is settled between hands, so every chip is in a stack.
+				require.Zero(rt, extra.MainPool, "a completed hand must leave nothing in the pool")
+				require.Equal(rt, want, chipsInPlay(extra), "payouts must return exactly what was collected")
+				// Only the parked dealer may deal, and it is their turn.
+				require.NoError(rt, engine.SubmitAction(id, ActionNextHand{}), "dealing the next hand")
+				require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "the next hand's blinds must not mint chips")
+				continue
 			}
 
 			// Bias toward a legal raise size so the raise path is actually exercised.
@@ -471,7 +469,6 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 			order := rapid.IntRange(0, 4).Draw(rt, fmt.Sprintf("pick%d", step))
 
 			actions := candidateActions(raiseTo)
-			id := engine.CurrentPlayerID()
 			acted := false
 			for i := range actions {
 				act := actions[(order+i)%len(actions)]
@@ -488,15 +485,10 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 				"chips changed after step %d (%d players)", step, n)
 		}
 
-		// However the hand ended, every chip must be back in a stack.
 		final := extraOf(rt, engine)
 		if final.HandComplete {
 			require.Zero(rt, final.MainPool, "a completed hand must leave nothing in the pool")
-			var stacks uint
-			for _, c := range final.PlayerChips {
-				stacks += c
-			}
-			require.Equal(rt, want, stacks, "payouts must return exactly the chips collected")
+			require.Equal(rt, want, chipsInPlay(final), "payouts must return exactly the chips collected")
 		}
 	})
 }
@@ -543,6 +535,8 @@ func TestUnequalAllIns_ShortStackCannotWinSidePot(t *testing.T) {
 		extra.PlayerChips[s.Players[0].ID] = 100
 		extra.PlayerChips[s.Players[1].ID] = 500
 		extra.PlayerChips[s.Players[2].ID] = 900
+		// Rewriting stacks mid-hand moves the conservation baseline with them.
+		extra.handStartChips = chipsInPlay(extra)
 	})
 	before := chipsInPlay(extraOf(t, engine))
 
@@ -604,7 +598,7 @@ func TestBuildSidePots_DeadMoneyCarriesIntoTheLastPot(t *testing.T) {
 	// b folded after over-committing; only a can win anything.
 	state, extra := sidePotState(t, map[string]uint{"a": 50, "b": 100}, "b")
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	require.Len(t, pots, 1, "only the level a reached can be contested")
 	assert.Equal(t, []string{"a"}, pots[0].Eligible)
@@ -619,7 +613,7 @@ func TestBuildSidePots_AllContributorsFoldedAwardsTheLoneSurvivor(t *testing.T) 
 	state, extra := sidePotState(t,
 		map[string]uint{"a": 100, "b": 100, "survivor": 0}, "a", "b")
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	assert.Empty(t, pots, "no contested layer can form")
 	assert.Equal(t, uint(200), extra.PlayerChips["survivor"], "orphaned chips go to the survivor")
@@ -632,7 +626,7 @@ func TestBuildSidePots_OrphanSplitsAcrossSurvivorsWithoutLosingTheOddChip(t *tes
 	state, extra := sidePotState(t,
 		map[string]uint{"folded": 100, "x": 0, "y": 0, "z": 0}, "folded")
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	assert.Empty(t, pots)
 	total := extra.PlayerChips["x"] + extra.PlayerChips["y"] + extra.PlayerChips["z"]
@@ -648,7 +642,7 @@ func TestBuildSidePots_DepartedContributorIsNotEligible(t *testing.T) {
 	// Drop "left" from the seats, exactly as Engine.RemovePlayer does.
 	state.Players = slices.DeleteFunc(state.Players, func(p *game.Player) bool { return p.ID == "left" })
 
-	pots := buildSidePots(state, extra)
+	pots := buildSidePots(state, extra, contenders(state, extra))
 
 	require.Len(t, pots, 1)
 	assert.Equal(t, []string{"stayed"}, pots[0].Eligible, "a departed player cannot win")
@@ -662,9 +656,146 @@ func TestAwardPots_OddChipRemainderIsDistributed(t *testing.T) {
 	extra.Pots = []Pot{{Amount: 100, Eligible: []string{"a", "b", "c"}}}
 	scores := map[string]int{"a": 500, "b": 500, "c": 500} // dead tie
 
-	awardPots(state, extra, scores)
+	awardPots(extra, contenders(state, extra), scores)
 
 	total := extra.PlayerChips["a"] + extra.PlayerChips["b"] + extra.PlayerChips["c"]
 	assert.Equal(t, uint(100), total, "100 chopped three ways must still total 100")
 	assert.Zero(t, extra.MainPool)
+}
+
+// The winners a showdown names must be exactly the players it paid. They were
+// computed from a global best hand instead, which ignores pot eligibility: the short
+// stack holding the best hand was announced as the winner of a side pot they were
+// never in.
+func TestRunShowdown_NamesTheWinnersItPaid(t *testing.T) {
+	t.Parallel()
+	// p0 shoved 100 holding the best hand; p1 and p2 put in 500 each, so the side pot
+	// above 100 is contested between p1 and p2 alone.
+	players := []*game.Player{
+		{ID: "p0", Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}, {Rank: deck.Ace, Suit: deck.Hearts}}},
+		{ID: "p1", Cards: []deck.Card{{Rank: deck.King, Suit: deck.Spades}, {Rank: deck.King, Suit: deck.Hearts}}},
+		{ID: "p2", Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Clubs}}},
+	}
+	state := game.NewState(&Rules{}, players, deck.StandardDeck())
+	extra := &State{
+		Phase:        River,
+		Folded:       map[string]bool{},
+		PlayersAllIn: map[string]bool{"p0": true, "p1": true, "p2": true},
+		Table: []deck.Card{
+			{Rank: deck.Ace, Suit: deck.Diamonds},
+			{Rank: deck.King, Suit: deck.Diamonds},
+			{Rank: deck.Seven, Suit: deck.Spades},
+			{Rank: deck.Four, Suit: deck.Hearts},
+			{Rank: deck.Nine, Suit: deck.Clubs},
+		},
+		PlayerChips:      map[string]uint{"p0": 0, "p1": 0, "p2": 0},
+		PlayerBets:       map[string]uint{},
+		TotalContributed: map[string]uint{"p0": 100, "p1": 500, "p2": 500},
+		ActedThisRound:   map[string]bool{},
+	}
+	state.Extra = extra
+	before := maps.Clone(extra.PlayerChips)
+
+	require.NoError(t, runShowdown(state, extra))
+
+	var paid, named []string
+	for id, chips := range extra.PlayerChips {
+		if chips > before[id] {
+			paid = append(paid, id)
+		}
+	}
+	for _, p := range extra.Winners {
+		named = append(named, p.ID)
+	}
+	assert.ElementsMatch(t, paid, named, "the hand must name exactly the players it paid")
+	assert.Contains(t, named, "p1", "p1 took the side pot, so p1 won part of this hand")
+	assert.Equal(t, uint(300), extra.PlayerChips["p0"], "the best hand only paid into the main pot")
+	assert.Equal(t, uint(800), extra.PlayerChips["p1"])
+}
+
+// An all-in player has no decisions left to make, so losing their connection cannot
+// cost them a pot they are already committed to. Leaving with chips behind still
+// forfeits the hand.
+func TestLeave_AllInPlayerStaysInThePot(t *testing.T) {
+	t.Parallel()
+	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
+
+	// The seat on turn gets a stack short enough that calling it leaves the other two
+	// with chips behind, so the hand carries on past the shove.
+	shover := engine.CurrentPlayerID()
+	engine.WithState(func(s *game.State) {
+		extra, ok := s.Extra.(*State)
+		require.True(t, ok)
+		extra.PlayerChips[shover] = 100
+		extra.handStartChips = chipsInPlay(extra)
+	})
+
+	require.NoError(t, engine.SubmitAction(shover, ActionAllIn{}))
+	for range 2 {
+		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), ActionCall{}))
+	}
+
+	extra := extraOf(t, engine)
+	require.True(t, extra.PlayersAllIn[shover])
+	require.False(t, extra.HandComplete, "two players with chips behind keep the hand alive")
+
+	engine.RemovePlayer(shover)
+	assert.False(t, extraOf(t, engine).Folded[shover], "an all-in player has nothing left to fold")
+
+	for range 20 {
+		if engine.IsFinished() || extraOf(t, engine).HandComplete {
+			break
+		}
+		actCurrent(t, engine)
+	}
+
+	extra = extraOf(t, engine)
+	require.True(t, extra.HandComplete)
+	require.NotEmpty(t, extra.Pots)
+	assert.Contains(t, extra.Pots[0].Eligible, shover,
+		"the all-in leaver still contests the pot they paid for")
+}
+
+// runOutBoard is entered from whichever street the last player able to bet finished
+// on, not only from preflop.
+func TestRunOutBoard_FillsTheBoardFromAnyStreet(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		from    RoundPhase
+		onBoard int
+	}{
+		{name: "from preflop", from: PreFlop, onBoard: 0},
+		{name: "from the flop", from: Flop, onBoard: 3},
+		{name: "from the turn", from: Turn, onBoard: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state, extra := seatedRound(0,
+				seat{id: "a", chips: 0, allIn: true},
+				seat{id: "b", chips: 0, allIn: true},
+			)
+			extra.Phase = tt.from
+			extra.TotalContributed = map[string]uint{"a": 500, "b": 500}
+			require.NoError(t, state.Deck.Shuffle())
+			for range tt.onBoard {
+				c, ok := state.Deck.Draw()
+				require.True(t, ok)
+				extra.Table = append(extra.Table, c)
+			}
+
+			require.NoError(t, runOutBoard(state, extra))
+
+			assert.Equal(t, Showdown, extra.Phase)
+			assert.Len(t, extra.Table, 5, "the board always finishes at five cards")
+			assert.True(t, extra.HandComplete)
+			assert.Equal(t, uint(1000), extra.PlayerChips["a"]+extra.PlayerChips["b"],
+				"every contributed chip is paid out")
+			assert.Zero(t, extra.MainPool)
+		})
+	}
 }

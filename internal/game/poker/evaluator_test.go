@@ -13,8 +13,8 @@ func card(rank deck.Rank, suit deck.Suit) deck.Card {
 	return deck.Card{Rank: rank, Suit: suit}
 }
 
-func handRank(score int) HandRank {
-	return HandRank(score >> 20)
+func rankOf(score int) handRank {
+	return handRank(score >> handRankShift)
 }
 
 func TestEvaluateHand_Categories(t *testing.T) {
@@ -23,7 +23,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 	tests := []struct {
 		name  string
 		cards []deck.Card
-		want  HandRank
+		want  handRank
 	}{
 		{
 			name: "high card",
@@ -34,7 +34,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Seven, deck.Clubs),
 				card(deck.Two, deck.Spades),
 			},
-			want: HighCard,
+			want: rankHighCard,
 		},
 		{
 			name: "pair",
@@ -45,7 +45,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Seven, deck.Clubs),
 				card(deck.Two, deck.Spades),
 			},
-			want: Pair,
+			want: rankPair,
 		},
 		{
 			name: "two pair",
@@ -56,7 +56,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.King, deck.Clubs),
 				card(deck.Two, deck.Spades),
 			},
-			want: TwoPair,
+			want: rankTwoPair,
 		},
 		{
 			name: "three of a kind",
@@ -67,7 +67,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.King, deck.Clubs),
 				card(deck.Two, deck.Spades),
 			},
-			want: ThreeOfAKind,
+			want: rankThreeOfAKind,
 		},
 		{
 			name: "straight",
@@ -78,7 +78,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Six, deck.Clubs),
 				card(deck.Five, deck.Spades),
 			},
-			want: Straight,
+			want: rankStraight,
 		},
 		{
 			name: "wheel straight A-2-3-4-5",
@@ -89,7 +89,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Four, deck.Clubs),
 				card(deck.Five, deck.Spades),
 			},
-			want: Straight,
+			want: rankStraight,
 		},
 		{
 			name: "flush",
@@ -100,7 +100,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Four, deck.Hearts),
 				card(deck.Two, deck.Hearts),
 			},
-			want: Flush,
+			want: rankFlush,
 		},
 		{
 			name: "full house",
@@ -111,7 +111,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Two, deck.Clubs),
 				card(deck.Two, deck.Spades),
 			},
-			want: FullHouse,
+			want: rankFullHouse,
 		},
 		{
 			name: "four of a kind",
@@ -122,7 +122,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Seven, deck.Clubs),
 				card(deck.Ace, deck.Spades),
 			},
-			want: FourOfAKind,
+			want: rankFourOfAKind,
 		},
 		{
 			name: "straight flush",
@@ -133,7 +133,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Six, deck.Clubs),
 				card(deck.Five, deck.Clubs),
 			},
-			want: StraightFlush,
+			want: rankStraightFlush,
 		},
 		{
 			name: "royal flush",
@@ -144,7 +144,7 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Jack, deck.Spades),
 				card(deck.Ten, deck.Spades),
 			},
-			want: StraightFlush,
+			want: rankStraightFlush,
 		},
 		{
 			name: "steel wheel straight flush A-2-3-4-5",
@@ -155,15 +155,15 @@ func TestEvaluateHand_Categories(t *testing.T) {
 				card(deck.Four, deck.Diamonds),
 				card(deck.Five, deck.Diamonds),
 			},
-			want: StraightFlush,
+			want: rankStraightFlush,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := EvaluateHand(tt.cards)
-			assert.Equal(t, tt.want, handRank(got), "score=%#x", got)
+			got := evaluateHand(tt.cards)
+			assert.Equal(t, tt.want, rankOf(got), "score=%#x", got)
 		})
 	}
 }
@@ -280,10 +280,10 @@ func TestEvaluateHand_Comparisons(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			winScore := EvaluateHand(tt.winner)
-			loseScore := EvaluateHand(tt.loser)
+			winScore := evaluateHand(tt.winner)
+			loseScore := evaluateHand(tt.loser)
 			assert.Greater(t, winScore, loseScore,
-				"winner=%#x (%v) loser=%#x (%v)", winScore, handRank(winScore), loseScore, handRank(loseScore))
+				"winner=%#x (%v) loser=%#x (%v)", winScore, rankOf(winScore), loseScore, rankOf(loseScore))
 		})
 	}
 }
@@ -301,8 +301,8 @@ func TestEvaluateHand_BestOfSeven(t *testing.T) {
 		card(deck.Four, deck.Hearts),
 		card(deck.Two, deck.Hearts),
 	}
-	score := EvaluateHand(cards)
-	assert.Equal(t, Flush, handRank(score))
+	score := evaluateHand(cards)
+	assert.Equal(t, rankFlush, rankOf(score))
 
 	// Prefer full house over flush when both available in 7 cards.
 	fullHouseBoard := []deck.Card{
@@ -314,7 +314,7 @@ func TestEvaluateHand_BestOfSeven(t *testing.T) {
 		card(deck.Two, deck.Hearts),
 		card(deck.Three, deck.Hearts),
 	}
-	assert.Equal(t, FullHouse, handRank(EvaluateHand(fullHouseBoard)))
+	assert.Equal(t, rankFullHouse, rankOf(evaluateHand(fullHouseBoard)))
 }
 
 func TestEvaluateHand_EdgeCases(t *testing.T) {
@@ -322,8 +322,8 @@ func TestEvaluateHand_EdgeCases(t *testing.T) {
 
 	t.Run("fewer than five cards scores zero", func(t *testing.T) {
 		t.Parallel()
-		assert.Equal(t, 0, EvaluateHand(nil))
-		assert.Equal(t, 0, EvaluateHand([]deck.Card{
+		assert.Equal(t, 0, evaluateHand(nil))
+		assert.Equal(t, 0, evaluateHand([]deck.Card{
 			card(deck.Ace, deck.Spades),
 			card(deck.King, deck.Hearts),
 			card(deck.Queen, deck.Diamonds),
@@ -341,7 +341,7 @@ func TestEvaluateHand_EdgeCases(t *testing.T) {
 			card(deck.Ace, deck.Clubs), card(deck.Ace, deck.Diamonds),
 			card(deck.King, deck.Spades), card(deck.Queen, deck.Hearts), card(deck.Two, deck.Hearts),
 		}
-		assert.Equal(t, EvaluateHand(a), EvaluateHand(b))
+		assert.Equal(t, evaluateHand(a), evaluateHand(b))
 	})
 
 	t.Run("trips plus trips becomes full house", func(t *testing.T) {
@@ -352,7 +352,7 @@ func TestEvaluateHand_EdgeCases(t *testing.T) {
 			card(deck.King, deck.Clubs), card(deck.King, deck.Spades), card(deck.King, deck.Hearts),
 			card(deck.Two, deck.Clubs),
 		}
-		assert.Equal(t, FullHouse, handRank(EvaluateHand(cards)))
+		assert.Equal(t, rankFullHouse, rankOf(evaluateHand(cards)))
 	})
 }
 
@@ -401,11 +401,54 @@ func TestEvaluateHand_OrderingMonotonicByCategory(t *testing.T) {
 
 	prev := -1
 	for i, cards := range samples {
-		score := EvaluateHand(cards)
-		require.Equal(t, HighCard+HandRank(i), handRank(score), "sample %d category mismatch", i)
+		score := evaluateHand(cards)
+		require.Equal(t, rankHighCard+handRank(i), rankOf(score), "sample %d category mismatch", i)
 		assert.Greater(t, score, prev, "category %d should outrank previous", i)
 		prev = score
 	}
+}
+
+// Two quads in one hand can only happen at eight cards or more, which is beyond a
+// hold'em showdown but reachable through the evaluator itself. rankCounts used to
+// overwrite the quad rank as it counted down, keeping the lower of the two.
+func TestClassifyHand_TwoQuadsKeepsTheHigher(t *testing.T) {
+	t.Parallel()
+
+	cards := []deck.Card{
+		card(deck.Ace, deck.Spades), card(deck.Ace, deck.Hearts),
+		card(deck.Ace, deck.Diamonds), card(deck.Ace, deck.Clubs),
+		card(deck.Two, deck.Spades), card(deck.Two, deck.Hearts),
+		card(deck.Two, deck.Diamonds), card(deck.Two, deck.Clubs),
+	}
+
+	hv := classifyHand(cards)
+
+	assert.Equal(t, rankFourOfAKind, hv.Rank)
+	assert.Equal(t, [5]int{14, 14, 14, 14, 2}, hv.Kickers, "quad aces with a deuce kicker")
+	assert.Equal(t, bestOfFive(cards), hv.score())
+}
+
+// Two suits reach five only at ten cards or more. bestFlush picked the strongest
+// flush and looked for a straight in that suit alone, so a straight flush sitting in
+// the weaker suit was scored as a plain flush.
+func TestClassifyHand_StraightFlushInTheWeakerSuit(t *testing.T) {
+	t.Parallel()
+
+	cards := []deck.Card{
+		// Spades hold the higher flush, ace-high, but no straight.
+		card(deck.Ace, deck.Spades), card(deck.King, deck.Spades),
+		card(deck.Queen, deck.Spades), card(deck.Nine, deck.Spades),
+		card(deck.Two, deck.Spades),
+		// Hearts hold nine-high, and a straight flush.
+		card(deck.Nine, deck.Hearts), card(deck.Eight, deck.Hearts),
+		card(deck.Seven, deck.Hearts), card(deck.Six, deck.Hearts),
+		card(deck.Five, deck.Hearts),
+	}
+
+	hv := classifyHand(cards)
+
+	assert.Equal(t, rankStraightFlush, hv.Rank)
+	assert.Equal(t, 9, hv.Kickers[0], "nine-high straight flush")
 }
 
 func FuzzEvaluateHand(f *testing.F) {
@@ -415,23 +458,25 @@ func FuzzEvaluateHand(f *testing.F) {
 	f.Fuzz(func(t *testing.T, r0, s0, r1, s1, r2, s2, r3, s3, r4, s4 uint8) {
 		mk := func(r, s uint8) deck.Card {
 			return deck.Card{
-				Rank: deck.Rank(r % 13), // Ace..King
-				Suit: deck.Suit(s % 4),  // Spades..Clubs
+				// Standard ranks are 1-based, so the offset matters: without it the
+				// generator produced rank 0 - a card no deck holds - and never a King.
+				Rank: deck.Rank(r%13) + deck.Ace, // Ace..King
+				Suit: deck.Suit(s%4) + deck.Spades,
 			}
 		}
 		cards := []deck.Card{mk(r0, s0), mk(r1, s1), mk(r2, s2), mk(r3, s3), mk(r4, s4)}
-		score := EvaluateHand(cards)
+		score := evaluateHand(cards)
 		if score < 0 {
 			t.Fatalf("negative score: %d", score)
 		}
-		hr := handRank(score)
-		if hr < HighCard || hr > StraightFlush {
+		hr := rankOf(score)
+		if hr < rankHighCard || hr > rankStraightFlush {
 			t.Fatalf("hand rank out of range: %d score=%#x cards=%v", hr, score, cards)
 		}
 	})
 }
 
-// EvaluateHand runs once per player per showdown, over 7 cards, and allocates on
+// evaluateHand runs once per player per showdown, over 7 cards, and allocates on
 // every call - it is the hottest function in the rules layer.
 func BenchmarkEvaluateHand(b *testing.B) {
 	sevenCards := []deck.Card{
@@ -444,7 +489,7 @@ func BenchmarkEvaluateHand(b *testing.B) {
 	b.Run("straight-flush-7", func(b *testing.B) {
 		b.ReportAllocs()
 		for b.Loop() {
-			_ = EvaluateHand(sevenCards)
+			_ = evaluateHand(sevenCards)
 		}
 	})
 
@@ -457,7 +502,7 @@ func BenchmarkEvaluateHand(b *testing.B) {
 		}
 		b.ReportAllocs()
 		for b.Loop() {
-			_ = EvaluateHand(highCard)
+			_ = evaluateHand(highCard)
 		}
 	})
 }
@@ -482,16 +527,52 @@ func FuzzClassifyHand(f *testing.F) {
 			})
 		}
 
-		got := EvaluateHand(cards)
+		got := evaluateHand(cards)
 		// Determinism is the property worth pinning: bestFlush once walked a map and
-		// returned a different flush between runs for identical input. Asserting
-		// Score() equals EvaluateHand() would just restate EvaluateHand's body.
-		assert.Equal(t, got, EvaluateHand(cards), "EvaluateHand must be deterministic")
+		// returned a different flush between runs for identical input.
+		assert.Equal(t, got, evaluateHand(cards), "evaluateHand must be deterministic")
 
 		if len(cards) < 5 {
 			assert.Zero(t, got, "fewer than five cards has no hand value")
-		} else {
-			assert.Positive(t, got, "five or more cards always classify to something")
+			return
+		}
+		assert.Positive(t, got, "five or more cards always classify to something")
+
+		// The real oracle: the classifier claims the best five-card hand, so it has
+		// to agree with actually trying all of them. Bounded because the subset count
+		// explodes, and skipped on duplicate cards - a rank appearing five times is
+		// not a hand any deck can deal, and there quads legitimately go undetected.
+		if len(cards) <= 9 && !hasDuplicateCard(cards) {
+			assert.Equal(t, bestOfFive(cards), got, "classifier disagrees with brute force")
 		}
 	})
+}
+
+func hasDuplicateCard(cards []deck.Card) bool {
+	seen := make(map[deck.Card]bool, len(cards))
+	for _, c := range cards {
+		if seen[c] {
+			return true
+		}
+		seen[c] = true
+	}
+	return false
+}
+
+// bestOfFive is the brute-force reference: the highest score over every five-card
+// subset. Too slow for the evaluator itself, fast enough to check it.
+func bestOfFive(cards []deck.Card) int {
+	best := 0
+	var pick func(start int, chosen []deck.Card)
+	pick = func(start int, chosen []deck.Card) {
+		if len(chosen) == 5 {
+			best = max(best, evaluateHand(chosen))
+			return
+		}
+		for i := start; i < len(cards); i++ {
+			pick(i+1, append(chosen, cards[i]))
+		}
+	}
+	pick(0, make([]deck.Card, 0, 5))
+	return best
 }

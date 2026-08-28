@@ -7,19 +7,19 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
-type HandRank int
+type handRank int
 
 const (
-	RankUnknown HandRank = iota
-	HighCard
-	Pair
-	TwoPair
-	ThreeOfAKind
-	Straight
-	Flush
-	FullHouse
-	FourOfAKind
-	StraightFlush
+	rankUnknown handRank = iota
+	rankHighCard
+	rankPair
+	rankTwoPair
+	rankThreeOfAKind
+	rankStraight
+	rankFlush
+	rankFullHouse
+	rankFourOfAKind
+	rankStraightFlush
 )
 
 const (
@@ -30,15 +30,15 @@ const (
 	kickerShift3  = 4
 )
 
-// HandValue is a classified poker hand with kickers for tiebreaking.
-type HandValue struct {
-	Rank    HandRank
+// handValue is a classified poker hand with kickers for tiebreaking.
+type handValue struct {
+	Rank    handRank
 	Kickers [5]int // descending importance; unused slots are 0
 }
 
-// Score packs Rank and Kickers into a comparable integer.
-// Encoding: (HandRank << 20) | (k0 << 16) | (k1 << 12) | (k2 << 8) | (k3 << 4) | k4.
-func (h HandValue) Score() int {
+// score packs Rank and Kickers into a comparable integer.
+// Encoding: (handRank << 20) | (k0 << 16) | (k1 << 12) | (k2 << 8) | (k3 << 4) | k4.
+func (h handValue) score() int {
 	return (int(h.Rank) << handRankShift) |
 		(h.Kickers[0] << kickerShift0) |
 		(h.Kickers[1] << kickerShift1) |
@@ -47,12 +47,9 @@ func (h HandValue) Score() int {
 		h.Kickers[4]
 }
 
-func handValue(rank HandRank, kickers ...int) HandValue {
-	var hv HandValue
-	hv.Rank = rank
-	for i := 0; i < len(kickers) && i < 5; i++ {
-		hv.Kickers[i] = kickers[i]
-	}
+func newHandValue(rank handRank, kickers ...int) handValue {
+	hv := handValue{Rank: rank}
+	copy(hv.Kickers[:], kickers)
 	return hv
 }
 
@@ -61,20 +58,21 @@ type rankedCard struct {
 	suit deck.Suit
 }
 
-// EvaluateHand evaluates up to 7 cards and returns a score that can be directly compared.
-func EvaluateHand(cards []deck.Card) int {
-	return ClassifyHand(cards).Score()
+// evaluateHand evaluates up to 7 cards and returns a score that can be directly compared.
+func evaluateHand(cards []deck.Card) int {
+	return classifyHand(cards).score()
 }
 
-// ClassifyHand returns the best 5-card hand value from the given cards.
-// Hands with fewer than 5 cards yield a zero HandValue (Score 0).
-func ClassifyHand(cards []deck.Card) HandValue {
+// classifyHand returns the best 5-card hand value from the given cards.
+// Hands with fewer than 5 cards yield a zero handValue (score 0).
+func classifyHand(cards []deck.Card) handValue {
 	if len(cards) < 5 {
-		return HandValue{}
+		return handValue{}
 	}
 	hand := normalizeCards(cards)
 	quad, trip, pairs := rankCounts(hand)
-	return classify(hand, quad, trip, pairs, bestFlush(hand))
+	flushRanks, straightFlushHigh := bestFlush(hand)
+	return classify(hand, quad, trip, pairs, flushRanks, straightFlushHigh)
 }
 
 func normalizeCards(cards []deck.Card) []rankedCard {
@@ -93,10 +91,14 @@ func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
 	for _, c := range hand {
 		counts[c.rank]++
 	}
+	// Ranks descend, so the first quad and the first trip found are the highest ones;
+	// a second trip is only ever worth a pair, and a second quad nothing at all.
 	for r := 14; r >= 2; r-- {
 		switch counts[r] {
 		case 4:
-			quadRank = r
+			if quadRank == 0 {
+				quadRank = r
+			}
 		case 3:
 			if tripRank == 0 {
 				tripRank = r
@@ -110,18 +112,22 @@ func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
 	return quadRank, tripRank, pairs
 }
 
-// bestFlush returns the ranks (desc) of the strongest flush, or nil if there is none.
+// bestFlush returns the ranks (desc) of the strongest flush and the high card of the
+// strongest straight flush, or nil and 0 when there is none.
+//
+// Every flush suit is checked for a straight flush, not only the strongest flush: at
+// ten or more cards two suits can both reach five, and the weaker flush is the one
+// that may hold the straight.
 //
 // Suits are walked in a fixed order rather than taken from map iteration: on a hand
 // large enough for two suits to reach five, ranging the map would score identical
 // input differently between runs. NoSuit is absent because it marks a joker.
-func bestFlush(hand []rankedCard) []int {
+func bestFlush(hand []rankedCard) (best []int, straightFlushHigh int) {
 	suits := make(map[deck.Suit][]int, 4)
 	for _, c := range hand {
 		suits[c.suit] = append(suits[c.suit], c.rank)
 	}
 
-	var best []int
 	for _, suit := range []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs} {
 		ranks := suits[suit]
 		if len(ranks) < 5 {
@@ -130,11 +136,12 @@ func bestFlush(hand []rankedCard) []int {
 		if best == nil || slices.Compare(ranks[:5], best[:5]) > 0 {
 			best = ranks
 		}
+		straightFlushHigh = max(straightFlushHigh, straightHigh(ranks))
 	}
-	return best
+	return best, straightFlushHigh
 }
 
-func allRanks(hand []rankedCard) []int {
+func ranksOf(hand []rankedCard) []int {
 	ranks := make([]int, len(hand))
 	for i, c := range hand {
 		ranks[i] = c.rank
@@ -145,14 +152,7 @@ func allRanks(hand []rankedCard) []int {
 // straightHigh returns the high card of the best straight in ranks, or 0.
 // Wheel (A-2-3-4-5) returns 5.
 func straightHigh(ranks []int) int {
-	unique := make([]int, 0, len(ranks))
-	last := -1
-	for _, r := range ranks {
-		if r != last {
-			unique = append(unique, r)
-			last = r
-		}
-	}
+	unique := slices.Compact(slices.Clone(ranks))
 	if len(unique) < 5 {
 		return 0
 	}
@@ -198,36 +198,33 @@ func kickers(hand []rankedCard, exclude []int, count int) []int {
 	return k
 }
 
-func classify(hand []rankedCard, quadRank, tripRank int, pairs []int, flushRanks []int) HandValue {
-	straightFlushHigh := 0
-	if flushRanks != nil {
-		straightFlushHigh = straightHigh(flushRanks)
-	}
-	straight := straightHigh(allRanks(hand))
+func classify(hand []rankedCard, quadRank, tripRank int, pairs, flushRanks []int, straightFlushHigh int) handValue {
+	straight := straightHigh(ranksOf(hand))
 
 	switch {
 	case straightFlushHigh > 0:
-		return handValue(StraightFlush, straightFlushHigh)
+		return newHandValue(rankStraightFlush, straightFlushHigh)
 	case quadRank > 0:
 		k := kickers(hand, []int{quadRank}, 1)
-		return handValue(FourOfAKind, quadRank, quadRank, quadRank, quadRank, k[0])
+		return newHandValue(rankFourOfAKind, quadRank, quadRank, quadRank, quadRank, k[0])
 	case tripRank > 0 && len(pairs) > 0:
-		return handValue(FullHouse, tripRank, tripRank, tripRank, pairs[0], pairs[0])
+		return newHandValue(rankFullHouse, tripRank, tripRank, tripRank, pairs[0], pairs[0])
 	case flushRanks != nil:
-		return handValue(Flush, flushRanks[0], flushRanks[1], flushRanks[2], flushRanks[3], flushRanks[4])
+		return newHandValue(rankFlush,
+			flushRanks[0], flushRanks[1], flushRanks[2], flushRanks[3], flushRanks[4])
 	case straight > 0:
-		return handValue(Straight, straight)
+		return newHandValue(rankStraight, straight)
 	case tripRank > 0:
 		k := kickers(hand, []int{tripRank}, 2)
-		return handValue(ThreeOfAKind, tripRank, tripRank, tripRank, k[0], k[1])
+		return newHandValue(rankThreeOfAKind, tripRank, tripRank, tripRank, k[0], k[1])
 	case len(pairs) >= 2:
 		k := kickers(hand, []int{pairs[0], pairs[1]}, 1)
-		return handValue(TwoPair, pairs[0], pairs[0], pairs[1], pairs[1], k[0])
+		return newHandValue(rankTwoPair, pairs[0], pairs[0], pairs[1], pairs[1], k[0])
 	case len(pairs) == 1:
 		k := kickers(hand, []int{pairs[0]}, 3)
-		return handValue(Pair, pairs[0], pairs[0], k[0], k[1], k[2])
+		return newHandValue(rankPair, pairs[0], pairs[0], k[0], k[1], k[2])
 	default:
 		k := kickers(hand, nil, 5)
-		return handValue(HighCard, k[0], k[1], k[2], k[3], k[4])
+		return newHandValue(rankHighCard, k[0], k[1], k[2], k[3], k[4])
 	}
 }

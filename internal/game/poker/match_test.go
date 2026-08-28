@@ -66,6 +66,8 @@ func TestStandings_LeavingForfeitsTheMatchButNotTheChipsWon(t *testing.T) {
 		extra.PlayerChips["p1"] = 700
 		extra.PlayerChips["p2"] = 1600
 		extra.PlayerChips["p3"] = 700
+		// Rewriting stacks mid-hand moves the conservation baseline with them.
+		extra.handStartChips = chipsInPlay(extra)
 	})
 
 	engine.RemovePlayer("p2")

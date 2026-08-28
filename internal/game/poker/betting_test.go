@@ -247,9 +247,10 @@ func TestSettleAndAdvance_RunsOutTheBoardWhenBettingCannotContinue(t *testing.T)
 	})
 }
 
-// A hand cannot be won by somebody who folded, however good their cards were, and a hand
-// nobody can classify still has to name a winner or the pot is stranded.
-func TestShowdownWinners(t *testing.T) {
+// The winners a hand announces are the ones awardPots actually paid. A hand cannot be
+// won by somebody who folded, however good their cards were, and a hand nobody can
+// classify still has to name a winner or the pot is stranded.
+func TestAwardPots_NamesEveryPlayerItPaid(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a folded player never wins", func(t *testing.T) {
@@ -258,9 +259,10 @@ func TestShowdownWinners(t *testing.T) {
 			seat{id: "a", chips: 900, folded: true},
 			seat{id: "b", chips: 900},
 		)
+		extra.Pots = []Pot{{Amount: 200, Eligible: []string{"b"}}}
 		scores := map[string]int{"a": 9000, "b": 10}
 
-		winners := showdownWinners(state, extra, scores)
+		winners := awardPots(extra, contenders(state, extra), scores)
 
 		require.Len(t, winners, 1)
 		assert.Equal(t, "b", winners[0].ID, "the best hand at the table folded it")
@@ -273,9 +275,10 @@ func TestShowdownWinners(t *testing.T) {
 			seat{id: "b", chips: 900},
 			seat{id: "c", chips: 900},
 		)
+		extra.Pots = []Pot{{Amount: 300, Eligible: []string{"a", "b", "c"}}}
 		scores := map[string]int{"a": 500, "b": 500, "c": 10}
 
-		winners := showdownWinners(state, extra, scores)
+		winners := awardPots(extra, contenders(state, extra), scores)
 
 		require.Len(t, winners, 2, "a split pot names all co-winners")
 		assert.Equal(t, "a", winners[0].ID)
@@ -290,9 +293,34 @@ func TestShowdownWinners(t *testing.T) {
 			seat{id: "a", chips: 900},
 			seat{id: "b", chips: 900},
 		)
+		extra.Pots = []Pot{{Amount: 200, Eligible: []string{"a", "b"}}}
 		scores := map[string]int{"a": 0, "b": 0}
 
-		assert.Len(t, showdownWinners(state, extra, scores), 2)
+		assert.Len(t, awardPots(extra, contenders(state, extra), scores), 2)
+	})
+
+	// The best hand at the table can be a short stack who only paid into the main
+	// pot. Naming them as the hand's winner would contradict the side pot.
+	t.Run("a side pot names its own winner", func(t *testing.T) {
+		t.Parallel()
+		state, extra := seatedRound(0,
+			seat{id: "short", chips: 0, allIn: true},
+			seat{id: "mid", chips: 0, allIn: true},
+			seat{id: "big", chips: 0, allIn: true},
+		)
+		extra.Pots = []Pot{
+			{Amount: 300, Eligible: []string{"big", "mid", "short"}},
+			{Amount: 400, Eligible: []string{"big", "mid"}},
+		}
+		scores := map[string]int{"short": 9000, "mid": 500, "big": 10}
+
+		winners := awardPots(extra, contenders(state, extra), scores)
+
+		require.Len(t, winners, 2)
+		assert.Equal(t, "short", winners[0].ID, "main pot first")
+		assert.Equal(t, "mid", winners[1].ID, "the side pot went somewhere else")
+		assert.Equal(t, uint(300), extra.PlayerChips["short"])
+		assert.Equal(t, uint(400), extra.PlayerChips["mid"])
 	})
 }
 
@@ -308,7 +336,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state.Players = append(state.Players, &game.Player{ID: "c"})
 		extra.PlayerChips["c"] = 0
 
-		pots := buildSidePots(state, extra)
+		pots := buildSidePots(state, extra, contenders(state, extra))
 
 		assert.Empty(t, pots, "no eligible contributor means no pot layer")
 		assert.Equal(t, uint(200), extra.PlayerChips["c"], "the dead money still gets awarded")
@@ -319,7 +347,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100}, "a", "b")
 
 		var pots []Pot
-		require.NotPanics(t, func() { pots = buildSidePots(state, extra) })
+		require.NotPanics(t, func() { pots = buildSidePots(state, extra, contenders(state, extra)) })
 
 		assert.Empty(t, pots)
 		assert.Zero(t, extra.PlayerChips["a"])
@@ -331,7 +359,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 101, "b": 0, "c": 0}, "a")
 		extra.PlayerChips["b"], extra.PlayerChips["c"] = 0, 0
 
-		require.NotPanics(t, func() { buildSidePots(state, extra) })
+		require.NotPanics(t, func() { buildSidePots(state, extra, contenders(state, extra)) })
 
 		assert.Equal(t, uint(101), extra.PlayerChips["b"]+extra.PlayerChips["c"],
 			"the odd chip is not allowed to vanish")
@@ -347,7 +375,7 @@ func TestAwardPots(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100, "c": 100})
 		extra.Pots = []Pot{{Amount: 300, Eligible: []string{"a", "b", "c"}}}
 
-		awardPots(state, extra, map[string]int{"a": 500, "b": 500, "c": 10})
+		awardPots(extra, contenders(state, extra), map[string]int{"a": 500, "b": 500, "c": 10})
 
 		assert.Equal(t, uint(150), extra.PlayerChips["a"])
 		assert.Equal(t, uint(150), extra.PlayerChips["b"])
@@ -359,7 +387,7 @@ func TestAwardPots(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100})
 		extra.Pots = []Pot{{Amount: 200, Eligible: []string{"a", "b"}}}
 
-		awardPots(state, extra, map[string]int{"a": 10, "b": 500})
+		awardPots(extra, contenders(state, extra), map[string]int{"a": 10, "b": 500})
 
 		assert.Zero(t, extra.PlayerChips["a"])
 		assert.Equal(t, uint(200), extra.PlayerChips["b"])
@@ -370,7 +398,7 @@ func TestAwardPots(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100})
 		extra.Pots = []Pot{{Amount: 200, Eligible: []string{"a", "b"}}}
 
-		awardPots(state, extra, map[string]int{"a": 0, "b": 0})
+		awardPots(extra, contenders(state, extra), map[string]int{"a": 0, "b": 0})
 
 		assert.Equal(t, uint(200), extra.PlayerChips["a"]+extra.PlayerChips["b"],
 			"a pot must never be left unawarded")
@@ -515,16 +543,17 @@ func TestApplyAction_AllInCommitsTheWholeStack(t *testing.T) {
 	}
 }
 
-// A call moves exactly the difference between what a player has in and what is owed: no
+// Committing to a target moves exactly the difference between what a player has in and
+// what is owed: no
 // more (that would be a raise nobody asked for) and no less.
-func TestCallTo_MovesExactlyWhatIsOwed(t *testing.T) {
+func TestCommitTo_MovesExactlyWhatIsOwed(t *testing.T) {
 	t.Parallel()
 
 	t.Run("with chips to spare", func(t *testing.T) {
 		t.Parallel()
 		_, extra := seatedRound(200, seat{id: "a", chips: 500, bet: 50})
 
-		callTo(extra, &game.Player{ID: "a"}, 200)
+		commitTo(extra, &game.Player{ID: "a"}, 200)
 
 		assert.Equal(t, uint(200), extra.PlayerBets["a"], "the bet lands on the amount owed")
 		assert.Equal(t, uint(350), extra.PlayerChips["a"], "only the difference leaves the stack")
@@ -536,7 +565,7 @@ func TestCallTo_MovesExactlyWhatIsOwed(t *testing.T) {
 		t.Parallel()
 		_, extra := seatedRound(500, seat{id: "a", chips: 100, bet: 50})
 
-		callTo(extra, &game.Player{ID: "a"}, 500)
+		commitTo(extra, &game.Player{ID: "a"}, 500)
 
 		assert.Equal(t, uint(150), extra.PlayerBets["a"])
 		assert.Zero(t, extra.PlayerChips["a"])
@@ -745,7 +774,7 @@ func TestRules_TurnTimeout_DealGetsALongerClock(t *testing.T) {
 		{
 			name:   "between hands the dealer gets a minute",
 			mutate: func(e *State) { e.HandComplete = true },
-			want:   DealTurnTimeout,
+			want:   dealTurnTimeout,
 		},
 		{
 			name:   "a finished match needs no deal clock",
