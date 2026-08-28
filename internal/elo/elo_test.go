@@ -1,7 +1,9 @@
 package elo
 
 import (
+	"bytes"
 	"fmt"
+	"log/slog"
 	"math"
 	"strconv"
 	"testing"
@@ -159,8 +161,8 @@ func TestExpectedScore(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := ExpectedScore(tt.ratingA, tt.ratingB)
-			assert.InDelta(t, tt.expected, got, 1e-4, "ExpectedScore() mismatch")
+			got := expectedScore(tt.ratingA, tt.ratingB)
+			assert.InDelta(t, tt.expected, got, 1e-4, "expectedScore() mismatch")
 		})
 	}
 }
@@ -474,4 +476,32 @@ func TestCalculate_TiesAreOrderIndependent(t *testing.T) {
 		net += got[p.ID] - p.Rating
 	}
 	assert.InDelta(t, 0.0, net, 1e-9, "a reordered draw must still only transfer rating")
+}
+
+// Calculate keys its result by player ID, so two seats sharing one collapse into a
+// single entry and one of the two rating changes is thrown away. The signature has
+// nowhere to report that, and the repository path builds the slice from a set of
+// accounts, so this pins the behaviour rather than defending against it: if the
+// collapsing ever becomes reachable, this is the test that has to change with it.
+//
+//nolint:paralleltest // slog.SetDefault is process-wide
+func TestCalculate_DuplicateIDsCollapse(t *testing.T) {
+	var logged bytes.Buffer
+	original := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelError})))
+	t.Cleanup(func() { slog.SetDefault(original) })
+
+	players := []Player{
+		{ID: "dup", Rating: 1500, Place: 1},
+		{ID: "other", Rating: 1500, Place: 2},
+		{ID: "dup", Rating: 1500, Place: 3},
+	}
+
+	got := Calculate(players)
+
+	assert.Len(t, got, 2, "three seats, two ids: one result is lost")
+	assert.Contains(t, got, "dup")
+	assert.Contains(t, got, "other")
+	assert.Contains(t, logged.String(), "duplicate player id",
+		"a lost rating change has to be visible somewhere")
 }

@@ -37,13 +37,20 @@ type Player struct {
 	Place  int
 }
 
-func ExpectedScore(ratingA, ratingB float64) float64 {
+// expectedScore is the classic Elo win expectancy of A against B.
+func expectedScore(ratingA, ratingB float64) float64 {
 	return 1.0 / (1.0 + math.Pow(10.0, (ratingB-ratingA)/400.0))
 }
 
 // Calculate applies the Simple Multiplayer Elo (SME) algorithm.
 // https://www.tckerrigan.com/Misc/Multiplayer_Elo/
 // The player slice MUST be sorted by performance, from 1st place (index 0) to last place (index n-1).
+//
+// IDs must be distinct. Two seats sharing one ID are still played against each other
+// - the transfer between them happens - but the results collapse into a single map
+// entry and the last one wins, so one of the two rating changes is lost. The return
+// shape has nowhere to report that, so it is logged loudly instead; the caller builds
+// the slice from a set of accounts and a repeat is a bug there.
 func Calculate(players []Player) map[string]float64 {
 	n := len(players)
 	newRatings := make(map[string]float64, n)
@@ -71,6 +78,10 @@ func Calculate(players []Player) map[string]float64 {
 	}
 
 	for i, player := range ordered {
+		if _, duplicate := newRatings[player.ID]; duplicate {
+			slog.Error("duplicate player id in an elo calculation; one rating change is discarded",
+				"player_id", player.ID, "players", len(ordered))
+		}
 		newRatings[player.ID] = ClampRating(player.Rating + deltas[i])
 	}
 
@@ -100,7 +111,7 @@ func rawTransfer(upper, lower Player) float64 {
 	if drew(upper, lower) {
 		score = 0.5
 	}
-	return KFactor * (score - ExpectedScore(upper.Rating, lower.Rating))
+	return KFactor * (score - expectedScore(upper.Rating, lower.Rating))
 }
 
 func capTransfer(moved, gainsRating, losesRating float64) float64 {
