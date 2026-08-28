@@ -70,6 +70,8 @@ Rules opt in: no `TurnTimeoutHandler` means no clock. Poker checks when free, fo
 
 The game view quits its bubbletea program on its own `EventPlayerIdle`, which is what ends the ssh session through the ordinary `releaseSession` path - the engine never reaches into the session layer.
 
+A dropped session calls `Manager.DisconnectPlayer`, not `LeaveLobby`: a mid-game seat survives for `DisconnectGrace` (90s, with the engine auto-playing and its idle removal as the backstop) so a reconnect - `Manager.ResumePlayer`, wired into the TUI's initial route - resumes the match instead of forfeiting it. A waiting-lobby seat and any seat during shutdown still leave immediately.
+
 ### BoundEngine, not Engine, in views
 
 `game.Bind(engine, playerID)` gives a session-scoped handle that only submits as that player and only returns that player's hand. TUI views use `BoundEngine` / `Session.Sync` (one `Frame` lock hold: snapshot, own hand, clock and `Extra` cannot describe different moments); `Engine.WithState` and `SubmitAction` are for the server side.
