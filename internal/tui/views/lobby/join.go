@@ -46,6 +46,12 @@ type joinModel struct {
 	filter  lobby.BrowseFilter
 	// games is the set of games with a table right now, for cycling the filter.
 	games []string
+
+	// lastKey/lastView memoize the rendered frame. The browse tick re-renders this
+	// screen every 2s for every player parked on it, and a frame costs ~6.7k
+	// allocations - so identical state returns the previous string instead.
+	lastKey  string
+	lastView string
 }
 
 func NewJoin(global router.GlobalContext) tea.Model {
@@ -314,6 +320,9 @@ func (m *joinModel) renderList() string {
 }
 
 func (m *joinModel) View() tea.View {
+	if key := m.renderKey(); key == m.lastKey && m.lastView != "" {
+		return tea.NewView(m.lastView)
+	}
 	codeInputStr := "Or press 'c' to enter a private lobby code:"
 	if m.writingCode {
 		codeInputStr = "Entering private lobby code (press ESC to cancel):"
@@ -333,6 +342,22 @@ func (m *joinModel) View() tea.View {
 	}
 
 	actions := []string{"c - Enter Code", "g - Game", "m - Mode", "o - Seats"}
-	return tea.NewView(views.RenderScreen(m.global, "Join Game", actions,
-		func(int) string { return content }))
+	rendered := views.RenderScreen(m.global, "Join Game", actions,
+		func(int) string { return content })
+	m.lastKey, m.lastView = m.renderKey(), rendered
+	return tea.NewView(rendered)
+}
+
+// renderKey is every input View reads, cheap enough to build per frame. The entry
+// fingerprint covers what the list renders (code, players, game), so a lobby
+// filling up or closing invalidates the memo even when the count does not change.
+func (m *joinModel) renderKey() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%dx%d|%v|%d|%v|%+v|%v|%s",
+		m.global.Width, m.global.Height, m.global.Theme.Dark,
+		m.cursor, m.writingCode, m.filter, m.err, m.textInput.View())
+	for _, e := range m.entries {
+		fmt.Fprintf(&b, "|%s:%s:%d/%d:%v:%d:%d", e.Code, e.GameName, e.Players, e.MaxPlayers, e.Ranked, e.AvgElo, e.EloDelta)
+	}
+	return b.String()
 }
