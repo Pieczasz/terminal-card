@@ -46,43 +46,54 @@ func SplitZones[T any](opponents []T) TableZones[T] {
 	}
 }
 
-// OpponentEdges is the opponents of a table already rendered, one string per edge.
-type OpponentEdges struct {
-	Top   string
-	Left  string
-	Right string
-}
-
-// artSeatLimit is how many opponents can be drawn with their card backs before
-// the table stops fitting: an Uno hand runs past twenty cards, and four stacks
-// that wide across the top are wider than any terminal.
+// artSeatLimit is how many opponents can be drawn with their card backs before the
+// table stops reading as a table: past this the seats are down to a name and a count
+// whatever the terminal size, because five stacks of art have nothing to say that the
+// five counts do not.
 const artSeatLimit = 3
 
-// RenderOpponentEdges lays every opponent around the table: a row across the top
-// and a stack down each side. compact says the terminal is too short for the card
-// art; a crowded table drops it too, and then the hand count carries what a player
-// actually reads off somebody else's seat.
-func RenderOpponentEdges(t styles.Theme, base BaseState, compact bool) OpponentEdges {
+// RenderOpponentTop is the row of opponents across the top edge, laid out in at most
+// width columns.
+func RenderOpponentTop(t styles.Theme, base BaseState, width int, compact bool) string {
 	zones := SplitZones(base.Opponents)
-	minimal := compact || len(base.Opponents) > artSeatLimit
-
-	return OpponentEdges{
-		Top:   renderOpponentRow(t, base, zones.Top, minimal),
-		Left:  renderOpponentStack(t, base, zones.Left, OrientationLeft, minimal),
-		Right: renderOpponentStack(t, base, zones.Right, OrientationRight, minimal),
-	}
-}
-
-func renderOpponentRow(t styles.Theme, base BaseState, seats []game.PlayerSnapshot, minimal bool) string {
-	if len(seats) == 0 {
+	if len(zones.Top) == 0 {
 		return ""
 	}
 	pad := lg.NewStyle().Padding(0, 1)
-	parts := make([]string, 0, len(seats))
-	for _, o := range seats {
-		parts = append(parts, pad.Render(renderOpponentSeat(t, base, o, OrientationTop, minimal)))
+	// Each seat gets an equal share of the width, less the padding around it.
+	budget := seatBudget(width, len(zones.Top)) - 2
+
+	parts := make([]string, 0, len(zones.Top))
+	minimal := minimalSeats(base, compact)
+	for _, o := range zones.Top {
+		parts = append(parts, pad.Render(renderOpponentSeat(t, base, o, OrientationTop, budget, minimal)))
 	}
-	return lg.JoinHorizontal(lg.Bottom, parts...)
+	// Names are not budgeted the way the art is - a seat is drawn as wide as its
+	// player named themselves - so the row is cut to the width it was given.
+	return styles.Clamp(width, 0, lg.JoinHorizontal(lg.Bottom, parts...))
+}
+
+// RenderOpponentSides is the two stacks of opponents down the left and right edges,
+// each fitting into at most height rows - which is the middle band's height, not the
+// terminal's, since that is all the stacks have to sit in.
+func RenderOpponentSides(t styles.Theme, base BaseState, height int, compact bool) (left, right string) {
+	zones := SplitZones(base.Opponents)
+	minimal := minimalSeats(base, compact)
+	return renderOpponentStack(t, base, zones.Left, OrientationLeft, seatBudget(height, len(zones.Left)), minimal),
+		renderOpponentStack(t, base, zones.Right, OrientationRight, seatBudget(height, len(zones.Right)), minimal)
+}
+
+// minimalSeats reports whether the table is too crowded, or the terminal too small,
+// for anybody's card art.
+func minimalSeats(base BaseState, compact bool) bool {
+	return compact || len(base.Opponents) > artSeatLimit
+}
+
+func seatBudget(total, seats int) int {
+	if seats <= 0 {
+		return 0
+	}
+	return max(total/seats, 0)
 }
 
 func renderOpponentStack(
@@ -90,6 +101,7 @@ func renderOpponentStack(
 	base BaseState,
 	seats []game.PlayerSnapshot,
 	orientation Orientation,
+	budget int,
 	minimal bool,
 ) string {
 	if len(seats) == 0 {
@@ -97,9 +109,20 @@ func renderOpponentStack(
 	}
 	parts := make([]string, 0, len(seats))
 	for _, o := range seats {
-		parts = append(parts, renderOpponentSeat(t, base, o, orientation, minimal))
+		// Two of the seat's rows go to its name and hand count.
+		parts = append(parts, renderOpponentSeat(t, base, o, orientation, budget-2, minimal))
 	}
 	return lg.JoinVertical(lg.Center, parts...)
+}
+
+// seatArtFloor is the smallest budget one card of art fits in, on the axis the
+// orientation stacks along. Below it the seat is drawn minimally: art cut down to
+// nothing reads as a bug, a name and a count reads as a small terminal.
+func seatArtFloor(orientation Orientation) int {
+	if orientation == OrientationTop {
+		return 1 + topCardsFrame
+	}
+	return 1 + sideCardsFrame
 }
 
 func renderOpponentSeat(
@@ -107,11 +130,12 @@ func renderOpponentSeat(
 	base BaseState,
 	o game.PlayerSnapshot,
 	orientation Orientation,
+	budget int,
 	minimal bool,
 ) string {
 	isTurn := base.CurrentPlayerID == o.ID
-	if minimal {
+	if minimal || budget < seatArtFloor(orientation) {
 		return RenderOpponentMinimal(t, o, isTurn)
 	}
-	return RenderOpponent(t, o, isTurn, orientation, base.TurnRemaining)
+	return RenderOpponent(t, o, isTurn, orientation, base.TurnRemaining, budget)
 }

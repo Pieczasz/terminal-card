@@ -165,13 +165,13 @@ func TestNewSession_WithoutAUserStillBuildsAView(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, s.Bound)
 	assert.Nil(t, s.Events)
-	assert.NotPanics(t, func() { s.SyncBase() }, "an unbound view still renders")
+	assert.NotPanics(t, func() { s.Sync(nil) }, "an unbound view still renders")
 }
 
 func TestSession_SyncBase(t *testing.T) {
 	t.Parallel()
 	_, s := startedSession(t)
-	s.SyncBase()
+	s.Sync(nil)
 
 	assert.Equal(t, game.Playing, s.Base.Phase)
 	assert.NotEmpty(t, s.Base.Hand, "the bound seat sees its own hand")
@@ -187,10 +187,10 @@ func TestSession_SyncBase(t *testing.T) {
 func TestSession_SyncBase_PullsTheCursorBackIntoAShrinkingHand(t *testing.T) {
 	t.Parallel()
 	_, s := startedSession(t)
-	s.SyncBase()
+	s.Sync(nil)
 
 	s.Selected = len(s.Base.Hand) + 5
-	s.SyncBase()
+	s.Sync(nil)
 	assert.Equal(t, len(s.Base.Hand)-1, s.Selected)
 }
 
@@ -220,7 +220,7 @@ func TestSession_Leave(t *testing.T) {
 		t.Parallel()
 		engine, s := startedSession(t)
 		s.Global.User = nil
-		s.SyncBase()
+		s.Sync(nil)
 
 		msg := s.Leave()()
 
@@ -238,4 +238,46 @@ func TestSession_Leave(t *testing.T) {
 		msg := s.Leave()()
 		assert.Equal(t, router.RouteHome, msg.(router.ChangeViewMsg).ViewName)
 	})
+}
+
+// One Frame, one hold of the engine lock: the per-game state a view reads has to
+// describe the same moment as the hand and the turn it is rendered beside. Reads that
+// straddled a turn change put the highlight on one seat and the controls on another.
+func TestSyncBaseState_ReadsTheGameStateInTheSameHold(t *testing.T) {
+	t.Parallel()
+	_, s := startedSession(t)
+
+	var extraSuit deck.Suit
+	var extraSeen bool
+	// Nothing in here may reach back into the engine: the callback runs under the
+	// engine lock, which is the whole point of it being one hold.
+	s.Sync(func(extra any) {
+		var state *crazyeight.State
+		state, extraSeen = extra.(*crazyeight.State)
+		if extraSeen {
+			extraSuit = state.CurrentSuit
+		}
+	})
+
+	require.True(t, extraSeen, "the per-game state is handed to the caller")
+	assert.Equal(t, s.Base.TopDiscard.Suit, extraSuit,
+		"the snapshot and the per-game read describe the same deal")
+	assert.Equal(t, s.Base.CurrentPlayerID == s.Bound.PlayerID(), s.Base.MyTurn,
+		"MyTurn comes off the same snapshot as CurrentPlayerID")
+}
+
+// Opponents is the seats with the hero removed. Consumers branch on its length, so an
+// empty table and a solo table both have to be safe to render from.
+func TestSyncBaseState_OpponentsExcludeTheHero(t *testing.T) {
+	t.Parallel()
+
+	var unbound BaseState
+	assert.Empty(t, unbound.Opponents)
+
+	_, s := startedSession(t)
+	s.Sync(nil)
+	for _, opp := range s.Base.Opponents {
+		assert.NotEqual(t, s.Bound.PlayerID(), opp.ID)
+	}
+	assert.Len(t, s.Base.Seats, len(s.Base.Opponents)+1)
 }

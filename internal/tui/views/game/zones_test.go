@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
+	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -77,8 +78,9 @@ func TestRenderOpponentEdges_ShowsEverySeat(t *testing.T) {
 				})
 			}
 
-			edges := RenderOpponentEdges(theme, base, false)
-			rendered := stripANSI(strings.Join([]string{edges.Top, edges.Left, edges.Right}, "\n"))
+			left, right := RenderOpponentSides(theme, base, 40, false)
+			top := RenderOpponentTop(theme, base, 200, false)
+			rendered := stripANSI(strings.Join([]string{top, left, right}, "\n"))
 
 			for _, o := range base.Opponents {
 				assert.Containsf(t, rendered, o.Username, "%s is not on the table", o.Username)
@@ -103,11 +105,11 @@ func TestRenderOpponentEdges_MarksTheSeatOnTurn(t *testing.T) {
 		},
 	}
 
-	turn := RenderOpponentEdges(theme, base, false)
+	turnLeft, _ := RenderOpponentSides(theme, base, 40, false)
 	base.CurrentPlayerID = "p0"
-	other := RenderOpponentEdges(theme, base, false)
+	otherLeft, _ := RenderOpponentSides(theme, base, 40, false)
 
-	require.NotEqual(t, turn.Left, other.Left,
+	require.NotEqual(t, turnLeft, otherLeft,
 		"the highlight has to follow the player ID, not the name they share")
 }
 
@@ -125,4 +127,58 @@ func stripANSI(s string) string {
 		}
 	}
 	return out.String()
+}
+
+// The side stacks used to emit one row per card with no bound, so an Uno hand of
+// twenty-odd cards drew a seat taller than the terminal and pushed the hero's own hand
+// off the bottom. The hand count beside the art is what carries the truth once the
+// stack is cut short.
+func TestRenderOpponentSides_FitTheHeightTheyAreGiven(t *testing.T) {
+	t.Parallel()
+	theme := styles.NewTheme(true)
+
+	for _, seats := range []int{2, 3, 6} {
+		for _, handSize := range []int{1, 7, 25} {
+			for _, height := range []int{6, 12, 30} {
+				t.Run(fmt.Sprintf("seats=%d/hand=%d/height=%d", seats, handSize, height), func(t *testing.T) {
+					t.Parallel()
+
+					base := BaseState{Opponents: make([]game.PlayerSnapshot, 0, seats)}
+					for i := range seats {
+						base.Opponents = append(base.Opponents, game.PlayerSnapshot{
+							ID:       fmt.Sprintf("p%d", i),
+							Username: fmt.Sprintf("player%d", i),
+							HandSize: handSize,
+						})
+					}
+
+					left, right := RenderOpponentSides(theme, base, height, false)
+					for name, side := range map[string]string{"left": left, "right": right} {
+						if side == "" {
+							continue
+						}
+						assert.LessOrEqualf(t, lg.Height(side), height, "the %s stack is taller than its band", name)
+					}
+				})
+			}
+		}
+	}
+}
+
+// A budget too small for even one card is drawn as a name and a count, not as art cut
+// down to nothing.
+func TestRenderOpponentSeat_FallsBackToNamesWhenTheArtCannotFit(t *testing.T) {
+	t.Parallel()
+	theme := styles.NewTheme(true)
+
+	base := BaseState{Opponents: []game.PlayerSnapshot{
+		{ID: "p0", Username: "player0", HandSize: 5},
+		{ID: "p1", Username: "player1", HandSize: 5},
+	}}
+
+	left, _ := RenderOpponentSides(theme, base, 4, false)
+	rendered := stripANSI(left)
+	assert.Contains(t, rendered, "player0")
+	assert.Contains(t, rendered, "[5 cards]")
+	assert.NotContains(t, rendered, "░", "no half-drawn card backs")
 }

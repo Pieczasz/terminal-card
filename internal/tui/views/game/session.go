@@ -1,12 +1,14 @@
 package game
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
@@ -28,6 +30,10 @@ type Session struct {
 	Global router.GlobalContext
 	Bound  *game.BoundEngine
 	Events <-chan game.Event
+	// gameName labels the rejected-action metric. It is the display name the
+	// registry and db.Game.Name use, so the counter lines up with everything else
+	// recorded per game.
+	gameName string
 
 	Base BaseState
 	// Selected indexes Base.Hand and is clamped by SyncBase as the hand shrinks.
@@ -40,7 +46,7 @@ type Session struct {
 func NewSession(global router.GlobalContext, engine *game.Engine, gameName string) (Session, error) {
 	playerID := views.SessionPlayerID(global)
 
-	s := Session{Global: global, Bound: game.Bind(engine, playerID)}
+	s := Session{Global: global, Bound: game.Bind(engine, playerID), gameName: gameName}
 	if s.Bound == nil {
 		return s, nil
 	}
@@ -66,21 +72,59 @@ func (s *Session) IdleRemoved(ev game.Event) bool {
 	return ev.Type == game.EventPlayerIdle && s.Bound != nil && ev.PlayerID == s.Bound.PlayerID()
 }
 
-// SyncBase refreshes the cached engine state and keeps the cursor inside the hand.
-func (s *Session) SyncBase() {
-	s.Base = SyncBaseState(s.Bound)
+// Sync refreshes the cached engine state and keeps the cursor inside the hand.
+//
+// extra, when set, reads the per-game slice of engine state in the same lock hold, so
+// a view's own fields describe the same moment as its base state. What extra is handed
+// is not redacted for this player, so anything derived from it that reaches the screen
+// has to be filtered by the caller.
+func (s *Session) Sync(extra func(extra any)) {
+	s.Base = SyncBaseState(s.Bound, extra)
 	if s.Selected >= len(s.Base.Hand) {
 		s.Selected = max(len(s.Base.Hand)-1, 0)
 	}
 }
 
-// WithHiddenState reads the per-game slice of engine state under the engine lock.
-// What it hands back is not redacted for this player, so anything derived from it
-// that reaches the screen has to be filtered by the caller.
-func (s *Session) WithHiddenState(fn func(extra any)) {
-	if s.Bound != nil {
-		s.Bound.WithHiddenState(fn)
+// HandleFrame runs the part of Update that is the same at every table: the common
+// window, theme and quit keys, the engine's event feed, and the turn-clock tick. sync
+// is the view's own state refresh; onEvent, when set, runs before an event-driven
+// sync. It reports whether the message was consumed, so a view falls through to its
+// own key bindings.
+func (s *Session) HandleFrame(msg tea.Msg, sync func(), onEvent func()) (tea.Cmd, bool) {
+	if handled, cmd := views.HandleCommonMsg(msg, &s.Global); handled {
+		return cmd, true
 	}
+
+	switch msg := msg.(type) {
+	case EventMsg:
+		if s.IdleRemoved(game.Event(msg)) {
+			// The engine took this seat for repeated missed turns. Quitting ends the
+			// bubbletea program, which is what tears the ssh session down and runs the
+			// ordinary leave path.
+			return tea.Quit, true
+		}
+		wasPlaying := s.Base.Phase == game.Playing
+		if onEvent != nil {
+			onEvent()
+		}
+		sync()
+		cmds := []tea.Cmd{s.Listen()}
+		// Re-arm the countdown when the table starts playing. A view built while the
+		// lobby was still waiting stops its own tick chain on the first tick - the
+		// clock would then never run for that player for the whole match.
+		if !wasPlaying && s.Base.Phase == game.Playing {
+			cmds = append(cmds, ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn))
+		}
+		return tea.Batch(cmds...), true
+	case ClockTickMsg:
+		sync()
+		if s.Base.Phase != game.Playing {
+			return nil, true
+		}
+		return ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn), true
+	}
+
+	return nil, false
 }
 
 var errNotSeated = errors.New("you are not seated at this table")
@@ -93,7 +137,13 @@ func (s *Session) Submit(action game.Action) error {
 	if s.Bound == nil {
 		return errNotSeated
 	}
-	return s.Bound.Submit(action)
+	err := s.Bound.Submit(action)
+	if err != nil {
+		// Background, not the session context: a rejection is worth counting even
+		// when it is the disconnect itself that caused it.
+		observability.ActionRejected(context.Background(), s.gameName)
+	}
+	return err
 }
 
 // SelectedCard is the card under the cursor.

@@ -1,6 +1,7 @@
 package game
 
 import (
+	"slices"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -29,43 +30,42 @@ type BaseState struct {
 	TurnRemaining time.Duration
 }
 
-// SyncBaseState builds a redacted view via BoundEngine (own hand only).
+// SyncBaseState builds a redacted view via BoundEngine (own hand only), and hands the
+// per-game state to extra in the same lock hold when one is given.
 //
 // Every identity comparison here goes through bound.PlayerID, which is the
 // authenticated session's player: display names are for rendering, never for
 // deciding whose hand or whose turn this is.
-func SyncBaseState(bound *game.BoundEngine) BaseState {
+func SyncBaseState(bound *game.BoundEngine, extra func(any)) BaseState {
 	var base BaseState
 	if bound == nil {
 		return base
 	}
 
-	snap := bound.Snapshot()
+	snap, hand, remaining := bound.Frame(extra)
 	base.Phase = snap.Phase
 	base.TopDiscard = snap.TopDiscard
 	base.CurrentPlayer = snap.CurrentPlayer
 	base.CurrentPlayerID = snap.CurrentPlayerID
 	base.Winner = snap.Winner
-	base.Hand = bound.Hand()
-	base.TurnRemaining = bound.TurnRemaining()
+	base.Hand = hand
+	base.TurnRemaining = remaining
 	base.Seats = snap.Players
 	base.DeckSize = snap.DeckSize
 
-	// MyTurn comes off the same snapshot as CurrentPlayerID rather than from a second
-	// bound.IsMyTurn() call, which would take the engine lock again. Both answer
-	// "whose turn is it", and every seat renderer highlights from CurrentPlayerID
-	// while the hand, hints and clock light up from MyTurn - so two reads that
-	// straddle a turn change put the highlight on one seat and the controls on
-	// another, and tell the player to wait for a hand they can actually play.
+	// Everything above came out of one Frame, which is one hold of the engine lock.
+	// The pieces cannot describe different moments: MyTurn is decided off the same
+	// snapshot as CurrentPlayerID, and the hand off the same one again. Every seat
+	// renderer highlights from CurrentPlayerID while the hand, hints and clock light
+	// up from MyTurn - so reads that straddled a turn change used to put the
+	// highlight on one seat and the controls on another, and tell the player to wait
+	// for a hand they could actually play.
 	heroID := bound.PlayerID()
 	base.MyTurn = base.Phase == game.Playing && heroID != "" && snap.CurrentPlayerID == heroID
 
-	for _, opp := range snap.Players {
-		if opp.ID == heroID {
-			continue
-		}
-		base.Opponents = append(base.Opponents, opp)
-	}
+	base.Opponents = slices.DeleteFunc(slices.Clone(snap.Players), func(p game.PlayerSnapshot) bool {
+		return p.ID == heroID
+	})
 
 	return base
 }

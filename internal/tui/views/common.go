@@ -1,6 +1,8 @@
 package views
 
 import (
+	"slices"
+
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
@@ -93,6 +95,20 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		}
 	}
 	return false, nil
+}
+
+// RenderScreen is the header/footer/frame ritual every full-screen view repeats: the
+// figlet title, the view's own action keys ahead of the global ones, and the framed
+// layout. content is called with the rows left for it once the title and footer have
+// taken theirs, which is what the tables size their row counts against.
+//
+// slices.Concat, never append: styles.GlobalActions is a package-level slice shared by
+// every session, and appending to it writes into the backing array every other session
+// is reading - one screen's footer keys turning up on another player's screen.
+func RenderScreen(g router.GlobalContext, title string, localActions []string, content func(height int) string) string {
+	header := g.Theme.Title.Render(styles.RenderFigureASCII(title, styles.InnerWidth(g.Width)))
+	footer := g.Theme.RenderActionFooter(slices.Concat(localActions, styles.GlobalActions))
+	return RenderCenteredLayout(g, header, content(styles.AvailableContentHeight(g.Height, header, footer)), footer)
 }
 
 // RenderCenteredLayout frames content for a full-screen view. It takes the whole
