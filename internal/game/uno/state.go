@@ -7,8 +7,16 @@ type State struct {
 	CurrentColor deck.Suit // one of ColorRed/Yellow/Green/Blue once started
 	Direction    int8      // +1 clockwise, -1 counterclockwise
 	// Passes counts consecutive turns where a draw yielded nothing. When it
-	// reaches the player count the hand is deadlocked and ends.
+	// reaches the player count the hand is deadlocked and ends. A forced draw that
+	// comes up empty charges the count too, even though the victim never had a
+	// turn: it is the board that is out of cards, and the seat it happened to is
+	// beside the point.
 	Passes int
+
+	// leaverWasOnTurn is written by OnPlayerLeave and read by AfterPlayerRemoved.
+	// Only the first sees whose turn it was, only the second sees the shifted seat
+	// indices, and the direction-aware cursor needs both.
+	leaverWasOnTurn bool
 }
 
 func isWild(r deck.Rank) bool {

@@ -16,12 +16,13 @@ var (
 	_ game.Rules              = (*Rules)(nil)
 	_ game.PlayerLeaveHandler = (*Rules)(nil)
 	_ game.TurnTimeoutHandler = (*Rules)(nil)
+	_ game.StandingScorer     = (*Rules)(nil)
 )
 
 func (r *Rules) MinPlayers() int { return 2 }
 func (r *Rules) MaxPlayers() int { return 10 }
 
-func (r *Rules) InitialDeck() []deck.Card { return InitialDeck() }
+func (r *Rules) InitialDeck() []deck.Card { return initialDeck() }
 func (r *Rules) InitialDealCount() int    { return 7 }
 
 func (r *Rules) TimeoutAction(_ *game.State) game.Action {
@@ -83,6 +84,9 @@ func (r *Rules) applyOpeningCard(state *game.State, extra *State, card deck.Card
 			first = r.advance(state, extra, 1)
 			break
 		}
+		// Deviation: the official rules give the turn to the dealer's right, which
+		// this table has no dealer to measure from. The seat the engine picked keeps
+		// it and only the direction flips.
 		extra.Direction = -1
 	}
 	state.CurrentTurn = first
@@ -103,7 +107,7 @@ func (a ActionDrawCard) Name() string { return "uno.DrawCard" }
 func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 	topCard, ok := state.Discard.Peek()
 	if !ok {
@@ -123,6 +127,11 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 			// A Wild Draw Four is the one card the official rules gate on the hand
 			// behind it: it may only be played by someone with nothing of the
 			// current colour to play instead.
+			//
+			// Deviation: the paper game lets the next player challenge a suspect
+			// WD4 and inspect the hand. Here the server holds every hand already,
+			// so the gate is enforced up front instead - the illegal play is
+			// refused rather than punished, and there is nothing to challenge.
 			if a.Card.Rank == WildDrawFour && hasColor(hand, extra.CurrentColor) {
 				return errors.New("wild draw four needs a hand with no card of the current color")
 			}
@@ -142,10 +151,10 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	return errors.New("unknown action")
 }
 
-func (r *Rules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return
+		return game.ErrInvalidState
 	}
 	switch a := action.(type) {
 	case ActionPlayCard:
@@ -177,6 +186,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionDrawCard:
 		r.applyVoluntaryDraw(state, extra)
 	}
+	return nil
 }
 
 // Every action sets OverrideNextTurn: the engine's own advance only steps +1, so a
@@ -211,6 +221,9 @@ func (r *Rules) applyForcedDraw(state *game.State, extra *State, n int) {
 	state.OverrideNextTurn = &next
 }
 
+// Deviation: the drawn card cannot be played immediately. The official rules let a
+// player play the card they just drew; here the draw ends the turn, which keeps a
+// draw a single action with no follow-up state for a disconnect to strand.
 func (r *Rules) applyVoluntaryDraw(state *game.State, extra *State) {
 	actor := state.CurrentTurn
 	if !drawCardsInto(state, actor, 1) {
@@ -232,7 +245,7 @@ func drawCardsInto(state *game.State, playerIdx, n int) bool {
 	drew := 0
 	for range n {
 		if state.Deck.IsEmpty() {
-			if err := reshuffleDiscardIntoDeck(state); err != nil {
+			if err := game.ReshuffleDiscardIntoStock(state); err != nil {
 				slog.Error("uno reshuffle failed", "error", err)
 				break
 			}
@@ -247,72 +260,59 @@ func drawCardsInto(state *game.State, playerIdx, n int) bool {
 	return drew > 0
 }
 
-func reshuffleDiscardIntoDeck(state *game.State) error {
-	top, ok := state.Discard.Draw()
-	if !ok {
-		return nil
-	}
-	rest := state.Discard.Cards()
-	state.Discard = deck.New([]deck.Card{top})
-	state.Deck.AddCard(rest...)
-	if err := state.Deck.Shuffle(); err != nil {
-		state.Discard = restoreDiscard(rest, top)
-		state.Deck = deck.New(nil)
-		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
-	}
-	return nil
-}
-
-// restoreDiscard puts the pile back the way it was found, top card last. Peek and
-// Draw read the end of the pile, so rebuilding it the other way round rotates the
-// discard and leaves a card nobody played sitting in play.
-func restoreDiscard(rest []deck.Card, top deck.Card) *deck.Pile {
-	return deck.New(append(rest, top))
-}
-
 func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
 	return nil
 }
 
 func (r *Rules) CheckWinCondition(state *game.State) bool {
-	for _, p := range state.Players {
-		if len(p.Cards) == 0 {
-			return true
-		}
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return false
 	}
-	if extra, ok := state.Extra.(*State); ok && len(state.Players) > 0 && extra.Passes >= len(state.Players) {
-		return true
-	}
-	return false
+	return game.HandEmptyOrAllPassed(state, extra.Passes)
 }
 
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
-	// Passes counts turns a draw yielded nothing on, and the returned hand refills
-	// the stock, so the count is stale. Left alone it would also be measured against
-	// a table one seat smaller and read as a deadlock that never happened.
 	if extra, ok := state.Extra.(*State); ok {
+		// Passes counts turns a draw yielded nothing on, and the returned hand
+		// refills the stock, so the count is stale. Left alone it would also be
+		// measured against a table one seat smaller and read as a deadlock that
+		// never happened.
 		extra.Passes = 0
+		extra.leaverWasOnTurn = state.CurrentTurn == slices.IndexFunc(state.Players,
+			func(p *game.Player) bool { return p != nil && p.ID == playerID })
 	}
-	for _, p := range state.Players {
-		if p.ID == playerID {
-			state.Deck.AddCard(p.Cards...)
-			p.Cards = nil
-			if err := state.Deck.Shuffle(); err != nil {
-				slog.Error("uno shuffle after leave failed", "error", err, "player_id", playerID)
-			}
-			return
-		}
-	}
+	game.ReturnHandToStock(state, playerID, "uno")
 }
 
-func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
+// AfterPlayerRemoved settles the cursor when the seat on turn left a counterclockwise
+// table. The engine's generic fix-up leaves the cursor where the leaver sat, which is
+// now the seat one step clockwise - the right answer at Direction +1 and the wrong
+// neighbour at -1, where it skips a player.
+func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return
+	}
+	onTurn := extra.leaverWasOnTurn
+	extra.leaverWasOnTurn = false
+
+	n := len(state.Players)
+	if !onTurn || extra.Direction >= 0 || n == 0 {
+		return
+	}
+	// Counterclockwise the turn owes to the seat before the leaver, which keeps its
+	// index through the delete when there is one and wraps to the last seat when
+	// the leaver sat first.
+	next := ((removedIndex-1)%n + n) % n
+	state.CurrentTurn = next
+	state.OverrideNextTurn = &next
+}
 
 func (r *Rules) Standings(state *game.State) []*game.Player {
-	standings := slices.Clone(state.Players)
-	slices.SortStableFunc(standings, func(a, b *game.Player) int {
-		return len(a.Cards) - len(b.Cards)
+	return game.StandingsByScore(state.Players, func(p *game.Player) int {
+		return r.StandingScore(state, p)
 	})
-	return standings
 }
 
 // StandingScore is the value Standings sorted by, so two players left holding the

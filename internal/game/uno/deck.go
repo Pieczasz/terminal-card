@@ -24,7 +24,7 @@ const (
 )
 
 // InitialDeck builds the standard 108-card Uno deck.
-func InitialDeck() []deck.Card {
+func initialDeck() []deck.Card {
 	colors := []deck.Suit{ColorRed, ColorYellow, ColorGreen, ColorBlue}
 	cards := make([]deck.Card, 0, 108)
 
