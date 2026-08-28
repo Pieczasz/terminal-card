@@ -4,6 +4,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -51,6 +52,10 @@ type Deps struct {
 	AllowOrigin       string
 	RequestsPerMinute int
 	TrustedProxy      bool
+
+	// Health reports whether the process's dependencies are usable (the database
+	// ping, in practice). nil means /healthz only asserts the process serves HTTP.
+	Health func(ctx context.Context) error
 }
 
 type statsResponse struct {
@@ -80,6 +85,7 @@ func Handler(deps Deps) http.Handler {
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /v1/stats", statsHandler(deps))
+	mux.Handle("GET /healthz", healthHandler(deps))
 	mux.Handle("GET /v1/leaderboard", leaderboardHandler(deps))
 
 	// The preflight answer is a route rather than a short-circuit in withCORS, so
@@ -251,4 +257,26 @@ func withRateLimit(
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// healthHandler backs the container healthcheck: 200 when the process serves and
+// its dependencies answer, 503 otherwise, so orchestration restarts a wedged
+// process instead of routing players into it.
+func healthHandler(deps Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if deps.Health != nil {
+			ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+			defer cancel()
+			if err := deps.Health(ctx); err != nil {
+				slog.ErrorContext(ctx, "health check failed", "error", err)
+				writeError(w, r, http.StatusServiceUnavailable, "unhealthy")
+				return
+			}
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		if r.Method != http.MethodHead {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		}
+	}
 }

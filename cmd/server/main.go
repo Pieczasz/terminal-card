@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -41,9 +42,36 @@ const (
 )
 
 func main() {
+	// -healthcheck probes the local stats API and exits: the container image is
+	// distroless, so the server binary doubles as the compose healthcheck command.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(healthcheck())
+	}
 	if err := run(); err != nil {
 		os.Exit(1)
 	}
+}
+
+func healthcheck() int {
+	port := cmp.Or(os.Getenv("API_PORT"), "6970")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:"+port+"/healthz", nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "healthcheck:", err)
+		return 1
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		fmt.Fprintln(os.Stderr, "healthcheck: status", resp.StatusCode)
+		return 1
+	}
+	return 0
 }
 
 func run() (err error) {
@@ -105,7 +133,7 @@ func run() (err error) {
 		return err
 	}
 
-	stopAPI, apiErr := startStatsAPI(cfg, tracker, lobbyManager, userRepo)
+	stopAPI, apiErr := startStatsAPI(cfg, tracker, lobbyManager, userRepo, sqlDB.PingContext)
 	defer stopAPI()
 
 	return serve(ctx, serveDeps{
@@ -172,7 +200,10 @@ func newSSHServer(
 	matchRepo db.MatchRepository,
 	lobbyManager *lobby.Manager,
 ) (*charmssh.Server, *ssh.SessionTracker, error) {
-	tracker := ssh.NewSessionTracker()
+	// MaxConnections is the player-visible session cap: the tracker refuses the
+	// overflow with a message, while the TCP LimitListener below only backstops
+	// handshake floods at twice that, so a full server says so instead of hanging.
+	tracker := ssh.NewSessionTracker(cfg.MaxConnections)
 	server, err := ssh.SetupServer(ssh.ServerDependencies{
 		Config:          cfg,
 		UserRepository:  userRepo,
@@ -205,6 +236,7 @@ func startStatsAPI(
 	tracker *ssh.SessionTracker,
 	lobbyManager *lobby.Manager,
 	userRepo db.UserRepository,
+	health func(ctx context.Context) error,
 ) (func(), <-chan error) {
 	addr := fmt.Sprintf("%s:%d", cfg.ServerHost, cfg.APIPort)
 	srv := httpapi.Serve(addr, httpapi.Handler(httpapi.Deps{
@@ -214,6 +246,7 @@ func startStatsAPI(
 		AllowOrigin:       cfg.APIAllowOrigin,
 		RequestsPerMinute: cfg.APIRequestsPerMinute,
 		TrustedProxy:      cfg.APITrustProxy,
+		Health:            health,
 	}))
 
 	serveErr := make(chan error, 1)
@@ -270,7 +303,7 @@ func serve(ctx context.Context, d serveDeps) error {
 	if err != nil {
 		return fmt.Errorf("create tcp listener: %w", err)
 	}
-	limitListener := netutil.LimitListener(listener, cfg.MaxConnections)
+	limitListener := netutil.LimitListener(listener, 2*cfg.MaxConnections)
 	// The default proxyproto policy is REQUIRE: every connection must open with a
 	// PROXY header, which is right behind nginx (and is why 6969 must never be
 	// published - any peer's header is honored). PROXY_PROTOCOL=false is the local
