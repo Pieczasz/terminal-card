@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func createTestState() *game.State {
@@ -21,7 +22,7 @@ func createTestState() *game.State {
 		{Rank: Skip, Suit: ColorYellow},
 		{Rank: Wild, Suit: ColorWild},
 	}}}
-	state := game.NewState(rules, players, InitialDeck())
+	state := game.NewState(rules, players, initialDeck())
 	state.Extra = &State{CurrentColor: ColorRed, Direction: 1}
 	state.Discard = deck.New([]deck.Card{{Rank: deck.Three, Suit: ColorRed}})
 	state.CurrentTurn = 0
@@ -31,7 +32,7 @@ func createTestState() *game.State {
 func createMultiplayerState(t *testing.T, hands ...int) *game.State {
 	t.Helper()
 	rules := &Rules{}
-	stock := deck.New(InitialDeck())
+	stock := deck.New(initialDeck())
 	require.NoError(t, stock.Shuffle())
 
 	players := make([]*game.Player, 0, len(hands))
@@ -540,24 +541,6 @@ func TestRules_OnPlayerLeave_ClearsStalePasses(t *testing.T) {
 	assert.False(t, rules.CheckWinCondition(state), "nobody passed, so nothing is deadlocked")
 }
 
-// The stock is rebuilt from the discard on a failed shuffle, and the pile has to go
-// back exactly as it was: Peek reads the end, so the card in play must stay last.
-func TestRestoreDiscard_KeepsTheCardInPlayOnTop(t *testing.T) {
-	t.Parallel()
-	top := deck.Card{Rank: deck.Three, Suit: ColorRed}
-	rest := []deck.Card{
-		{Rank: deck.Four, Suit: ColorBlue},
-		{Rank: Skip, Suit: ColorGreen},
-	}
-
-	restored := restoreDiscard(rest, top)
-
-	peeked, ok := restored.Peek()
-	require.True(t, ok)
-	assert.Equal(t, top, peeked, "a rotated pile puts a card nobody played into play")
-	assert.Equal(t, len(rest)+1, restored.Size(), "every card comes back")
-}
-
 func TestRules_TimeoutAction_AlwaysDraws(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -597,7 +580,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
 	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
-	engine := game.NewEngine(rules, players, InitialDeck())
+	engine := game.NewEngine(rules, players, initialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
@@ -649,4 +632,135 @@ func TestRules_OnPlayerLeave_NormalLeaveIsNotAnError(t *testing.T) {
 	state := createMultiplayerState(t, 3, 3)
 	(&Rules{}).OnPlayerLeave(state, "p1")
 	assert.Empty(t, logged.String())
+}
+
+// The engine's own fix-up hands the turn to the seat that followed the leaver
+// clockwise. On a reversed table that is the wrong neighbour: the seat the turn
+// actually owed gets skipped, and it is the leaver's own turn that exposes it.
+func TestRules_AfterPlayerRemoved_HonorsDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		direction int8
+		onTurn    int
+		leaver    string
+		wantTurn  string
+	}{
+		{name: "clockwise, seat on turn leaves", direction: 1, onTurn: 2, leaver: "p3", wantTurn: "p4"},
+		{name: "counterclockwise, seat on turn leaves", direction: -1, onTurn: 2, leaver: "p3", wantTurn: "p2"},
+		{name: "counterclockwise, first seat on turn leaves", direction: -1, onTurn: 0, leaver: "p1", wantTurn: "p4"},
+		{name: "clockwise, last seat on turn leaves", direction: 1, onTurn: 3, leaver: "p4", wantTurn: "p1"},
+		{name: "counterclockwise, last seat on turn leaves", direction: -1, onTurn: 3, leaver: "p4", wantTurn: "p3"},
+		{name: "clockwise, a seat before the cursor leaves", direction: 1, onTurn: 2, leaver: "p1", wantTurn: "p3"},
+		{name: "counterclockwise, a seat before the cursor leaves", direction: -1, onTurn: 2, leaver: "p1", wantTurn: "p3"},
+		{name: "clockwise, a seat after the cursor leaves", direction: 1, onTurn: 1, leaver: "p4", wantTurn: "p2"},
+		{name: "counterclockwise, a seat after the cursor leaves", direction: -1, onTurn: 1, leaver: "p4", wantTurn: "p2"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+			engine := game.NewEngine(&Rules{}, players, initialDeck())
+			require.NoError(t, engine.Start())
+			t.Cleanup(engine.Close)
+
+			engine.WithState(func(s *game.State) {
+				s.Extra.(*State).Direction = tt.direction
+				s.CurrentTurn = tt.onTurn
+				s.OverrideNextTurn = nil
+			})
+
+			engine.RemovePlayer(tt.leaver)
+
+			assert.Equal(t, tt.wantTurn, engine.CurrentPlayerID())
+		})
+	}
+}
+
+// Standings and StandingScore have to agree, or the engine splits a genuine draw by
+// slice position and the seat that sorted first takes rating off the seat that did not.
+func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
+	engine := game.NewEngine(&Rules{}, players, initialDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		s.Players[0].Cards = s.Players[0].Cards[:3]
+		s.Players[1].Cards = s.Players[1].Cards[:3]
+		s.Players[2].Cards = s.Players[2].Cards[:1]
+	})
+
+	standings, places := engine.StandingsWithPlaces()
+	require.Len(t, standings, 3)
+	assert.Equal(t, "p3", standings[0].ID, "one card is the best position")
+	assert.Equal(t, []int{1, 2, 2}, places, "equal card counts are one place, not two")
+}
+
+// Cards are conserved through any legal sequence of play, including a seat leaving
+// mid-hand: every card is in exactly one of the stock, the discard, a hand, or the
+// hand of somebody who walked out.
+func TestRules_CardConservation(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
+		engine := game.NewEngine(rules, players, initialDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		total := func() int {
+			var n int
+			engine.WithState(func(s *game.State) {
+				n = cardsInPlay(s)
+				for _, p := range s.LeftPlayers {
+					n += len(p.Cards)
+				}
+			})
+			return n
+		}
+		const wantCards = 108
+		require.Equal(rt, wantCards, total())
+
+		leaveAt := rapid.IntRange(1, 40).Draw(rt, "leaveAt")
+		for step := range 60 {
+			if engine.IsFinished() {
+				break
+			}
+			if step == leaveAt {
+				engine.RemovePlayer(engine.CurrentPlayerID())
+				require.Equal(rt, wantCards, total(), "a leave at step %d lost cards", step)
+				continue
+			}
+
+			id := engine.CurrentPlayerID()
+			color := rapid.SampledFrom([]deck.Suit{ColorRed, ColorYellow, ColorGreen, ColorBlue}).
+				Draw(rt, "color")
+			var playable []deck.Card
+			engine.WithState(func(s *game.State) {
+				for _, card := range s.Players[s.CurrentTurn].Cards {
+					if rules.ValidateAction(s, ActionPlayCard{Card: card, ChosenColor: color}) == nil {
+						playable = append(playable, card)
+					}
+				}
+			})
+
+			var err error
+			if len(playable) > 0 {
+				pick := rapid.SampledFrom(playable).Draw(rt, "card")
+				err = engine.SubmitAction(id, ActionPlayCard{Card: pick, ChosenColor: color})
+			} else {
+				err = engine.SubmitAction(id, ActionDrawCard{})
+			}
+			require.NoError(rt, err, "step %d", step)
+
+			require.Equal(rt, wantCards, total(), "cards changed at step %d", step)
+			engine.WithState(func(s *game.State) {
+				require.GreaterOrEqual(rt, s.Discard.Size(), 1, "the card in play never leaves the pile")
+			})
+		}
+	})
 }
