@@ -27,7 +27,10 @@ type ModelDependencies struct {
 	GameRegistry *game.Registry
 }
 
-func Model(deps ModelDependencies) tea.Model {
+// Model builds the session's root model. It returns the router itself rather than a
+// tea.Model: the ssh layer has to Close it when the session ends, and an interface
+// value would hide the one method that releases the active view's subscription.
+func Model(deps ModelDependencies) *router.Router {
 	global := router.GlobalContext{
 		User:           &deps.User,
 		UserRepository: deps.UserRepo,
@@ -76,8 +79,8 @@ func Model(deps ModelDependencies) tea.Model {
 
 	registerGameViews(r)
 
-	r.Goto(router.RouteHome, nil)
-
+	// No Goto here: the router builds its first view in Init, so that view's Init
+	// runs exactly once. See Router.Init.
 	return r
 }
 

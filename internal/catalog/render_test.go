@@ -1,0 +1,204 @@
+package catalog
+
+import (
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/deck"
+	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
+	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+	crazyeightview "github.com/Pieczasz/terminal-card/internal/tui/views/game/crazyeight"
+	ginrummyview "github.com/Pieczasz/terminal-card/internal/tui/views/game/ginrummy"
+	heartsview "github.com/Pieczasz/terminal-card/internal/tui/views/game/hearts"
+	unoview "github.com/Pieczasz/terminal-card/internal/tui/views/game/uno"
+
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+// Every game view is checked here rather than in its own package because the bug this
+// pins is shared: nothing in the layout enforces its own budget. PadCenter and Place
+// both hand overwide content straight through, so a hand or a stack of card backs that
+// does not fit is passed to the terminal to wrap, and one wrapped row shifts every row
+// under it. Golden files would pin the pixels; this pins the only property that has to
+// hold at every size.
+func TestGameViews_RenderInsideTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	sizes := []struct{ w, h int }{
+		{styles.MinWidth, styles.MinHeight}, // the smallest terminal the router admits
+		{80, 24},
+		{100, 30},
+		{120, 40},
+	}
+	handSizes := []int{7, 13, 25}
+
+	for _, entry := range All {
+		rules := entry.Rules()
+		for seats := rules.MinPlayers(); seats <= min(rules.MaxPlayers(), 6); seats++ {
+			for _, size := range sizes {
+				for _, handSize := range handSizes {
+					name := fmt.Sprintf("%s/seats=%d/%dx%d/hand=%d",
+						entry.Slug, seats, size.w, size.h, handSize)
+					t.Run(name, func(t *testing.T) {
+						t.Parallel()
+
+						m := seatedView(t, entry, seats, size.w, size.h)
+						setHand(m, longHand(handSize))
+
+						out := m.View().Content
+						assert.LessOrEqual(t, lg.Width(out), size.w, "the frame is wider than the terminal")
+						assert.LessOrEqual(t, lg.Height(out), size.h, "the frame is taller than the terminal")
+					})
+				}
+			}
+		}
+	}
+}
+
+// A view for player A must never print another seat's card faces. Poker has its own
+// targeted showdown test; the other four never reveal anybody's hand at all, so the
+// check is that no other seat's cards are anywhere in the frame.
+func TestGameViews_NeverShowAnotherSeatsCards(t *testing.T) {
+	t.Parallel()
+
+	for _, entry := range All {
+		if entry.Slug == "poker" {
+			continue // showdown reveals by design; poker tests that reveal itself
+		}
+		t.Run(entry.Slug, func(t *testing.T) {
+			t.Parallel()
+
+			rules := entry.Rules()
+			engine, m := seatedEngineAndView(t, entry, rules.MinPlayers(), 120, 40)
+
+			hero := heroHand(t, engine, "1")
+			out := stripANSI(m.View().Content)
+
+			var others []deck.Card
+			engine.WithState(func(state *game.State) {
+				for _, p := range state.Players {
+					if p == nil || p.ID == "1" {
+						continue
+					}
+					others = append(others, p.Cards...)
+				}
+			})
+			require.NotEmpty(t, others, "the other seats have to be holding something")
+
+			for _, card := range others {
+				if containsCard(hero, card) {
+					continue // the hero holds one like it; its glyphs are theirs to show
+				}
+				assert.NotContains(t, out, cardGlyphs(card),
+					"%v belongs to another seat", card)
+			}
+		})
+	}
+}
+
+// cardGlyphs is the rank-and-suit pair a card is recognisable by in a rendered frame:
+// the compact strip and the mini cards both print exactly this.
+func cardGlyphs(c deck.Card) string {
+	suits := map[deck.Suit]string{
+		deck.Hearts: "♥", deck.Diamonds: "♦", deck.Clubs: "♣", deck.Spades: "♠",
+	}
+	return components.RankLabel(c.Rank) + suits[c.Suit]
+}
+
+func containsCard(hand []deck.Card, card deck.Card) bool {
+	for _, c := range hand {
+		if c.Rank == card.Rank && c.Suit == card.Suit {
+			return true
+		}
+	}
+	return false
+}
+
+func heroHand(t *testing.T, engine *game.Engine, playerID string) []deck.Card {
+	t.Helper()
+	return game.Bind(engine, playerID).Hand()
+}
+
+func seatedView(t *testing.T, entry Entry, seats, width, height int) tea.Model {
+	t.Helper()
+	_, m := seatedEngineAndView(t, entry, seats, width, height)
+	return m
+}
+
+// seatedEngineAndView starts a real table of the given size and binds a view to seat 0.
+func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*game.Engine, tea.Model) {
+	t.Helper()
+
+	players := make([]*game.Player, 0, seats)
+	for i := range seats {
+		players = append(players, &game.Player{
+			ID:     fmt.Sprint(i + 1),
+			UserID: uint(i + 1),
+			Name:   fmt.Sprintf("player%d", i+1),
+		})
+	}
+	engine := game.NewEngine(entry.Rules(), players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	global := router.GlobalContext{
+		User:   &db.User{Model: gorm.Model{ID: 1}, Username: "player1"},
+		Theme:  styles.NewTheme(true),
+		Width:  width,
+		Height: height,
+	}
+	return engine, entry.View(global, engine)
+}
+
+// setHand overwrites the hand the view has cached, which is the only way to render a
+// size the rules never deal. Poker holds its hole cards in its seat rows rather than
+// the shared base state, so it keeps the hand it was dealt.
+func setHand(m tea.Model, hand []deck.Card) {
+	switch v := m.(type) {
+	case *crazyeightview.Model:
+		v.Base.Hand = hand
+	case *unoview.Model:
+		v.Base.Hand = hand
+	case *heartsview.Model:
+		v.Base.Hand = hand
+	case *ginrummyview.Model:
+		v.Base.Hand = hand
+	}
+}
+
+// longHand is n distinct cards, cycling suits so the hand is as wide as a real one.
+func longHand(n int) []deck.Card {
+	suits := []deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs}
+	hand := make([]deck.Card, 0, n)
+	for i := range n {
+		hand = append(hand, deck.Card{
+			Rank: deck.AllRanks[i%len(deck.AllRanks)],
+			Suit: suits[i%len(suits)],
+		})
+	}
+	return hand
+}
+
+func stripANSI(s string) string {
+	var out strings.Builder
+	inEscape := false
+	for _, r := range s {
+		switch {
+		case r == 0x1b:
+			inEscape = true
+		case inEscape && (r == 'm' || r == 'K' || r == 'H'):
+			inEscape = false
+		case !inEscape:
+			out.WriteRune(r)
+		}
+	}
+	return out.String()
+}

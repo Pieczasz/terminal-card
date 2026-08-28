@@ -31,7 +31,9 @@ func (e Entry) Module() game.Module {
 	return game.Module{Name: e.Name, Slug: e.Slug, Factory: e.Rules}
 }
 
-// TODO: add every created game here.
+// All is the single point of game registration: every entry carries both the
+// rules factory and the TUI view constructor, and catalog_test fails on a missing
+// field or duplicate slug. A new game ships by adding one entry here.
 var All = []Entry{
 	{
 		Name:  "Crazy Eights",
