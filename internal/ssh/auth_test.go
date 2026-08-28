@@ -63,7 +63,8 @@ func (m *MockUserRepository) UserProfile(_ context.Context, _ uint) (*db.User, e
 	return nil, nil
 }
 
-func (m *MockUserRepository) UpdateUserActivity(_ context.Context, _ *db.User, _ *db.PublicKey) {
+func (m *MockUserRepository) UpdateUserActivity(_ context.Context, _ *db.User, _ *db.PublicKey) error {
+	return nil
 }
 
 func (m *MockUserRepository) UserMatchHistory(_ context.Context, _ uint, _ int) ([]db.MatchParticipant, error) {

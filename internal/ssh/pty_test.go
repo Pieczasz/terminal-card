@@ -90,6 +90,9 @@ type panickyModel struct{}
 
 func (panickyModel) Close() { panic("closing the view exploded") }
 
+// The assertion on the message matters as much as the one on the tracker: charm ssh
+// recovers panics itself, so a test that only checks the slot was freed passes even
+// with `defer recoverSession(s)` deleted.
 func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker()
@@ -99,14 +102,18 @@ func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 	srv := &ssh.Server{
 		Handler: sessionLifecycle(deps, tracker)(func(s ssh.Session) {
-			s.Context().SetValue(ctxKeyOwnsConnection, true)
-			s.Context().SetValue(ctxKeyUser, user)
-			s.Context().SetValue(ctxKeyModel, panickyModel{})
+			st, ok := lookupSessionState(s)
+			require.True(t, ok)
+			st.owns = true
+			st.user = user
+			st.model = panickyModel{}
 		}),
 	}
 
-	_ = testsession.New(t, srv, nil).Run("")
+	out, _ := testsession.New(t, srv, nil).CombinedOutput("")
 
+	assert.Contains(t, string(out), "An unexpected internal error occurred",
+		"recoverSession did not handle the panic; the library swallowed it instead")
 	require.Eventually(t, func() bool { return tracker.Count() == 0 }, 2*time.Second, 10*time.Millisecond,
 		"the session slot was stranded, so this player can never reconnect")
 }

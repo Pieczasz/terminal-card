@@ -16,6 +16,10 @@ var (
 	ErrNoPublicKey        = errors.New("SSH key authentication is required")
 	ErrInternal           = errors.New("internal server error")
 	ErrRegistrationFailed = errors.New("registration failed")
+
+	// errAlreadyConnected is only ever reported on the span; the client gets the
+	// username-bearing message instead.
+	errAlreadyConnected = errors.New("account is already connected from another session")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
@@ -29,18 +33,21 @@ func AuthenticateSession(s ssh.Session) (string, error) {
 func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUsername, fingerprint string) (*db.User, error) {
 	user, key, err := userRepo.LoadUserByFingerprint(ctx, fingerprint)
 	if err != nil {
-		slog.Error("database error while authenticating user", "error", err)
+		slog.ErrorContext(ctx, "database error while authenticating user", "error", err)
 		return nil, ErrInternal
 	}
 
 	if user == nil {
 		user, _, err = userRepo.RegisterUserWithKey(ctx, sshUsername, fingerprint)
 		if err != nil {
-			slog.Error("failed to register new user", "error", err)
+			slog.ErrorContext(ctx, "failed to register new user", "error", err)
 			return nil, mapRegisterError(err)
 		}
 	} else {
-		userRepo.UpdateUserActivity(ctx, user, key)
+		if err := userRepo.UpdateUserActivity(ctx, user, key); err != nil {
+			// Non-fatal: stale activity timestamps must not block a login.
+			slog.WarnContext(ctx, "failed to update user activity", "error", err)
+		}
 	}
 
 	return user, nil
