@@ -48,8 +48,9 @@ func (m *MockRules) ValidateAction(state *State, action Action) error {
 	return args.Error(0)
 }
 
-func (m *MockRules) ApplyAction(state *State, action Action) {
+func (m *MockRules) ApplyAction(state *State, action Action) error {
 	m.Called(state, action)
+	return nil
 }
 
 func (m *MockRules) AfterAction(state *State, action Action) error {
@@ -669,7 +670,7 @@ func TestEngine_ConcurrentOperations(t *testing.T) {
 			for range 200 {
 				_ = engine.CurrentPlayerID()
 				_ = engine.Snapshot()
-				_ = engine.Standings()
+				_, _ = engine.StandingsWithPlaces()
 				_ = engine.StandingsIDs()
 			}
 		})

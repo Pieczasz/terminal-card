@@ -39,10 +39,11 @@ func (r *timeoutRules) ValidateAction(_ *State, _ Action) error {
 	return nil
 }
 
-func (r *timeoutRules) ApplyAction(state *State, action Action) {
+func (r *timeoutRules) ApplyAction(state *State, action Action) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.applied = append(r.applied, state.Players[state.CurrentTurn].ID+":"+action.Name())
+	return nil
 }
 
 func (r *timeoutRules) Standings(state *State) []*Player { return state.Players }
@@ -126,7 +127,8 @@ func TestEngine_TurnTimeout_TakesTheSeatAfterMaxMissesInARow(t *testing.T) {
 	}
 
 	require.True(t, engine.IsFinished(), "losing a seat leaves one player, which ends the game")
-	assert.Equal(t, MaxMissedTurns, engine.MissedTurns(firstToAct))
+	assert.Zero(t, engine.MissedTurns(firstToAct),
+		"the count is reaped with the seat, so a future re-entry starts clean")
 
 	var idleFor string
 	for {
@@ -339,15 +341,14 @@ func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T)
 	_, _, takeSeat := engine.resolveTurnTimeout(seq)
 	require.True(t, takeSeat, "one more miss reaches the limit")
 
-	// The seat acts in the window resolveTurnTimeout had to drop the locks for, and
-	// the rules refuse the move.
+	// The seat spams a move the rules refuse in the window resolveTurnTimeout had
+	// to drop the locks for. A rejected action must not read as presence: clearing
+	// the count on any keypress would let a client dodge removal forever by
+	// sending garbage once per expiry.
 	rules.reject = true
 	require.Error(t, engine.SubmitAction(victim, namedAction{name: "refused"}))
-	require.Zero(t, engine.MissedTurns(victim), "acting at all clears the count")
-
-	engine.mu.Lock()
-	seqBefore := engine.turnSeq
-	engine.mu.Unlock()
+	require.Equal(t, MaxMissedTurns, engine.MissedTurns(victim),
+		"a refused move does not clear the count")
 
 	engine.removeIfStillIdle(seq, victim)
 
@@ -359,15 +360,6 @@ func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T)
 				break
 			}
 		}
-		assert.True(t, seated, "they acted, so the seat is theirs")
+		assert.False(t, seated, "garbage input is not playing: the seat is taken")
 	})
-
-	// turnSeq is the signal, not the deadline: arming bumps it, and the deadline left
-	// behind by the timer that already fired still reads as a plausible future time.
-	engine.mu.Lock()
-	seqAfter := engine.turnSeq
-	engine.mu.Unlock()
-	assert.Greater(t, seqAfter, seqBefore,
-		"declining to take the seat must arm a new clock, or no expiry ever fires again")
-	assert.False(t, engine.TurnDeadline().IsZero(), "and that clock must be running")
 }
