@@ -1,6 +1,7 @@
 package game
 
 import (
+	"errors"
 	"log/slog"
 	"time"
 )
@@ -13,7 +14,7 @@ const (
 func (e *Engine) armTurnTimerLocked() {
 	e.stopTurnTimerLocked()
 
-	if e.turnTimeout <= 0 || e.state.Phase != Playing || len(e.state.Players) == 0 {
+	if e.closed || e.turnTimeout <= 0 || e.state.Phase != Playing || len(e.state.Players) == 0 {
 		return
 	}
 	if _, ok := e.state.Rules.(TurnTimeoutHandler); !ok {
@@ -43,8 +44,6 @@ func (e *Engine) stopTurnTimerLocked() {
 
 func (e *Engine) rearmTurnTimer() {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 	e.armTurnTimerLocked()
 }
@@ -73,7 +72,17 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 	}
 
 	e.broadcaster.Broadcast(Event{Type: EventTurnTimedOut, PlayerID: playerID})
-	if err := e.submitAction(playerID, action, false); err != nil {
+	err := e.submitTimedOutAction(playerID, action, seq)
+	switch {
+	case err == nil, errors.Is(err, errStaleTurn):
+		// A stale generation means the player acted for themselves in the window
+		// the locks were dropped; their own action settled the cursor and armed a
+		// fresh clock, so re-arming here would hand the next player a double turn.
+		return
+	default:
+		// TimeoutAction returned a move ValidateAction refuses: a rules bug, and
+		// per the contract the seat is taken on the next expiry instead. The
+		// generation is still current, so the re-arm targets the same seat.
 		slog.Warn("auto-play for an expired turn was refused",
 			"error", err, "player_id", playerID, "action", action.Name())
 		e.rearmTurnTimer()
@@ -82,8 +91,6 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 
 func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action, takeSeat bool) {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
 	if seq != e.turnSeq || e.state.Phase != Playing || len(e.state.Players) == 0 {
@@ -100,15 +107,16 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		return current.ID, nil, true
 	}
 
-	handler, ok := e.state.Rules.(TurnTimeoutHandler)
-	if !ok {
-		return "", nil, false
-	}
-	safe := handler.TimeoutAction(e.state)
+	// armTurnTimerLocked never arms without a TurnTimeoutHandler, and Rules is set
+	// once at construction, so the assertion cannot fail here.
+	safe := e.state.Rules.(TurnTimeoutHandler).TimeoutAction(e.state)
 	if safe == nil {
 		// The rules have no safe move here, so idling cannot be absorbed by playing
 		// on: the seat goes rather than the table waiting. Counting it as a full set
 		// of misses is what makes that decision re-checkable in removeIfStillIdle.
+		// A reachable nil in real play is a rules bug, so it is logged loudly.
+		slog.Warn("rules returned no safe timeout move; taking the seat",
+			"player_id", current.ID, "phase", e.state.Phase)
 		e.missedTurns[current.ID] = MaxMissedTurns
 		return current.ID, nil, true
 	}
@@ -120,8 +128,6 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 // player who SubmitAction'd in that window would still be kicked.
 func (e *Engine) removeIfStillIdle(seq uint64, playerID string) {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
 	if seq != e.turnSeq {
@@ -136,6 +142,10 @@ func (e *Engine) removeIfStillIdle(seq uint64, playerID string) {
 		e.armTurnTimerLocked()
 		return
 	}
+	// EventPlayerIdle ends the player's SSH session through the view, so this is
+	// the one server-side record that a seat was taken for idling.
+	slog.Info("removing idle player",
+		"player_id", playerID, "missed_turns", e.missedTurns[playerID])
 	e.broadcaster.Broadcast(Event{Type: EventPlayerIdle, PlayerID: playerID})
 	e.removePlayerLocked(playerID)
 }

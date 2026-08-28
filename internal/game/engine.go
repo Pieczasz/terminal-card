@@ -15,10 +15,23 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
+// ErrInvalidState is what a Rules implementation returns when State.Extra is not
+// the type it put there. It cannot happen through the engine, so seeing it means
+// a wiring bug, not a player mistake.
+var ErrInvalidState = errors.New("invalid state type")
+
+// errStaleTurn marks an auto-play that lost its turn between resolveTurnTimeout
+// dropping the lock and the submit re-acquiring it. It is internal by design: a
+// stale auto-play is a non-event, not a failure anyone should react to.
+var errStaleTurn = errors.New("turn already settled")
+
+// Engine owns one mutex covering both its own clock fields and the State: they are
+// always read together, and a second lock would only add orderings to get wrong.
 type Engine struct {
 	mu          sync.Mutex
 	state       *State
 	broadcaster *broadcaster.Broadcaster[Event]
+	closed      bool
 
 	turnTimeout  time.Duration
 	turnSeq      uint64
@@ -41,8 +54,6 @@ func NewEngine(rules Rules, players []*Player, cards []deck.Card, opts ...Engine
 		// Headroom above the player count for non-player subscribers (the lobby's
 		// ranked-finalize watcher) and brief reconnect overlap; too small a cap
 		// hands a closed channel to a real player, freezing their view.
-		// TODO: when we add the possibility to view other's games
-		// this needs to be handled differently.
 		broadcaster: broadcaster.New[Event](len(players) + 8),
 		turnTimeout: DefaultTurnTimeout,
 		missedTurns: make(map[string]int, len(players)),
@@ -57,50 +68,81 @@ func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
 	return e.broadcaster
 }
 
+// WithState runs fn with the engine lock held. fn must not call back into the
+// engine - every Engine method takes the same lock, so the call would deadlock.
 func (e *Engine) WithState(fn func(state *State)) {
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
+	e.mu.Lock()
+	defer e.mu.Unlock()
 	fn(e.state)
 }
 
 func (e *Engine) Snapshot() StateSnapshot {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.snapshotLocked()
+}
+
+func (e *Engine) snapshotLocked() StateSnapshot {
+	state := e.state
 	var snap StateSnapshot
-	e.WithState(func(state *State) {
-		snap.Phase = state.Phase
-		if state.Deck != nil {
-			snap.DeckSize = state.Deck.Size()
+	snap.Phase = state.Phase
+	if state.Deck != nil {
+		snap.DeckSize = state.Deck.Size()
+	}
+	if state.Discard != nil {
+		if top, ok := state.Discard.Peek(); ok {
+			snap.TopDiscard = top
 		}
-		if state.Discard != nil {
-			if top, ok := state.Discard.Peek(); ok {
-				snap.TopDiscard = top
-			}
+	}
+	if state.Winner != nil {
+		snap.Winner = state.Winner.DisplayName()
+	}
+	if current := e.currentPlayerLocked(); current != nil {
+		snap.CurrentPlayer = current.DisplayName()
+		snap.CurrentPlayerID = current.ID
+	}
+	snap.Players = make([]PlayerSnapshot, 0, len(state.Players))
+	for _, p := range state.Players {
+		if p == nil {
+			continue
 		}
-		if state.Winner != nil {
-			snap.Winner = state.Winner.DisplayName()
-		}
-		snap.Players = make([]PlayerSnapshot, 0, len(state.Players))
-		if current := e.currentPlayerLocked(); current != nil {
-			snap.CurrentPlayer = current.DisplayName()
-			snap.CurrentPlayerID = current.ID
-		}
-		for _, p := range state.Players {
-			if p == nil {
-				continue
-			}
-			snap.Players = append(snap.Players, PlayerSnapshot{
-				ID:       p.ID,
-				Username: p.DisplayName(),
-				HandSize: len(p.Cards),
-			})
-		}
-	})
+		snap.Players = append(snap.Players, PlayerSnapshot{
+			ID:       p.ID,
+			Username: p.DisplayName(),
+			HandSize: len(p.Cards),
+		})
+	}
 	return snap
+}
+
+// Frame reads everything a view renders in one lock hold, so the snapshot, the
+// hand, the clock and the per-game state cannot describe different moments. fn
+// (which may be nil) receives State.Extra under the same contract as
+// BoundEngine.WithHiddenState: unredacted, and never to be retained or mutated.
+func (e *Engine) Frame(playerID string, fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	snap := e.snapshotLocked()
+	var hand []deck.Card
+	for _, p := range e.state.Players {
+		if p != nil && p.ID == playerID {
+			hand = slices.Clone(p.Cards)
+			break
+		}
+	}
+	var remaining time.Duration
+	if !e.turnDeadline.IsZero() {
+		remaining = max(time.Until(e.turnDeadline), 0)
+	}
+	if fn != nil {
+		fn(e.state.Extra)
+	}
+	return snap, hand, remaining
 }
 
 func (e *Engine) CurrentPlayerID() string {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 	current := e.currentPlayerLocked()
 	if current == nil {
@@ -111,18 +153,8 @@ func (e *Engine) CurrentPlayerID() string {
 
 func (e *Engine) IsFinished() bool {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 	return e.state.Phase == Finished
-}
-
-func (e *Engine) Standings() []*Player {
-	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
-	defer e.mu.Unlock()
-	return e.standingsLocked()
 }
 
 // StandingsWithPlaces returns the standings and their 1-based finishing places under
@@ -130,8 +162,6 @@ func (e *Engine) Standings() []*Player {
 // scored equally share a place; everything else counts up strictly.
 func (e *Engine) StandingsWithPlaces() ([]*Player, []int) {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
 	standings := e.standingsLocked()
@@ -157,8 +187,6 @@ func (e *Engine) placesLocked(standings []*Player) []int {
 
 func (e *Engine) StandingsIDs() []string {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
 	standings := e.standingsLocked()
@@ -191,21 +219,24 @@ func (e *Engine) standingsLocked() []*Player {
 	return out
 }
 
-// Start deals and opens the table. Everything that can fail runs before the phase
-// moves off Waiting, so a failed start leaves a lobby that can try again rather
-// than a table stuck mid-deal.
+// Start deals and opens the table. A failed OnGameStart hands the dealt cards back
+// and restores the stock, so a failed start leaves a lobby that can try again
+// rather than a table stuck mid-deal.
 func (e *Engine) Start() error {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 
+	if e.closed {
+		return errors.New("game is closed")
+	}
 	if e.state.Phase != Waiting {
 		return errors.New("game already started")
 	}
 	if len(e.state.Players) == 0 {
 		return errors.New("cannot start game with no players")
 	}
+
+	undealt := e.state.Deck.Cards()
 
 	if err := e.state.Deck.Shuffle(); err != nil {
 		return fmt.Errorf("shuffle deck: %w", err)
@@ -215,6 +246,7 @@ func (e *Engine) Start() error {
 	for playerIdx := range e.state.Players {
 		cards, ok := e.state.Deck.DrawNCards(e.state.Rules.InitialDealCount())
 		if !ok {
+			e.state.Deck = deck.New(undealt)
 			return errors.New("insufficient number of cards to deal for all players")
 		}
 		hands[playerIdx] = cards
@@ -222,6 +254,7 @@ func (e *Engine) Start() error {
 
 	startIdx, err := cryptoIntN(len(e.state.Players))
 	if err != nil {
+		e.state.Deck = deck.New(undealt)
 		return fmt.Errorf("selecting first player: %w", err)
 	}
 
@@ -232,6 +265,12 @@ func (e *Engine) Start() error {
 	e.state.CurrentTurn = startIdx
 
 	if err := e.state.Rules.OnGameStart(e.state); err != nil {
+		for _, p := range e.state.Players {
+			p.Cards = nil
+		}
+		e.state.Deck = deck.New(undealt)
+		e.state.Discard = nil
+		e.state.CurrentTurn = 0
 		e.state.Phase = Waiting
 		return fmt.Errorf("failed to setup game: %w", err)
 	}
@@ -258,19 +297,32 @@ func cryptoIntN(n int) (int, error) {
 // SubmitAction applies action on behalf of playerID, who must be the one on turn.
 // A player acting for themselves clears their missed-turn count.
 func (e *Engine) SubmitAction(playerID string, action Action) error {
-	return e.submitAction(playerID, action, true)
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.submitActionLocked(playerID, action, true)
 }
 
-// submitAction is SubmitAction with control over the missed-turn count. The engine
-// passes false when playing for an absent player: that timeout has already been
-// counted, and letting the auto-play clear it would mean somebody who never comes
-// back is never removed.
-func (e *Engine) submitAction(playerID string, action Action, playerPresent bool) error {
+// submitTimedOutAction plays a move computed by resolveTurnTimeout. seq is the turn
+// generation the move was computed for: the locks were dropped in between, and a
+// generation that moved on means the player acted for themselves - applying the
+// stale move then would be a double play.
+func (e *Engine) submitTimedOutAction(playerID string, action Action, seq uint64) error {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
+	if seq != e.turnSeq {
+		return errStaleTurn
+	}
+	return e.submitActionLocked(playerID, action, false)
+}
 
+// submitActionLocked is the body of SubmitAction with control over the missed-turn
+// count. The engine passes playerPresent=false when playing for an absent player:
+// that timeout has already been counted, and letting the auto-play clear it would
+// mean somebody who never comes back is never removed.
+func (e *Engine) submitActionLocked(playerID string, action Action, playerPresent bool) error {
+	if e.closed {
+		return errors.New("game is closed")
+	}
 	if e.state.Phase != Playing {
 		return errors.New("game not in playing phase")
 	}
@@ -280,14 +332,20 @@ func (e *Engine) submitAction(playerID string, action Action, playerPresent bool
 		return errors.New("wait for your turn to perform an action")
 	}
 
-	// Cleared before validation: a player sending a move the rules reject is still
-	// sitting at the keyboard, and idling is what this counter is for.
+	if err := e.state.Rules.ValidateAction(e.state, action); err != nil {
+		return fmt.Errorf("you can't perform that action: %w", err)
+	}
+
+	// Cleared only on a move the rules accept: clearing on any keypress would let a
+	// client dodge the idle check in removeIfStillIdle by spamming rejected actions.
 	if playerPresent {
 		delete(e.missedTurns, playerID)
 	}
 
-	if err := e.state.Rules.ValidateAction(e.state, action); err != nil {
-		return fmt.Errorf("you can't perform that action: %w", err)
+	if err := e.state.Rules.ApplyAction(e.state, action); err != nil {
+		// State may be half-applied, so the game cannot be played on.
+		e.finishGameLocked(currentPlayer, EndReasonRulesError)
+		return fmt.Errorf("apply action: %w", err)
 	}
 
 	// AfterAction is where rules advance their own state machine (poker settles
@@ -295,13 +353,11 @@ func (e *Engine) submitAction(playerID string, action Action, playerPresent bool
 	// broadcast and clients never observe a half-applied move. A failure here means
 	// the rules could not reach a consistent state, so the game is finished rather
 	// than played on; anything checkable up front belongs in ValidateAction.
-	e.state.Rules.ApplyAction(e.state, action)
-
 	if err := e.state.Rules.AfterAction(e.state, action); err != nil {
 		// The game is over either way, so it ends the same way a win does: without
 		// the broadcast every other client sits on a frame that will never update,
 		// and the lobby never records the match.
-		e.finishGameLocked(currentPlayer)
+		e.finishGameLocked(currentPlayer, EndReasonRulesError)
 		return fmt.Errorf("post-action rules failed: %w", err)
 	}
 
@@ -311,7 +367,7 @@ func (e *Engine) submitAction(playerID string, action Action, playerPresent bool
 	})
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.finishGameLocked(currentPlayer)
+		e.finishGameLocked(currentPlayer, EndReasonWin)
 		return nil
 	}
 
@@ -326,8 +382,8 @@ func (e *Engine) submitAction(playerID string, action Action, playerPresent bool
 
 // finishGameLocked settles the winner from the rules standings and announces the
 // end of the game. fallback names the winner when the rules rank nobody. Caller
-// must hold e.mu and e.state.mu.
-func (e *Engine) finishGameLocked(fallback *Player) {
+// must hold e.mu.
+func (e *Engine) finishGameLocked(fallback *Player, reason EndReason) {
 	e.state.Phase = Finished
 	// Nobody is on turn any more, and a clock left running would auto-play into a
 	// finished game.
@@ -350,31 +406,25 @@ func (e *Engine) finishGameLocked(fallback *Player) {
 	e.broadcaster.Broadcast(Event{
 		Type:     EventGameEnded,
 		PlayerID: winnerID,
+		Reason:   reason,
 	})
 }
 
 func (e *Engine) RemovePlayer(playerID string) {
 	e.mu.Lock()
-	e.state.mu.Lock()
-	defer e.state.mu.Unlock()
 	defer e.mu.Unlock()
 	e.removePlayerLocked(playerID)
 }
 
-// removePlayerLocked is the body of RemovePlayer. Caller must hold e.mu and e.state.mu.
+// removePlayerLocked is the body of RemovePlayer. Caller must hold e.mu.
 func (e *Engine) removePlayerLocked(playerID string) {
 	if e.state.Phase == Finished {
 		return
 	}
 
-	playerIndex := -1
-	for i, p := range e.state.Players {
-		if p.ID == playerID {
-			playerIndex = i
-			break
-		}
-	}
-
+	playerIndex := slices.IndexFunc(e.state.Players, func(p *Player) bool {
+		return p != nil && p.ID == playerID
+	})
 	if playerIndex == -1 {
 		return
 	}
@@ -387,6 +437,7 @@ func (e *Engine) removePlayerLocked(playerID string) {
 	e.state.LeftPlayers = append(e.state.LeftPlayers, removedPlayer)
 
 	e.state.Players = slices.Delete(e.state.Players, playerIndex, playerIndex+1)
+	delete(e.missedTurns, playerID)
 
 	if e.state.CurrentTurn > playerIndex {
 		e.state.CurrentTurn--
@@ -397,8 +448,24 @@ func (e *Engine) removePlayerLocked(playerID string) {
 		h.AfterPlayerRemoved(e.state, playerIndex)
 	}
 
+	e.broadcaster.Broadcast(Event{Type: EventPlayerLeft, PlayerID: playerID})
+
+	// A table that never started cannot be won: rules like "any hand empty wins"
+	// would report a bogus win over undealt hands.
+	if e.state.Phase != Playing {
+		return
+	}
+
+	if len(e.state.Players) == 0 {
+		e.state.Winner = nil
+		e.state.Phase = Finished
+		e.stopTurnTimerLocked()
+		e.broadcaster.Broadcast(Event{Type: EventGameEnded, Reason: EndReasonAbandoned})
+		return
+	}
+
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.finishGameLocked(nil)
+		e.finishGameLocked(nil, EndReasonWin)
 		return
 	}
 
@@ -409,6 +476,7 @@ func (e *Engine) removePlayerLocked(playerID string) {
 		e.broadcaster.Broadcast(Event{
 			Type:     EventGameEnded,
 			PlayerID: e.state.Winner.ID,
+			Reason:   EndReasonForfeit,
 		})
 		return
 	}
@@ -421,18 +489,18 @@ func (e *Engine) removePlayerLocked(playerID string) {
 }
 
 // Close stops the turn clock and releases engine broadcaster resources. Safe to call
-// multiple times.
+// multiple times. The closed flag is what keeps a timeout resolved concurrently with
+// Close from re-arming a timer on an engine nobody holds any more.
 func (e *Engine) Close() {
 	e.mu.Lock()
-	e.state.mu.Lock()
+	e.closed = true
 	e.stopTurnTimerLocked()
-	e.state.mu.Unlock()
-	defer e.mu.Unlock()
+	e.mu.Unlock()
 	e.broadcaster.Close()
 }
 
 // currentPlayerLocked is the seat State.CurrentTurn points at, or nil when it points
-// at no seat. Caller must hold e.state.mu.
+// at no seat. Caller must hold e.mu.
 func (e *Engine) currentPlayerLocked() *Player {
 	if e.state.CurrentTurn < 0 || e.state.CurrentTurn >= len(e.state.Players) {
 		return nil
