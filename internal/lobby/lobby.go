@@ -375,6 +375,17 @@ func (l *Lobby) IsPrivate() bool {
 	return l.options.isPrivate
 }
 
+// ActiveGame returns the running engine, or nil while the lobby is not mid-game.
+// A reconnecting player's view uses it to land back at the table.
+func (l *Lobby) ActiveGame() *game.Engine {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.state != InGame {
+		return nil
+	}
+	return l.activeEngine
+}
+
 func (l *Lobby) IsWaiting() bool {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
@@ -578,6 +589,11 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			observability.TurnTimedOut(ctx, gameName)
 		case game.EventPlayerIdle:
 			observability.PlayerIdleRemoved(ctx, gameName)
+			// The engine took the seat, so the lobby roster follows: without this a
+			// disconnected player kicked for idling would reconnect into a lobby
+			// whose game no longer has them. Equal falls back to ID for a zero
+			// UserID, so the stub player matches the roster entry.
+			l.manager.LeaveLobby(&game.Player{ID: event.PlayerID})
 		case game.EventGameEnded:
 			l.finalizeFinishedGame(engine, event.Reason)
 			// The table has to reopen as soon as the match is over, not the next time
