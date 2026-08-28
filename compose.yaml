@@ -67,6 +67,9 @@ services:
       # The backstop that makes the line above safe: collection is forced as the heap
       # approaches this, so a traffic spike cannot turn a relaxed GOGC into an OOM.
       # Keep it at roughly 75% of whatever mem_limit this service is given.
+      # Measured (cmd/loadtest, menu journey): 1000 parked sessions sit right AT
+      # this limit (~1MB/session) with GC holding it and ~45% of one core; raise
+      # this before raising MAX_CONNECTIONS.
       - GOMEMLIMIT=1GiB
     volumes:
       - ssh-keys:/data/ssh
@@ -77,6 +80,16 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
+    healthcheck:
+      # The distroless image has no shell; the server binary probes its own
+      # stats API (-healthcheck -> GET /healthz, which pings the database).
+      # Plain compose only *marks* a container unhealthy; pair with an
+      # auto-restarter (or Docker Swarm) if unattended recovery matters.
+      test: ["CMD", "/usr/local/bin/backend", "-healthcheck"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     # Longer than run's full sequential drain budget (30s SSH Shutdown + 5s stats
     # API + 15s finalizers + 5s OTel flush = 55s), so a redeploy cannot SIGKILL the
     # process while a ranked match is still being persisted or telemetry flushed.

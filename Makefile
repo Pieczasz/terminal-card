@@ -1,4 +1,4 @@
-.PHONY: build test test-short test-integration lint fmt fix clean ci
+.PHONY: build test test-short test-integration lint fmt fix clean ci loadtest
 
 ci: fmt fix lint test build
 
@@ -25,6 +25,15 @@ fix:
 
 clean:
 	rm -rf bin/
+
+# Concurrent-SSH-session load test against an already-running server. Every run
+# registers fresh accounts, so PREFIX must change between runs on the same
+# database or registration fails with "username taken".
+# Override any flag: make loadtest SESSIONS=500 PREFIX=r2 HOLD=60s
+loadtest:
+	go run ./cmd/loadtest -addr $(or $(ADDR),127.0.0.1:6969) -sessions $(or $(SESSIONS),200) \
+		-hold $(or $(HOLD),60s) -ramp $(or $(RAMP),10s) -journey $(or $(JOURNEY),menu) \
+		-prefix $(or $(PREFIX),load)
 
 # Database Migrations
 install-tools:
