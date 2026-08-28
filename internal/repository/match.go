@@ -3,7 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
-	"math"
+	"slices"
 	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -18,16 +19,37 @@ import (
 
 var tracer = otel.Tracer("terminal-card/repository")
 
+// endSpan closes a span, marking it failed when the operation returned an error.
+// Recording the error without setting the status leaves a trace in which the one
+// span that failed still reads as successful.
+func endSpan(span trace.Span, err error) {
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, err.Error())
+	}
+	span.End()
+}
+
+// checkDistinctPlayers rejects a repeated seat. A duplicate would move that
+// player's rating twice and then collide on the match_participants primary key,
+// rolling back the whole match after the Elo work was already done.
+func checkDistinctPlayers(userIDs []uint) error {
+	seen := make(map[uint]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		if _, dup := seen[id]; dup {
+			return fmt.Errorf("duplicate user id %d in match standings", id)
+		}
+		seen[id] = struct{}{}
+	}
+	return nil
+}
+
 type gormMatchRepository struct {
 	db *gorm.DB
 }
 
 func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 	return &gormMatchRepository{db: db}
-}
-
-func (q *gormMatchRepository) GetOrCreateGame(ctx context.Context, name string) (*db.Game, error) {
-	return getOrCreateGame(q.db.WithContext(ctx), name)
 }
 
 // getOrCreateGame takes the handle rather than reaching for q.db, because callers
@@ -50,18 +72,31 @@ func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
 	return &game, nil
 }
 
-func (q *gormMatchRepository) RecordMatch(
-	ctx context.Context, gameID uint, orderedUserIDs []uint, eloDeltas map[uint]int, ranked bool,
-) error {
+func (q *gormMatchRepository) RecordCasualMatch(
+	ctx context.Context, gameName string, orderedUserIDs []uint,
+) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
-	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	ctx, span := tracer.Start(ctx, "db.RecordCasualMatch",
+		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
+	defer func() { endSpan(span, err) }()
+
+	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
+		return fmt.Errorf("record casual match: %w", err)
+	}
+
+	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		game, err := getOrCreateGame(tx, gameName)
+		if err != nil {
+			return err
+		}
 		// A casual result carries no placements, so history records the finish order.
-		return q.recordMatchTx(tx, gameID, orderedUserIDs, nil, eloDeltas, ranked)
+		return q.recordMatchTx(tx, game.ID, orderedUserIDs, nil, nil, false)
 	}); err != nil {
-		return fmt.Errorf("failed to record match transaction: %w", err)
+		err = fmt.Errorf("record casual match: %w", err)
+		return err
 	}
 	return nil
 }
@@ -70,16 +105,20 @@ func (q *gormMatchRepository) RecordMatch(
 // in a single database transaction so ELO and history cannot diverge.
 func (q *gormMatchRepository) FinalizeRankedMatch(
 	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
-) error {
+) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	ctx, span := tracer.Start(ctx, "db.FinalizeRankedMatch",
 		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
-	defer span.End()
+	defer func() { endSpan(span, err) }()
 
-	if err := q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
+		return fmt.Errorf("finalize ranked match: %w", err)
+	}
+
+	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		game, err := getOrCreateGame(tx, gameName)
 		if err != nil {
 			return err
@@ -91,8 +130,28 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 		}
 		return q.recordMatchTx(tx, game.ID, orderedUserIDs, places, deltas, true)
 	}); err != nil {
-		span.RecordError(err)
-		return fmt.Errorf("finalize ranked match: %w", err)
+		err = fmt.Errorf("finalize ranked match: %w", err)
+		return err
+	}
+	return nil
+}
+
+// seedRankingRows gives fetchRankings something to lock. A first-time
+// (user_id, game_id) has no row, so FOR UPDATE locks nothing and two concurrent
+// finalizes both insert: one hits 23505, its transaction rolls back and the match is
+// lost. Seeding at the default rating first turns that into an ordinary row lock.
+// Sorted by user_id so two overlapping seeds take the locks in the same order and
+// cannot deadlock.
+func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
+	seeds := make([]db.Ranking, 0, len(userIDs))
+	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
+		seeds = append(seeds, db.Ranking{UserID: userID, GameID: gameID, Elo: elo.ToUint32(elo.DefaultRating)})
+	}
+	if err := tx.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "user_id"}, {Name: "game_id"}},
+		DoNothing: true,
+	}).Create(&seeds).Error; err != nil {
+		return fmt.Errorf("seed rankings: %w", err)
 	}
 	return nil
 }
@@ -100,7 +159,9 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 func (q *gormMatchRepository) updateRankingsTx(
 	tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
 ) (map[uint]int, error) {
-	deltas := make(map[uint]int)
+	if err := seedRankingRows(tx, gameID, orderedUserIDs); err != nil {
+		return nil, err
+	}
 
 	rankingMap, err := q.fetchRankings(tx, gameID, orderedUserIDs)
 	if err != nil {
@@ -109,37 +170,28 @@ func (q *gormMatchRepository) updateRankingsTx(
 
 	newRatings := q.calculateNewElos(orderedUserIDs, places, rankingMap)
 
+	deltas := make(map[uint]int, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
-		userIDStr := strconv.FormatUint(uint64(userID), 10)
-		newRating := newRatings[userIDStr]
-
-		r, exists := rankingMap[userID]
-		if !exists {
-			r = &db.Ranking{
-				UserID: userID,
-				GameID: gameID,
-				Elo:    elo.ToUint32(elo.DefaultRating),
-			}
+		// Every seat was just seeded, so a miss means a soft-deleted ranking row the
+		// seed skipped and the select filtered out - not a fresh player.
+		r, ok := rankingMap[userID]
+		if !ok {
+			return nil, fmt.Errorf("no ranking row for user %d in game %d", userID, gameID)
+		}
+		// A key mismatch between the Elo result and the standings used to fall through
+		// to the zero value and silently store rating 100 (the elo floor).
+		newRating, ok := newRatings[strconv.FormatUint(uint64(userID), 10)]
+		if !ok {
+			return nil, fmt.Errorf("no elo result for user %d", userID)
 		}
 
-		oldRating := float64(r.Elo)
-		if !exists {
-			oldRating = elo.DefaultRating
-		}
-
+		oldElo := r.Elo
 		stored := elo.ToUint32(newRating)
-		r.Elo = stored
-		if !exists {
-			if err := tx.Create(r).Error; err != nil {
-				return nil, fmt.Errorf("create ranking: %w", err)
-			}
-		} else {
-			if err := tx.Model(r).Update("elo", stored).Error; err != nil {
-				return nil, fmt.Errorf("update ranking: %w", err)
-			}
+		if err := tx.Model(r).Update("elo", stored).Error; err != nil {
+			return nil, fmt.Errorf("update ranking: %w", err)
 		}
 
-		deltas[userID] = int(stored) - int(math.Round(oldRating))
+		deltas[userID] = int(stored) - int(oldElo)
 	}
 	return deltas, nil
 }
@@ -152,16 +204,19 @@ func (q *gormMatchRepository) recordMatchTx(
 		return err
 	}
 
+	participants := make([]db.MatchParticipant, len(orderedUserIDs))
 	for i, userID := range orderedUserIDs {
-		participant := db.MatchParticipant{
+		participants[i] = db.MatchParticipant{
 			MatchID:   match.ID,
 			UserID:    userID,
 			Placement: placeAt(places, i),
 			EloDelta:  eloDeltas[userID],
 		}
-		if err := tx.Create(&participant).Error; err != nil {
-			return fmt.Errorf("create match participant: %w", err)
-		}
+	}
+	// One multi-row insert: a table is at most a handful of seats, but a round trip
+	// each was a round trip each.
+	if err := tx.Create(&participants).Error; err != nil {
+		return fmt.Errorf("create match participants: %w", err)
 	}
 	return nil
 }

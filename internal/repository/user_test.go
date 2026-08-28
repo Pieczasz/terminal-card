@@ -1,6 +1,6 @@
 //go:build integration
 
-package repository
+package repository_test
 
 import (
 	"context"
@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +19,7 @@ import (
 func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 
 	t.Run("successful registration", func(t *testing.T) {
 		t.Parallel()
@@ -59,7 +60,7 @@ func TestUserRepository_RegisterUserWithKey_ConcurrentSameFingerprint(t *testing
 		t.Skip("skipping integration test")
 	}
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 
 	const workers = 8
 	errs := make(chan error, workers)
@@ -90,7 +91,7 @@ func TestUserRepository_RegisterUserWithKey_ConcurrentSameFingerprint(t *testing
 func TestUserRepository_LoadUserByFingerprint(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 
 	_, _, err := repo.RegisterUserWithKey(context.Background(), "player_two", "fingerprint_abc")
 	assert.NoError(t, err)
@@ -114,7 +115,7 @@ func TestUserRepository_LoadUserByFingerprint(t *testing.T) {
 func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 
 	user, key, err := repo.RegisterUserWithKey(context.Background(), "player_three", "fingerprint_xyz")
 	require.NoError(t, err)
@@ -127,7 +128,7 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	require.NoError(t, database.Model(&db.PublicKey{}).Where("id = ?", key.ID).
 		Update("last_used_at", stale).Error)
 
-	repo.UpdateUserActivity(context.Background(), user, key)
+	require.NoError(t, repo.UpdateUserActivity(context.Background(), user, key))
 
 	updatedUser, updatedKey, err := repo.LoadUserByFingerprint(context.Background(), "fingerprint_xyz")
 	require.NoError(t, err)
@@ -138,44 +139,90 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 		"last_used_at must move forward: got %v, seeded %v", updatedKey.LastUsedAt, stale)
 }
 
-// The public key carries a preloaded User, which GORM would happily upsert
-// alongside the timestamp - so every login became a write to the users table.
-func TestUserRepository_UpdateUserActivityDoesNotWriteUsers(t *testing.T) {
+// Reproduction: soft-deleting a user leaves its public_keys row matching, and the
+// Preload's deleted_at IS NULL only empties the association. The old code returned
+// &dbKey.User unconditionally, so the ssh auth path saw a non-nil user with ID 0 and
+// logged the deleted account in as user zero.
+func TestUserRepository_SoftDeletedUserDoesNotAuthenticate(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	created, createdKey, err := repo.RegisterUserWithKey(ctx, "activity_user", "activity_fp")
 	require.NoError(t, err)
 	require.NoError(t, database.Delete(&db.User{}, created.ID).Error)
 
+	// The key row is deliberately left behind: that is the state the fix is about.
+	var key db.PublicKey
+	require.NoError(t, database.First(&key, createdKey.ID).Error)
+
+	user, loadedKey, err := repo.LoadUserByFingerprint(ctx, "activity_fp")
+	require.NoError(t, err, "a deleted account is a miss, not an error")
+	assert.Nil(t, user, "a soft-deleted user must not authenticate")
+	assert.Nil(t, loadedKey, "and its key must not come back either")
+
+	var users []db.User
+	require.NoError(t, database.Unscoped().Find(&users).Error)
+	require.Len(t, users, 1)
+	assert.True(t, users[0].DeletedAt.Valid, "a deleted user must not come back on login")
+}
+
+// The public key carries a preloaded User, which GORM would happily upsert
+// alongside the timestamp - so every login became a write to the users table.
+func TestUserRepository_UpdateUserActivityDoesNotWriteUsers(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := repository.NewUserRepository(database)
+	ctx := context.Background()
+
+	_, createdKey, err := repo.RegisterUserWithKey(ctx, "activity_two", "activity_fp2")
+	require.NoError(t, err)
+
 	stale := time.Now().Add(-24 * time.Hour).UTC()
 	require.NoError(t, database.Model(&db.PublicKey{}).Where("id = ?", createdKey.ID).
 		Update("last_used_at", stale).Error)
 
-	// This is what the ssh auth path hands UpdateUserActivity: the key still
-	// resolves, but its preloaded User is empty now that the user is gone.
-	user, key, err := repo.LoadUserByFingerprint(ctx, "activity_fp")
+	user, key, err := repo.LoadUserByFingerprint(ctx, "activity_fp2")
 	require.NoError(t, err)
-
-	repo.UpdateUserActivity(ctx, user, key)
+	require.NotNil(t, user)
+	require.NoError(t, repo.UpdateUserActivity(ctx, user, key))
 
 	var reloaded db.PublicKey
 	require.NoError(t, database.First(&reloaded, createdKey.ID).Error)
 	assert.True(t, reloaded.LastUsedAt.After(stale),
 		"the association write must not take the key's own update down with it")
 
-	var users []db.User
-	require.NoError(t, database.Unscoped().Find(&users).Error)
-	require.Len(t, users, 1, "updating a key must not insert a user")
-	assert.True(t, users[0].DeletedAt.Valid, "a deleted user must not come back on login")
+	var users int64
+	require.NoError(t, database.Model(&db.User{}).Count(&users).Error)
+	assert.Equal(t, int64(1), users, "updating a key must not insert a user")
+}
+
+func TestUserRepository_UserMatchHistoryRejectsNegativeLimit(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := repository.NewUserRepository(database)
+	ctx := context.Background()
+
+	u, _, err := repo.RegisterUserWithKey(ctx, "neg_limit", "neg_limit_fp")
+	require.NoError(t, err)
+
+	game := &db.Game{Name: "NegGame"}
+	require.NoError(t, database.Create(game).Error)
+	match := &db.Match{GameID: game.ID}
+	require.NoError(t, database.Create(match).Error)
+	require.NoError(t, database.Create(&db.MatchParticipant{MatchID: match.ID, UserID: u.ID, Placement: 1}).Error)
+
+	// GORM treats a negative Limit as "no limit", which would stream the whole table.
+	history, err := repo.UserMatchHistory(ctx, u.ID, -1)
+	require.NoError(t, err)
+	assert.Empty(t, history)
 }
 
 func TestUserRepository_BestPlayersCachesShortTables(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	game := &db.Game{Name: "ShortTable"}
@@ -197,10 +244,37 @@ func TestUserRepository_BestPlayersCachesShortTables(t *testing.T) {
 	assert.Len(t, cached, 1, "a table shorter than the limit must still be cached")
 }
 
+// A limit above bestPlayersCacheSize (200) cannot be answered from an entry that
+// only holds 200 rows, so it must bypass the cache in both directions rather than
+// serve - or store - a silently truncated board.
+func TestUserRepository_BestPlayersBypassesCacheAboveItsSize(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := repository.NewUserRepository(database)
+	ctx := context.Background()
+
+	game := &db.Game{Name: "BigAsk"}
+	require.NoError(t, database.Create(game).Error)
+	u := &db.User{Username: "big_ask"}
+	require.NoError(t, database.Create(u).Error)
+	require.NoError(t, database.Create(&db.Ranking{UserID: u.ID, GameID: game.ID, Elo: 1700}).Error)
+
+	best, err := repo.BestPlayers(ctx, 201, "")
+	require.NoError(t, err)
+	require.Len(t, best, 1)
+
+	require.NoError(t, database.Where("1 = 1").Delete(&db.Ranking{}).Error)
+
+	// Had the oversized ask been cached, this would still answer 1.
+	again, err := repo.BestPlayers(ctx, 201, "")
+	require.NoError(t, err)
+	assert.Empty(t, again, "an oversized limit must not be served from the cache")
+}
+
 func TestUserRepository_BestPlayers(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	game := &db.Game{Name: "TestGame"}
@@ -227,7 +301,7 @@ func TestUserRepository_BestPlayers(t *testing.T) {
 func TestUserRepository_BestPlayers_FiltersByGame(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	poker := &db.Game{Name: "Poker"}
@@ -260,7 +334,7 @@ func TestUserRepository_BestPlayers_FiltersByGame(t *testing.T) {
 func TestUserRepository_UserProfile(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	u, _, _ := repo.RegisterUserWithKey(ctx, "profile_user", "profile_fp")
@@ -283,7 +357,7 @@ func TestUserRepository_UserProfile(t *testing.T) {
 func TestUserRepository_UserMatchHistory(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
-	repo := NewUserRepository(database)
+	repo := repository.NewUserRepository(database)
 	ctx := context.Background()
 
 	u, _, _ := repo.RegisterUserWithKey(ctx, "history_user", "history_fp")
