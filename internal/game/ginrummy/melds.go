@@ -17,11 +17,23 @@ func sumDeadwood(cards []deck.Card) int {
 	return total
 }
 
-// BestMeldSplit partitions hand into melds minimizing deadwood points.
-func BestMeldSplit(hand []deck.Card) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
+// maskBits is how many cards the meld search can address: candidate melds are
+// uint16 index masks.
+const maskBits = 16
+
+// bestMeldSplit partitions hand into melds minimizing deadwood points.
+//
+// A hand of more than maskBits cards cannot be searched - the masks would silently
+// drop the cards past bit 15 and score a knock on melds nobody checked - so it is
+// reported as all deadwood instead. Gin rummy deals ten and holds eleven mid-turn,
+// so the guard is for a caller that does not exist yet.
+func bestMeldSplit(hand []deck.Card) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	n := len(hand)
 	if n == 0 {
 		return nil, nil, 0
+	}
+	if n > maskBits {
+		return nil, slices.Clone(hand), sumDeadwood(hand)
 	}
 	cards := slices.Clone(hand)
 	candidates := generateMeldMasks(cards)
@@ -173,16 +185,15 @@ func combinations(items []int, k int) [][]int {
 	return out
 }
 
+// highestPointCard is the priciest card to be caught holding. Empty input returns the
+// zero Card, which is detectably empty because standard ranks start at 1.
 func highestPointCard(cards []deck.Card) deck.Card {
-	best := cards[0]
-	bestPts := deadwoodPoints(best)
-	for _, c := range cards[1:] {
-		if p := deadwoodPoints(c); p > bestPts {
-			best = c
-			bestPts = p
-		}
+	if len(cards) == 0 {
+		return deck.Card{}
 	}
-	return best
+	return slices.MaxFunc(cards, func(a, b deck.Card) int {
+		return deadwoodPoints(a) - deadwoodPoints(b)
+	})
 }
 
 func isSet(meld []deck.Card) bool {

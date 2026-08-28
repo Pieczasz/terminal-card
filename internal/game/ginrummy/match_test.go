@@ -46,7 +46,7 @@ func TestMatch_ScoresCarryIntoNextHand(t *testing.T) {
 }
 
 // Two players who only ever take the upcard never touch the stock, so the ordinary
-// wall is unreachable. Before TakenUpcard + MaxHandTurns this ran forever: each player
+// wall is unreachable. Before TakenUpcard + maxHandTurns this ran forever: each player
 // laid the card they had just picked up straight back and nothing in the hand changed.
 func TestMatch_UpcardTradingCannotStallTheHand(t *testing.T) {
 	t.Parallel()
@@ -54,12 +54,12 @@ func TestMatch_UpcardTradingCannotStallTheHand(t *testing.T) {
 	state, extra := startedState(t)
 	openingStock := state.Deck.Size()
 
-	for turn := range MaxHandTurns * 2 {
+	for turn := range maxHandTurns * 2 {
 		if extra.HandComplete {
 			require.NotNil(t, extra.LastHandResult)
 			assert.True(t, extra.LastHandResult.Wall, "a stalled hand settles as a wall")
 			assert.Equal(t, openingStock, state.Deck.Size(), "no stock was ever drawn")
-			assert.Equal(t, MaxHandTurns, extra.TurnsThisHand)
+			assert.Equal(t, maxHandTurns, extra.TurnsThisHand)
 			return
 		}
 
@@ -78,7 +78,7 @@ func TestMatch_UpcardTradingCannotStallTheHand(t *testing.T) {
 		require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: shed}))
 		state.CurrentTurn = 1 - state.CurrentTurn
 	}
-	t.Fatalf("hand never terminated after %d turns", MaxHandTurns*2)
+	t.Fatalf("hand never terminated after %d turns", maxHandTurns*2)
 }
 
 func TestMatch_NextHandRejectedWhileHandLive(t *testing.T) {
@@ -93,7 +93,7 @@ func TestMatch_EndsOnceCumulativeScoreCrossesTarget(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
 	state, extra := startedState(t)
-	extra.CumulativeScores["p1"] = TargetScore - 1
+	extra.CumulativeScores["p1"] = targetScore - 1
 
 	knocker := []deck.Card{
 		c(deck.Two, deck.Hearts), c(deck.Three, deck.Hearts), c(deck.Four, deck.Hearts), c(deck.Five, deck.Hearts),
@@ -115,7 +115,7 @@ func TestMatch_EndsOnceCumulativeScoreCrossesTarget(t *testing.T) {
 	rules.ApplyAction(state, ActionKnock{Discard: c(deck.King, deck.Clubs)})
 	assert.True(t, extra.MatchComplete)
 	assert.True(t, rules.CheckWinCondition(state))
-	assert.GreaterOrEqual(t, extra.CumulativeScores["p1"], TargetScore)
+	assert.GreaterOrEqual(t, extra.CumulativeScores["p1"], targetScore)
 }
 
 func TestStandings_LeavingForfeitsScoresStay(t *testing.T) {
@@ -139,7 +139,7 @@ func TestStandings_LeavingForfeitsScoresStay(t *testing.T) {
 
 	engine.RemovePlayer("p2")
 	assert.Equal(t, game.Finished, engine.Snapshot().Phase)
-	standings := engine.Standings()
+	standings, _ := engine.StandingsWithPlaces()
 	require.NotEmpty(t, standings)
 	assert.Equal(t, "p1", standings[0].ID)
 

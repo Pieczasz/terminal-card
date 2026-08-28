@@ -6,26 +6,32 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
-// ApplyLayoffs extends knockerMelds with opponent deadwood cards that attach
+// applyLayoffs extends knockerMelds with opponent deadwood cards that attach
 // legally. Repeats until no card attaches (an earlier layoff can open a new end).
-func ApplyLayoffs(opponentDeadwood []deck.Card, knockerMelds [][]deck.Card) (extended [][]deck.Card, remaining []deck.Card) {
+// laidOff is what moved, in the order it was consumed: reconstructing it afterwards
+// by diffing the two hands is guesswork about something this loop already knew.
+func applyLayoffs(
+	opponentDeadwood []deck.Card, knockerMelds [][]deck.Card,
+) (extended [][]deck.Card, remaining, laidOff []deck.Card) {
 	extended = cloneMelds(knockerMelds)
 	remaining = slices.Clone(opponentDeadwood)
 
 	for changed := true; changed; {
 		changed = false
 		for i := 0; i < len(remaining); {
-			if idx, ok := findAttach(remaining[i], extended); ok {
-				extended[idx] = append(extended[idx], remaining[i])
-				sortMeld(extended[idx])
-				remaining = append(remaining[:i], remaining[i+1:]...)
-				changed = true
+			idx, ok := findAttach(remaining[i], extended)
+			if !ok {
+				i++
 				continue
 			}
-			i++
+			extended[idx] = append(extended[idx], remaining[i])
+			sortMeld(extended[idx])
+			laidOff = append(laidOff, remaining[i])
+			remaining = slices.Delete(remaining, i, i+1)
+			changed = true
 		}
 	}
-	return extended, remaining
+	return extended, remaining, laidOff
 }
 
 // findAttach picks the meld a card lays off onto, runs before sets. A run has two
@@ -73,20 +79,4 @@ func sortMeld(meld []deck.Card) {
 	slices.SortFunc(meld, func(a, b deck.Card) int {
 		return deck.RunOrder(a.Rank) - deck.RunOrder(b.Rank)
 	})
-}
-
-func laidOffDiff(before, after []deck.Card) []deck.Card {
-	remaining := make(map[deck.Card]int, len(after))
-	for _, c := range after {
-		remaining[c]++
-	}
-	var laid []deck.Card
-	for _, c := range before {
-		if remaining[c] > 0 {
-			remaining[c]--
-			continue
-		}
-		laid = append(laid, c)
-	}
-	return laid
 }

@@ -206,9 +206,20 @@ func TestRules_Knock_Gin(t *testing.T) {
 	require.NotNil(t, extra.LastHandResult)
 	assert.True(t, extra.LastHandResult.Gin)
 	assert.Equal(t, "p1", extra.LastHandResult.Winner)
-	assert.Equal(t, sumDeadwood(opponent)+GinBonus, extra.LastHandResult.ScoreDelta)
-	assert.Empty(t, extra.LastHandResult.LaidOffCards, "gin blocks layoffs")
+	assert.Equal(t, sumDeadwood(opponent)+ginBonus, extra.LastHandResult.ScoreDelta)
 	assert.Equal(t, extra.LastHandResult.ScoreDelta, extra.CumulativeScores["p1"])
+
+	// 6♥ extends the knocker's 2♥-5♥ run, so it is deadwood only because gin blocks
+	// layoffs outright. Without a card that would otherwise come off, "no layoffs"
+	// and "nothing was layable" look the same.
+	layable := c(deck.Six, deck.Hearts)
+	require.Contains(t, opponent, layable)
+	require.True(t, slices.ContainsFunc(extra.LastHandResult.KnockerMelds, func(m []deck.Card) bool {
+		return canAttach(layable, m)
+	}), "the fixture must give the opponent a card that would lay off")
+	assert.Empty(t, extra.LastHandResult.LaidOffCards, "gin blocks layoffs")
+	assert.Contains(t, extra.LastHandResult.OpponentDeadwood, layable,
+		"a layable card still scores as deadwood against gin")
 }
 
 func TestRules_Knock_Undercut(t *testing.T) {
@@ -241,8 +252,8 @@ func TestRules_Knock_Undercut(t *testing.T) {
 	require.NotNil(t, extra.LastHandResult)
 	assert.True(t, extra.LastHandResult.Undercut)
 	assert.Equal(t, "p2", extra.LastHandResult.Winner)
-	assert.Equal(t, 5+UndercutBonus, extra.LastHandResult.ScoreDelta)
-	assert.Equal(t, 5+UndercutBonus, extra.CumulativeScores["p2"])
+	assert.Equal(t, 5+undercutBonus, extra.LastHandResult.ScoreDelta)
+	assert.Equal(t, 5+undercutBonus, extra.CumulativeScores["p2"])
 }
 
 // The undercut boundary is `remPts <= knockerPts`, so a tie goes to the opponent.
@@ -285,12 +296,12 @@ func TestRules_Knock_UndercutOnATie(t *testing.T) {
 	require.Equal(t, 5, result.OpponentDeadwoodPoints, "the tie is the point of this test")
 	assert.True(t, result.Undercut, "equal deadwood undercuts the knocker")
 	assert.Equal(t, "p2", result.Winner)
-	assert.Equal(t, UndercutBonus, result.ScoreDelta, "a tie scores the bonus alone")
-	assert.Equal(t, UndercutBonus, extra.CumulativeScores["p2"])
+	assert.Equal(t, undercutBonus, result.ScoreDelta, "a tie scores the bonus alone")
+	assert.Equal(t, undercutBonus, extra.CumulativeScores["p2"])
 	assert.Zero(t, extra.CumulativeScores["p1"])
 }
 
-// WallStockSize cards stay undealt, so the boundary is drawn at exactly that size.
+// wallStockSize cards stay undealt, so the boundary is drawn at exactly that size.
 func TestRules_DrawStock_WallBoundary(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -300,9 +311,9 @@ func TestRules_DrawStock_WallBoundary(t *testing.T) {
 		stock   int
 		wantErr bool
 	}{
-		{name: "one above the wall is drawable", stock: WallStockSize + 1},
-		{name: "exactly at the wall is not", stock: WallStockSize, wantErr: true},
-		{name: "below the wall is not", stock: WallStockSize - 1, wantErr: true},
+		{name: "one above the wall is drawable", stock: wallStockSize + 1},
+		{name: "exactly at the wall is not", stock: wallStockSize, wantErr: true},
+		{name: "below the wall is not", stock: wallStockSize - 1, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -321,16 +332,31 @@ func TestRules_DrawStock_WallBoundary(t *testing.T) {
 }
 
 // An absent player must still be handed a legal move at the wall, where the stock is
-// off limits and the discard pile is the only place left to draw from.
-func TestRules_TimeoutAction_DrawsTheDiscardAtTheWall(t *testing.T) {
+// off limits and the discard pile is the only place left to draw from - and where the
+// pile is empty too, no move at all rather than one the validator refuses. A refused
+// auto-play costs the seat on the next expiry, which is the opposite of a defence.
+func TestRules_TimeoutAction_AtTheWall(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
-	state, _ := startedState(t)
-	state.Deck = deck.New(deck.StandardDeck()[:WallStockSize])
 
-	action := rules.TimeoutAction(state)
-	assert.Equal(t, ActionDrawDiscard{}, action)
-	require.NoError(t, rules.ValidateAction(state, action), "the safe move must be legal")
+	t.Run("draws the discard while there is one", func(t *testing.T) {
+		t.Parallel()
+		state, _ := startedState(t)
+		state.Deck = deck.New(deck.StandardDeck()[:wallStockSize])
+
+		action := rules.TimeoutAction(state)
+		assert.Equal(t, ActionDrawDiscard{}, action)
+		require.NoError(t, rules.ValidateAction(state, action), "the safe move must be legal")
+	})
+
+	t.Run("an empty pile at the wall has no legal move", func(t *testing.T) {
+		t.Parallel()
+		state, _ := startedState(t)
+		state.Deck = deck.New(deck.StandardDeck()[:wallStockSize])
+		state.Discard = deck.New(nil)
+
+		assert.Nil(t, rules.TimeoutAction(state), "every draw here is one ValidateAction refuses")
+	})
 }
 
 func TestRules_Wall_AfterDiscard(t *testing.T) {
@@ -485,4 +511,55 @@ func TestRules_DrawKeepsTurn(t *testing.T) {
 	require.NotNil(t, state.OverrideNextTurn)
 	assert.Equal(t, 0, *state.OverrideNextTurn)
 	assert.Len(t, state.Players[0].Cards, 11)
+}
+
+// A hand nobody knocks in scores nothing, so the target score alone never arrives:
+// before the hand cap a table that walled every time redealt forever.
+func TestMatch_RepeatedWallsEndTheMatch(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state, extra := startedState(t)
+
+	for range maxHands + 5 {
+		// Put the stock at its reserve so the next completed discard walls the hand.
+		extra.HandPhase = AwaitingDiscard
+		state.Deck = deck.New(deck.StandardDeck()[:wallStockSize])
+		card := state.Players[state.CurrentTurn].Cards[0]
+		rules.ApplyAction(state, ActionDiscard{Card: card})
+		require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: card}))
+		require.True(t, extra.HandComplete)
+		require.True(t, extra.LastHandResult.Wall)
+
+		if extra.MatchComplete {
+			assert.Equal(t, maxHands, extra.HandNumber, "the match ends at the cap")
+			assert.True(t, rules.CheckWinCondition(state))
+			assert.Zero(t, extra.CumulativeScores["p1"], "walls score nothing")
+			assert.Zero(t, extra.CumulativeScores["p2"])
+			require.ErrorContains(t, rules.ValidateAction(state, ActionNextHand{}), "match is over")
+			return
+		}
+
+		require.NoError(t, rules.ValidateAction(state, ActionNextHand{}))
+		require.NoError(t, rules.AfterAction(state, ActionNextHand{}))
+	}
+	t.Fatalf("the match never ended after %d walled hands", maxHands+5)
+}
+
+// Standings and StandingScore have to agree, or the engine splits a genuine draw by
+// slice position and the seat that sorted first takes rating off the seat that did not.
+func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
+	t.Parallel()
+	engine := game.NewEngine(&Rules{}, []*game.Player{{ID: "p1"}, {ID: "p2"}}, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra := s.Extra.(*State)
+		extra.CumulativeScores["p1"] = 40
+		extra.CumulativeScores["p2"] = 40
+	})
+
+	standings, places := engine.StandingsWithPlaces()
+	require.Len(t, standings, 2)
+	assert.Equal(t, []int{1, 1}, places, "equal totals are one place, not two")
 }
