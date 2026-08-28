@@ -3,7 +3,6 @@ package crazyeight
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -16,6 +15,7 @@ var (
 	_ game.Rules              = (*Rules)(nil)
 	_ game.PlayerLeaveHandler = (*Rules)(nil)
 	_ game.TurnTimeoutHandler = (*Rules)(nil)
+	_ game.StandingScorer     = (*Rules)(nil)
 )
 
 // TimeoutAction draws. ValidateAction always accepts a draw, and on an exhausted
@@ -42,19 +42,40 @@ func (r *Rules) OnGameStart(state *game.State) error {
 	state.Extra = extra
 	state.Discard = deck.New([]deck.Card{})
 
-	firstCard, ok := state.Deck.Draw()
-	if !ok {
-		return errors.New("not enough cards to start the game")
+	// An Eight is the wild card and the deck cannot name a suit for the one it turns
+	// up itself, which would leave the opening suit set by the card's own printed
+	// suit while every player sees a wild. Redraw until a plain card opens the pile,
+	// the same way uno refuses to open on a Wild.
+	var setAside []deck.Card
+	for {
+		card, ok := state.Deck.Draw()
+		if !ok {
+			state.Deck.AddCard(setAside...)
+			return errors.New("not enough cards to start the game")
+		}
+		if card.Rank != deck.Eight {
+			state.Discard.AddCard(card)
+			extra.CurrentSuit = card.Suit
+			break
+		}
+		setAside = append(setAside, card)
 	}
-	state.Discard.AddCard(firstCard)
-	extra.CurrentSuit = firstCard.Suit
+	if len(setAside) > 0 {
+		state.Deck.AddCard(setAside...)
+		if err := state.Deck.Shuffle(); err != nil {
+			return fmt.Errorf("reshuffle eights: %w", err)
+		}
+	}
 
 	return nil
 }
 
+// ActionPlayCard carries exactly one card by construction: a single field cannot
+// express the zero- or multi-card requests a slice could, so ApplyAction has no
+// invalid length to guard against.
 type ActionPlayCard struct {
-	Cards []deck.Card
-	Suit  deck.Suit
+	Card deck.Card
+	Suit deck.Suit
 }
 
 func (a ActionPlayCard) Name() string { return "crazyeight.PlayCard" }
@@ -80,18 +101,14 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 
 	switch action := action.(type) {
 	case ActionPlayCard:
-		if len(action.Cards) != 1 {
-			return errors.New("must play exactly one card")
-		}
-		card := action.Cards[0]
+		card := action.Card
 
 		if !slices.Contains(state.Players[state.CurrentTurn].Cards, card) {
-			slog.Warn("illegal play attempted", "player_id", state.Players[state.CurrentTurn].ID)
 			return errors.New("you don't have that card")
 		}
 
@@ -118,16 +135,16 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	return errors.New("unknown action")
 }
 
-func (r *Rules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return
+		return game.ErrInvalidState
 	}
 	p := state.Players[state.CurrentTurn]
 
 	switch action := action.(type) {
 	case ActionPlayCard:
-		card := action.Cards[0]
+		card := action.Card
 
 		p.Cards = deck.RemoveOne(p.Cards, card)
 		state.Discard.AddCard(card)
@@ -141,47 +158,22 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 
 	case ActionDrawCard:
 		if state.Deck.IsEmpty() {
-			if err := reshuffleDiscardIntoDeck(state); err != nil {
-				slog.Error("crazy eights reshuffle failed", "error", err)
-				extra.Passes++ // fail closed: do not draw from an untrusted order
-				return
+			if err := game.ReshuffleDiscardIntoStock(state); err != nil {
+				// A shuffle failure is a crypto/rand failure: unrecoverable, and
+				// the engine finishes the game rather than playing an untrusted
+				// order.
+				return fmt.Errorf("reshuffle discard into stock: %w", err)
 			}
 		}
 		drawn, ok := state.Deck.Draw()
 		if !ok {
 			extra.Passes++ // stock and discard exhausted: this turn is a forced pass
-			return
+			return nil
 		}
 		p.Cards = append(p.Cards, drawn)
 		extra.Passes = 0
 	}
-}
-
-// reshuffleDiscardIntoDeck moves the discard pile (except its top card) back
-// into the stock and shuffles, conserving every card. On shuffle failure the
-// discard is restored so the stock stays empty and the caller can fail closed.
-func reshuffleDiscardIntoDeck(state *game.State) error {
-	top, ok := state.Discard.Draw()
-	if !ok {
-		return nil
-	}
-	rest := state.Discard.Cards()
-	state.Discard = deck.New([]deck.Card{top})
-	state.Deck.AddCard(rest...)
-	if err := state.Deck.Shuffle(); err != nil {
-		// Restore prior piles so we never leave an unshuffled stock in play.
-		state.Discard = restoreDiscard(rest, top)
-		state.Deck = deck.New(nil)
-		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
-	}
 	return nil
-}
-
-// restoreDiscard puts the pile back the way it was found, top card last. Peek and
-// Draw read the end of the pile, so rebuilding it the other way round rotates the
-// discard and leaves a card nobody played sitting in play.
-func restoreDiscard(rest []deck.Card, top deck.Card) *deck.Pile {
-	return deck.New(append(rest, top))
 }
 
 func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
@@ -189,17 +181,11 @@ func (r *Rules) AfterAction(_ *game.State, _ game.Action) error {
 }
 
 func (r *Rules) CheckWinCondition(state *game.State) bool {
-	for _, p := range state.Players {
-		if len(p.Cards) == 0 {
-			return true
-		}
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return false
 	}
-	// Every player passed in succession: the board is exhausted with no legal
-	// move, so the hand is deadlocked and ends (Standings ranks by fewest cards).
-	if extra, ok := state.Extra.(*State); ok && len(state.Players) > 0 && extra.Passes >= len(state.Players) {
-		return true
-	}
-	return false
+	return game.HandEmptyOrAllPassed(state, extra.Passes)
 }
 
 // OnPlayerLeave returns the departing player's cards to the stock so the deck
@@ -211,29 +197,19 @@ func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 	if extra, ok := state.Extra.(*State); ok {
 		extra.Passes = 0
 	}
-	for _, p := range state.Players {
-		if p.ID == playerID {
-			state.Deck.AddCard(p.Cards...)
-			p.Cards = nil
-			if err := state.Deck.Shuffle(); err != nil {
-				slog.Error("crazy eights shuffle after leave failed", "error", err, "player_id", playerID)
-			}
-			return
-		}
-	}
+	game.ReturnHandToStock(state, playerID, "crazy eights")
 }
 
 // AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
+// Standings ranks by fewest cards held. Deviation: the paper game scores a hand by
+// the pip value of the cards left in each hand, which needs a running match total
+// this table does not keep - one hand, and the shortest hand takes it.
 func (r *Rules) Standings(state *game.State) []*game.Player {
-	standings := slices.Clone(state.Players)
-
-	slices.SortStableFunc(standings, func(a, b *game.Player) int {
-		return len(a.Cards) - len(b.Cards)
+	return game.StandingsByScore(state.Players, func(p *game.Player) int {
+		return r.StandingScore(state, p)
 	})
-
-	return standings
 }
 
 // StandingScore is the value Standings sorted by, so two players left holding the
