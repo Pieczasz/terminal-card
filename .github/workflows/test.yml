@@ -15,7 +15,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26'
+        go-version: '1.27'
         cache: true
 
     - name: Download dependencies
@@ -32,7 +32,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26'
+        go-version: '1.27'
         cache: true
 
     - name: Download dependencies
@@ -49,7 +49,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26'
+        go-version: '1.27'
         cache: false
 
     - name: golangci-lint
@@ -65,7 +65,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.26'
+        go-version: '1.27'
 
     # Reachability-based, so it fails only on advisories our call graph can actually
     # reach. Clean today; this is what keeps it clean.
