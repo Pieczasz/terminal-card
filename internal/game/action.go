@@ -9,6 +9,8 @@ type Action interface {
 type Event struct {
 	Type     EventType
 	PlayerID string
+	// Reason qualifies EventGameEnded; every other event leaves it zero.
+	Reason EndReason
 }
 
 type EventType uint8
@@ -21,6 +23,22 @@ const (
 	EventGameStarted
 	EventTurnTimedOut
 	EventPlayerIdle
+	EventPlayerLeft
+)
+
+// EndReason says why a game ended, so an observer can tell a win from a table the
+// rules broke or everyone walked out on - the three look identical from the event
+// type alone.
+type EndReason uint8
+
+const (
+	EndReasonUnknown EndReason = iota
+	EndReasonWin
+	EndReasonRulesError
+	// EndReasonForfeit is last-player-standing: everyone else left mid-game.
+	EndReasonForfeit
+	// EndReasonAbandoned is a table every seat left.
+	EndReasonAbandoned
 )
 
 type PlayerSnapshot struct {

@@ -1,6 +1,8 @@
 package game
 
 import (
+	"cmp"
+	"slices"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -17,7 +19,10 @@ type Rules interface {
 
 	ValidateAction(state *State, action Action) error
 	AfterAction(state *State, action Action) error
-	ApplyAction(state *State, action Action)
+	// ApplyAction mutates the state for an action ValidateAction accepted. An error
+	// means the state may be half-applied, and the engine finishes the game rather
+	// than playing on - anything checkable up front belongs in ValidateAction.
+	ApplyAction(state *State, action Action) error
 	CheckWinCondition(state *State) bool
 	Standings(state *State) []*Player
 }
@@ -53,4 +58,16 @@ func AnyScoreAtLeast(scores map[string]int, target int) bool {
 		}
 	}
 	return false
+}
+
+// StandingsByScore orders players by score ascending, ties broken stably by seat
+// order. It exists so a rules set's Standings and StandingScore cannot disagree:
+// both take the same score function, and disagreement is what silently splits a
+// draw by slice position (see StandingScorer). Sort descending by negating score.
+func StandingsByScore(players []*Player, score func(*Player) int) []*Player {
+	standings := slices.Clone(players)
+	slices.SortStableFunc(standings, func(a, b *Player) int {
+		return cmp.Compare(score(a), score(b))
+	})
+	return standings
 }

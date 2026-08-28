@@ -19,7 +19,7 @@ func (bindRules) InitialDealCount() int               { return 2 }
 func (bindRules) OnGameStart(*State) error            { return nil }
 func (bindRules) ValidateAction(*State, Action) error { return nil }
 func (bindRules) AfterAction(*State, Action) error    { return nil }
-func (bindRules) ApplyAction(*State, Action)          {}
+func (bindRules) ApplyAction(*State, Action) error    { return nil }
 func (bindRules) CheckWinCondition(*State) bool       { return false }
 func (bindRules) Standings(s *State) []*Player        { return s.Players }
 
