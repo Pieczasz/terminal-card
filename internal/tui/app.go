@@ -79,6 +79,13 @@ func Model(deps ModelDependencies) *router.Router {
 
 	registerGameViews(r)
 
+	// A player who reconnected inside the disconnect grace window still occupies a
+	// lobby seat; start them there (the lobby view routes onward into a running
+	// game) instead of at a home screen that pretends nothing is happening.
+	if l := deps.LobbyManager.ResumePlayer(views.SessionPlayer(global)); l != nil {
+		r.SetInitialRoute(router.RouteLobby, l)
+	}
+
 	// No Goto here: the router builds its first view in Init, so that view's Init
 	// runs exactly once. See Router.Init.
 	return r

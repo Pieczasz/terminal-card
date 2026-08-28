@@ -3,6 +3,7 @@ package lobby
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/elo"
@@ -83,7 +84,27 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 }
 
 func (m *model) Init() tea.Cmd {
+	// A reconnecting player's lobby may already be mid-game: route straight back to
+	// the table if their seat survived the disconnect grace. A seat the engine took
+	// (idle removal) stays here and sees the roster instead.
+	if m.currentLobby != nil {
+		if engine := m.currentLobby.ActiveGame(); engine != nil && m.seatedIn(engine) {
+			if mod, ok := m.global.GameRegistry.Module(m.currentLobby.GameName()); ok {
+				m.unsubscribe()
+				return func() tea.Msg {
+					return router.ChangeViewMsg{ViewName: router.GameRoute(mod.Slug), Context: engine}
+				}
+			}
+		}
+	}
 	return listenToLobbyBroadcaster(m.lobbyChan)
+}
+
+func (m *model) seatedIn(engine *game.Engine) bool {
+	me := views.SessionPlayerID(m.global)
+	return slices.ContainsFunc(engine.Snapshot().Players, func(p game.PlayerSnapshot) bool {
+		return p.ID == me
+	})
 }
 
 // Elo comes from the ratings the player was seated with, which are the snapshot taken

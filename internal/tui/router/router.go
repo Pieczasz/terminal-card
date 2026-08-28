@@ -71,6 +71,8 @@ type Router struct {
 	views        map[string]func(GlobalContext, any) tea.Model
 	active       tea.Model
 	activeKey    string
+	initialRoute string
+	initialCtx   any
 	lastActivity time.Time
 }
 
@@ -81,9 +83,17 @@ func New(global GlobalContext) *Router {
 	r := &Router{
 		Global:       global,
 		views:        make(map[string]func(GlobalContext, any) tea.Model),
+		initialRoute: RouteHome,
 		lastActivity: time.Now(),
 	}
 	return r
+}
+
+// SetInitialRoute picks the first view Init builds. A reconnecting player starts
+// at their lobby instead of home; everyone else keeps the default.
+func (r *Router) SetInitialRoute(name string, ctx any) {
+	r.initialRoute = name
+	r.initialCtx = ctx
 }
 
 func (r *Router) Register(name string, factory func(GlobalContext, any) tea.Model) {
@@ -140,7 +150,7 @@ func (r *Router) Init() tea.Cmd {
 	// runs a view's Init. Doing both - constructing the home view early and calling
 	// Init on it again from here - armed every command twice, which for a view
 	// holding a subscription is two listener goroutines racing for one channel.
-	if cmd := r.Goto(RouteHome, nil); cmd != nil {
+	if cmd := r.Goto(r.initialRoute, r.initialCtx); cmd != nil {
 		cmds = append(cmds, cmd)
 	}
 	return tea.Batch(cmds...)
