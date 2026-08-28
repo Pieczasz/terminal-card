@@ -3,6 +3,7 @@ package ratelimit_test
 import (
 	"fmt"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -142,4 +143,46 @@ func TestSlidingWindowLimiter_SweepsExpiredKeysPeriodically(t *testing.T) {
 	require.True(t, limiter.Allow("late"), "the 64th call is the one that sweeps")
 
 	assert.Equal(t, 1, limiter.Size(), "every caller that has gone quiet is dropped")
+}
+
+// The limiter is shared by every ssh connection and every api request, so Allow and
+// Size are called from unrelated goroutines all the time.
+func TestSlidingWindowLimiter_ConcurrentAllowAndSize(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(50, time.Second).WithMaxKeys(8)
+
+	var wg sync.WaitGroup
+	for worker := range 8 {
+		wg.Go(func() {
+			for i := range 300 {
+				// Overlapping key ranges, so workers contend on the same map entries.
+				limiter.Allow(fmt.Sprintf("key-%d", (worker+i)%12))
+			}
+		})
+	}
+	for range 2 {
+		wg.Go(func() {
+			for range 300 {
+				if n := limiter.Size(); n > 8 {
+					t.Errorf("table grew past its cap: %d keys", n)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// Fail open, and deliberately: refusing new keys once the table is full would let
+// whoever filled it lock everybody else out.
+func TestSlidingWindowLimiter_FullTableStillAdmitsNewKeys(t *testing.T) {
+	t.Parallel()
+	limiter := ratelimit.NewSlidingWindowLimiter(1, time.Hour).WithMaxKeys(4)
+	for i := range 4 {
+		require.True(t, limiter.Allow(fmt.Sprintf("filler-%d", i)))
+	}
+	require.Equal(t, 4, limiter.Size())
+
+	assert.True(t, limiter.Allow("newcomer"), "a new network is admitted, not locked out")
+	assert.LessOrEqual(t, limiter.Size(), 4, "and the table is still bounded")
 }
