@@ -11,7 +11,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 // A view that never reads its event channel shows a frozen table while the hand plays
@@ -143,7 +142,7 @@ func startedSession(t *testing.T) (*game.Engine, Session) {
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: &db.User{Model: gorm.Model{ID: 1}, Username: "alice"}}
+	global := router.GlobalContext{User: &db.User{ID: 1, Username: "alice"}}
 	s, err := NewSession(global, engine, "crazy eights")
 	require.NoError(t, err)
 	return engine, s

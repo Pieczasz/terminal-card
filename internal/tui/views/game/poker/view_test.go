@@ -9,7 +9,6 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
@@ -117,7 +116,7 @@ func TestRenderMiniCard_IsAFixedWidth(t *testing.T) {
 func TestRenderSeatCards_ShowsNoBacksForASeatWithNoCards(t *testing.T) {
 	t.Parallel()
 
-	m := &Model{Session: gameview.Session{Global: router.GlobalContext{Theme: styles.NewTheme(true)}}}
+	m := &Model{Global: router.GlobalContext{Theme: styles.NewTheme(true)}}
 	busted := Seat{Name: "broke", HandSize: 0}
 
 	for _, compact := range []bool{false, true} {

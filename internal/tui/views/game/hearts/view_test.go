@@ -20,14 +20,12 @@ import (
 func TestView_HandOverShowsScores(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		Session: gameview.Session{
-			Global: router.GlobalContext{
-				Theme:  styles.NewTheme(true),
-				Width:  80,
-				Height: 24,
-			},
-			Base: gameview.BaseState{Phase: game.Playing},
+		Global: router.GlobalContext{
+			Theme:  styles.NewTheme(true),
+			Width:  80,
+			Height: 24,
 		},
+		Base:         gameview.BaseState{Phase: game.Playing},
 		stage:        logic.StageHandOver,
 		handComplete: true,
 		handNumber:   2,
@@ -49,9 +47,7 @@ func TestView_HandOverShowsScores(t *testing.T) {
 func TestView_HeartsBrokenIndicator(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		Session: gameview.Session{
-			Global: router.GlobalContext{Theme: styles.NewTheme(true)},
-		},
+		Global:       router.GlobalContext{Theme: styles.NewTheme(true)},
 		heartsBroken: true,
 		trickCards:   map[string]deck.Card{},
 	}
@@ -67,7 +63,7 @@ func TestView_HeartsBrokenIndicator(t *testing.T) {
 func TestOpponentAt_RefusesATableThatIsNotFourHanded(t *testing.T) {
 	t.Parallel()
 
-	m := &Model{Session: gameview.Session{
+	m := &Model{
 		Global: router.GlobalContext{Theme: styles.NewTheme(true), Width: 100, Height: 30},
 		Bound:  game.Bind(&game.Engine{}, "1"),
 		Base: gameview.BaseState{
@@ -82,7 +78,6 @@ func TestOpponentAt_RefusesATableThatIsNotFourHanded(t *testing.T) {
 				{ID: "3", Username: "carol", HandSize: 13},
 			},
 		},
-	},
 		trickCards: map[string]deck.Card{},
 	}
 
@@ -101,12 +96,11 @@ func TestOpponentAt_RefusesATableThatIsNotFourHanded(t *testing.T) {
 func TestOpponentAt_MapsTheThreeEdgesAtAFullTable(t *testing.T) {
 	t.Parallel()
 
-	m := &Model{Session: gameview.Session{
+	m := &Model{
 		Bound: game.Bind(&game.Engine{}, "3"),
 		Base: gameview.BaseState{Seats: []game.PlayerSnapshot{
 			{ID: "1"}, {ID: "2"}, {ID: "3"}, {ID: "4"},
-		}},
-	}}
+		}}}
 
 	seen := make([]string, 0, 3)
 	for rel := range 3 {
@@ -142,13 +136,11 @@ func TestView_TheWholeTrickIsVisibleAtEverySize(t *testing.T) {
 			t.Parallel()
 
 			m := &Model{
-				Session: gameview.Session{
-					Global: router.GlobalContext{Theme: styles.NewTheme(true), Width: size.w, Height: size.h},
-					Bound:  game.Bind(&game.Engine{}, "1"),
-					Base: gameview.BaseState{
-						Phase: game.Playing, Seats: seats, Opponents: seats[1:],
-						Hand: []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}},
-					},
+				Global: router.GlobalContext{Theme: styles.NewTheme(true), Width: size.w, Height: size.h},
+				Bound:  game.Bind(&game.Engine{}, "1"),
+				Base: gameview.BaseState{
+					Phase: game.Playing, Seats: seats, Opponents: seats[1:],
+					Hand: []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}},
 				},
 				trickCards: trick,
 				seatNames:  map[string]string{},

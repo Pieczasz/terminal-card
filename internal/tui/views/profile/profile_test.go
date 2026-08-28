@@ -13,7 +13,6 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 var errQuery = errors.New("query failed")
@@ -29,7 +28,7 @@ func loaded(t *testing.T, msg profileLoadedMsg) model {
 
 func alice() *db.User {
 	return &db.User{
-		Model:    gorm.Model{ID: 1},
+		ID:       1,
 		Username: "alice",
 		Rankings: []db.Ranking{{Elo: 1600, Game: db.Game{Name: "Poker"}}},
 	}

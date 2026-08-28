@@ -13,7 +13,6 @@ import (
 	"charm.land/wish/v2/testsession"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func TestBoundedPty_RefusesGeometryNoTerminalHas(t *testing.T) {
@@ -96,7 +95,7 @@ func (panickyModel) Close() { panic("closing the view exploded") }
 func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(0)
-	user := &db.User{Model: gorm.Model{ID: 7}}
+	user := &db.User{ID: 7}
 	require.NoError(t, tracker.Connect(user.ID))
 
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}

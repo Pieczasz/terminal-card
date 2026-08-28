@@ -17,16 +17,14 @@ import (
 func TestView_ActionBarHints(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		Session: gameview.Session{
-			Global: router.GlobalContext{
-				Theme:  styles.NewTheme(true),
-				Width:  80,
-				Height: 40,
-			},
-			Base: gameview.BaseState{
-				Phase: game.Playing,
-				Hand:  []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}},
-			},
+		Global: router.GlobalContext{
+			Theme:  styles.NewTheme(true),
+			Width:  80,
+			Height: 40,
+		},
+		Base: gameview.BaseState{
+			Phase: game.Playing,
+			Hand:  []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}},
 		},
 		handPhase:  logic.AwaitingDraw,
 		handNumber: 1,
@@ -46,14 +44,12 @@ func TestView_ActionBarHints(t *testing.T) {
 func TestView_HandOverWallBanner(t *testing.T) {
 	t.Parallel()
 	m := &Model{
-		Session: gameview.Session{
-			Global: router.GlobalContext{
-				Theme:  styles.NewTheme(true),
-				Width:  80,
-				Height: 24,
-			},
-			Base: gameview.BaseState{Phase: game.Playing},
+		Global: router.GlobalContext{
+			Theme:  styles.NewTheme(true),
+			Width:  80,
+			Height: 24,
 		},
+		Base:             gameview.BaseState{Phase: game.Playing},
 		handPhase:        logic.HandOver,
 		handComplete:     true,
 		handNumber:       2,

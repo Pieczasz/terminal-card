@@ -13,11 +13,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func testUser(id uint, name string) *db.User {
-	return &db.User{Model: gorm.Model{ID: id}, Username: name}
+	return &db.User{ID: id, Username: name}
 }
 
 // startedTable returns a two-handed table mid-hand plus the view bound to seat 1.
