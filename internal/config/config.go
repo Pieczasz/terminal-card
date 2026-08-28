@@ -1,8 +1,10 @@
 package config
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"os"
@@ -19,6 +21,7 @@ type Config struct {
 	ServerPort           int
 	APIPort              int
 	APIAllowOrigin       string
+	APIRequestsPerMinute int
 	APITrustProxy        bool
 	MaxConnections       int
 	SSHKeyPath           string
@@ -34,6 +37,12 @@ type Config struct {
 	ServiceVersion       string
 	RateLimitCount       int
 	RateLimitWindow      time.Duration
+	LogLevel             slog.Level
+	// ProxyProtocol keeps the PROXY-header requirement on the SSH listener. The
+	// default (true) matches the nginx deployment; local development against a
+	// bare `ssh` client needs PROXY_PROTOCOL=false, since a bare client never
+	// sends the header and the listener otherwise refuses the connection.
+	ProxyProtocol bool
 }
 
 // intEnvs accumulates integer env lookups so one error check covers all of them
@@ -84,8 +93,14 @@ func Load() (*Config, error) {
 	dbMaxOpenConnections := ints.get("DB_MAX_OPEN_CONNS", 25)
 	rateLimitCount := ints.get("RATE_LIMIT_CONNECTIONS", 5)
 	rateLimitWindowMS := ints.get("RATE_LIMIT_WINDOW_MS", 1000)
+	apiRequestsPerMinute := ints.get("API_REQUESTS_PER_MINUTE", 120)
 	if ints.err != nil {
 		return nil, ints.err
+	}
+
+	logLevel, err := parseLogLevel(getEnv("LOG_LEVEL", ""))
+	if err != nil {
+		return nil, err
 	}
 
 	defaultSSLMode := "disable"
@@ -99,11 +114,15 @@ func Load() (*Config, error) {
 		ServerPort:     serverPort,
 		APIPort:        apiPort,
 		APIAllowOrigin: getEnv("API_ALLOW_ORIGIN", "*"),
+		// The website polls this feed, so the budget is per network, not per visitor;
+		// tuning it must not need a rebuild.
+		APIRequestsPerMinute: apiRequestsPerMinute,
 		// Defaults to off because trusting X-Forwarded-For on a directly reachable
 		// listener lets any caller forge an address and walk past the rate limit
 		// entirely. The compose deployment never publishes the API port, so nginx is
 		// the only possible source of the header there - and it opts in explicitly.
 		APITrustProxy:        getEnv("API_TRUST_PROXY", "false") == "true",
+		ProxyProtocol:        getEnv("PROXY_PROTOCOL", "true") != "false",
 		MaxConnections:       maxConnections,
 		SSHKeyPath:           getEnv("SSH_KEY_PATH", ".wishlist/server"),
 		DBHost:               getEnv("DB_HOST", "localhost"),
@@ -118,6 +137,7 @@ func Load() (*Config, error) {
 		ServiceVersion:       getEnv("SERVICE_VERSION", detectVersion()),
 		RateLimitCount:       rateLimitCount,
 		RateLimitWindow:      time.Duration(rateLimitWindowMS) * time.Millisecond,
+		LogLevel:             logLevel,
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -145,6 +165,9 @@ func (c *Config) Validate() error {
 	}
 	if c.RateLimitWindow < time.Millisecond {
 		return errors.New("RATE_LIMIT_WINDOW_MS must be at least 1")
+	}
+	if c.APIRequestsPerMinute < 1 {
+		return errors.New("API_REQUESTS_PER_MINUTE must be at least 1")
 	}
 	if c.DBMaxOpenConnections < 1 {
 		return errors.New("DB_MAX_OPEN_CONNS must be at least 1")
@@ -217,10 +240,21 @@ func normalizeVersion(version string) string {
 // compose file would otherwise silently defeat the default. This matches
 // getEnvAsInt, which already treats "" as absent.
 func getEnv(key string, fallback string) string {
-	if value, exists := os.LookupEnv(key); exists && value != "" {
-		return value
+	return cmp.Or(os.Getenv(key), fallback)
+}
+
+// parseLogLevel accepts the names slog itself understands (DEBUG, INFO, WARN, ERROR
+// and their +N/-N forms). A typo must fail the boot rather than silently mean info,
+// which is how an operator ends up believing debug logging is on.
+func parseLogLevel(raw string) (slog.Level, error) {
+	if raw == "" {
+		return slog.LevelInfo, nil
 	}
-	return fallback
+	var level slog.Level
+	if err := level.UnmarshalText([]byte(raw)); err != nil {
+		return slog.LevelInfo, fmt.Errorf("invalid LOG_LEVEL %q: %w", raw, err)
+	}
+	return level, nil
 }
 
 func getEnvAsInt(name string, fallback int) (int, error) {

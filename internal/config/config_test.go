@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -260,6 +261,7 @@ func TestValidate_LowestAllowedValuesAreValid(t *testing.T) {
 			RateLimitWindow:      time.Millisecond,
 			DBMaxOpenConnections: 1,
 			MaxConnections:       1,
+			APIRequestsPerMinute: 1,
 		}
 	}
 
@@ -273,6 +275,11 @@ func TestValidate_LowestAllowedValuesAreValid(t *testing.T) {
 		{name: "no connections allowed", breakIt: func(c *config.Config) { c.RateLimitCount = 0 }, want: "RATE_LIMIT_CONNECTIONS"},
 		{name: "sub-millisecond window", breakIt: func(c *config.Config) { c.RateLimitWindow = time.Microsecond }, want: "RATE_LIMIT_WINDOW_MS"},
 		{name: "no db connections", breakIt: func(c *config.Config) { c.DBMaxOpenConnections = 0 }, want: "DB_MAX_OPEN_CONNS"},
+		{
+			name:    "no api requests allowed",
+			breakIt: func(c *config.Config) { c.APIRequestsPerMinute = 0 },
+			want:    "API_REQUESTS_PER_MINUTE",
+		},
 		// LimitListener accepts nothing at all with a non-positive limit, so the
 		// server would come up healthy and refuse every player.
 		{name: "no connections at all", breakIt: func(c *config.Config) { c.MaxConnections = 0 }, want: "MAX_CONNECTIONS"},
@@ -322,4 +329,34 @@ func TestConfig_DSN_CarriesThePasswordAndStringDoesNot(t *testing.T) {
 
 	assert.Contains(t, cfg.DSN(), ":pw@")
 	assert.NotContains(t, cfg.String(), "pw")
+}
+
+func TestLoad_LogLevel(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    slog.Level
+		wantErr bool
+	}{
+		{name: "unset defaults to info", want: slog.LevelInfo},
+		{name: "lowercase name", value: "debug", want: slog.LevelDebug},
+		{name: "uppercase name", value: "ERROR", want: slog.LevelError},
+		{name: "offset form", value: "WARN+1", want: slog.LevelWarn + 1},
+		{name: "a typo fails the boot", value: "verbose", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if tt.value != "" {
+				t.Setenv("LOG_LEVEL", tt.value)
+			}
+			cfg, err := config.Load()
+			if tt.wantErr {
+				require.ErrorContains(t, err, "invalid LOG_LEVEL")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, cfg.LogLevel)
+		})
+	}
 }
