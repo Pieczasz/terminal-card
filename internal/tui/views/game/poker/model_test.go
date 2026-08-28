@@ -43,7 +43,7 @@ func TestSyncState_BuildsSeatsFromEngine(t *testing.T) {
 	require.Len(t, m.seats, 2)
 	assert.Equal(t, logic.DefaultSmallBlind+logic.DefaultBigBlind, m.pot)
 	assert.Equal(t, "PREFLOP", m.street)
-	assert.False(t, m.handDone)
+	assert.False(t, m.handComplete)
 	assert.Equal(t, logic.DefaultBigBlind, m.minRaise)
 
 	hero := m.heroSeat()

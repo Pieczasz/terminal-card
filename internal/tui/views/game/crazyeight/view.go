@@ -4,30 +4,24 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
-	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
 )
 
-const keyHints = "<-/h: left | ->/l: right | enter: play/confirm | d: draw | esc: leave/cancel"
+const keyHints = gameview.HandKeyHints
 
-// suitLabels are the picker cells, in grid order. suitPickerOrder in update.go
-// maps a cursor position back to the suit and must stay in the same order.
-var suitLabels = []string{"♠ Spades", "♥︎ Hearts", "♦ Diamonds", "♣ Clubs"}
-
-// suitCellWidth keeps the 2x2 picker a rectangle whatever the suit name length.
-// lipgloss counts the border and padding inside Width, so the widest label needs
-// four extra columns - without them "♦ Diamonds" wraps under its own glyph.
-var suitCellWidth = widestLabel(suitLabels) + 4
-
-func widestLabel(labels []string) int {
-	widest := 0
-	for _, l := range labels {
-		widest = max(widest, lg.Width(l))
-	}
-	return widest
+// suitChoices is the picker: the label and the suit it stands for are one entry, so
+// the cell under the cursor cannot mean a different suit from the one on screen.
+var suitChoices = []struct {
+	label string
+	suit  deck.Suit
+}{
+	{"♠ Spades", deck.Spades},
+	{"♥︎ Hearts", deck.Hearts},
+	{"♦ Diamonds", deck.Diamonds},
+	{"♣ Clubs", deck.Clubs},
 }
 
 func (m *Model) View() tea.View {
@@ -35,41 +29,16 @@ func (m *Model) View() tea.View {
 		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
 
-	compactMode := m.Global.Height < 30
-	superCompact := m.Global.Height < 24
+	// Seat art is the first thing to go: it costs seven rows per seat, and a name
+	// with a hand count says everything a player reads off somebody else's seat.
+	minimalSeats := gameview.IsCompact(m.Global.Width, m.Global.Height)
+	top := gameview.RenderOpponentTop(m.Global.Theme, m.Base, m.Global.Width, minimalSeats)
 
-	opponents := gameview.RenderOpponentEdges(m.Global.Theme, m.Base, superCompact)
-	topSection := opponents.Top
-	var topAreaContent string
-	if superCompact {
-		topAreaContent = topSection
-	} else {
-		topAreaContent = lg.NewStyle().MarginTop(1).Render(topSection)
-	}
-
-	mySection := m.renderPlayerSection()
-	var fullPlayerArea string
-	if superCompact {
-		fullPlayerArea = mySection
-	} else if compactMode {
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.Render(keyHints))
-	} else {
-		hints := m.Global.Theme.Dim.MarginTop(1).Render(keyHints)
-		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
-	}
-
-	topHeight := lg.Height(topAreaContent)
-	botHeight := lg.Height(fullPlayerArea)
-	midHeight := max(m.Global.Height-topHeight-botHeight, 0)
-
-	topArea := styles.PadCenter(m.Global.Width, topAreaContent)
-	midArea := m.renderMiddleLayer(midHeight, opponents)
-	botArea := styles.PadCenter(m.Global.Width, fullPlayerArea)
-
-	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
+	return tea.NewView(gameview.RenderBands(m.Global, top, m.renderPlayerSection(), keyHints,
+		func(height int) string { return m.renderMiddleLayer(height, minimalSeats) }))
 }
 
-func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) string {
+func (m *Model) renderMiddleLayer(height int, minimalSeats bool) string {
 	var centerStack string
 	if m.pickingSuit {
 		centerStack = m.renderSuitPicker()
@@ -77,15 +46,10 @@ func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) 
 		centerStack = m.renderCenterTable()
 	}
 
-	w1 := m.Global.Width / 3
-	w2 := m.Global.Width / 3
-	w3 := m.Global.Width - w1 - w2
+	left, right := gameview.RenderOpponentSides(m.Global.Theme, m.Base, height, minimalSeats)
 
-	leftArea := styles.Place(w1, height, lg.Left, lg.Center, opponents.Left)
-	centerArea := styles.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
-	rightArea := styles.Place(w3, height, lg.Right, lg.Center, opponents.Right)
-
-	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
+	return gameview.RenderTableRow(m.Global.Width, height,
+		left, lg.NewStyle().MarginTop(1).Render(centerStack), right)
 }
 
 func (m *Model) renderCenterTable() string {
@@ -119,7 +83,8 @@ func (m *Model) renderCurrentSuitIndicator() string {
 
 func (m *Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
-	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingSuit)
+	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingSuit,
+		gameview.HandWidth(m.Global.Width), gameview.HandRows(m.Global.Height))
 
 	sections := []string{statusView, handView}
 	if m.lastActionErr != nil {
@@ -134,32 +99,13 @@ func (m *Model) renderSuitPicker() string {
 	if !m.pickingSuit {
 		return ""
 	}
-
-	t := m.Global.Theme
-	renderedSuits := make([]string, 0, len(suitLabels))
-	for i, suitName := range suitLabels {
-		style := lg.NewStyle().Padding(0, 1).Border(lg.RoundedBorder())
-		if i == m.suitCursor {
-			style = style.BorderForeground(t.Selection).Foreground(t.Selection).Bold(true)
-		} else {
-			style = style.BorderForeground(t.BorderMuted).Foreground(t.TextMuted)
-		}
-		renderedSuits = append(renderedSuits, style.Width(suitCellWidth).Align(lg.Center).Render(suitName))
+	labels := make([]string, 0, len(suitChoices))
+	for _, c := range suitChoices {
+		labels = append(labels, c.label)
 	}
-
-	row1 := lg.JoinHorizontal(lg.Center, renderedSuits[0], renderedSuits[1])
-	row2 := lg.JoinHorizontal(lg.Center, renderedSuits[2], renderedSuits[3])
-	pickerBox := lg.JoinVertical(lg.Center, row1, row2)
-
-	return lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(t.Selection).
-		Padding(1, 2).
-		Render(
-			lg.JoinVertical(lg.Center,
-				lg.NewStyle().Bold(true).Foreground(t.Selection).Render("Pick a suit:"),
-				"",
-				pickerBox,
-			),
-		)
+	return components.GridPicker{
+		Title:  "Pick a suit:",
+		Labels: labels,
+		Cursor: m.suitCursor,
+	}.Render(m.Global.Theme)
 }

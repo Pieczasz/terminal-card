@@ -16,14 +16,14 @@ import (
 )
 
 func (m *Model) View() tea.View {
-	if m.handDone || m.matchDone {
-		return tea.NewView(m.renderHandOver())
+	if m.handComplete || m.matchComplete {
+		return tea.NewView(styles.Clamp(m.Global.Width, m.Global.Height, m.renderHandOver()))
 	}
 	if m.Base.Phase != game.Playing {
 		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.winnerName))
 	}
 
-	compact := m.Global.Height < 30
+	compact := m.compact()
 	zones := m.seatZones()
 
 	top := m.renderTopRow(zones.Top, compact)
@@ -31,11 +31,24 @@ func (m *Model) View() tea.View {
 	midH := max(m.Global.Height-lg.Height(top)-lg.Height(bot), 0)
 	mid := m.renderMiddle(midH, zones.Left, zones.Right, compact)
 
-	return tea.NewView(lg.JoinVertical(lg.Left,
+	// Clamped, not padded: nine seats of card art is wider than any terminal, and
+	// PadCenter hands overwide rows straight through for the terminal to wrap.
+	return tea.NewView(styles.Clamp(m.Global.Width, m.Global.Height, lg.JoinVertical(lg.Left,
 		styles.PadCenter(m.Global.Width, top),
-		mid,
+		styles.Clamp(m.Global.Width, midH, mid),
 		styles.PadCenter(m.Global.Width, bot),
-	))
+	)))
+}
+
+// artTableHeight is the height poker needs before it can draw card art. It is taller
+// than the shared breakpoint because poker spends a whole card on the hero's own seat
+// on top of the hand controls: the bottom band alone costs what a whole table does
+// elsewhere, and the five community cards sit above it.
+const artTableHeight = 48
+
+// compact reports whether this table is down to mini cards.
+func (m *Model) compact() bool {
+	return m.Global.Height < artTableHeight || gameview.IsCompact(m.Global.Width, m.Global.Height)
 }
 
 // seatNameWidth is the name column on the results screen. Usernames run to 16
@@ -44,12 +57,12 @@ func (m *Model) View() tea.View {
 const seatNameWidth = 12
 
 func (m *Model) renderHandOver() string {
-	compact := m.Global.Height < 30
+	compact := m.compact()
 	board := m.renderBoard(compact)
 
 	title := m.Global.Theme.Accented.Render(fmt.Sprintf("HAND %d/%d COMPLETE", m.handNumber, m.handsTotal))
 	winner := m.Global.Theme.Accented.Render(m.winnerName + " wins the hand")
-	if m.matchDone {
+	if m.matchComplete {
 		title = m.Global.Theme.Accented.Render("MATCH COMPLETE")
 		winner = m.Global.Theme.Accented.Render(m.winnerName + " wins")
 	}
@@ -81,7 +94,7 @@ func (m *Model) renderHandOver() string {
 // the end of a game, but with hands still to play esc forfeits the stack the
 // player just spent them building.
 func (m *Model) handOverHint() string {
-	if m.matchDone {
+	if m.matchComplete {
 		return "esc / enter -> lobby"
 	}
 	leave := "esc: leave the match, forfeiting your chips"
@@ -139,19 +152,10 @@ func (m *Model) renderTopRow(seats []Seat, compact bool) string {
 }
 
 func (m *Model) renderMiddle(height int, left, right []Seat, compact bool) string {
-	w1 := m.Global.Width / 4
-	w3 := m.Global.Width / 4
-	w2 := m.Global.Width - w1 - w3
-
 	leftView := m.renderSideStack(left, compact, gameview.OrientationLeft)
 	rightView := m.renderSideStack(right, compact, gameview.OrientationRight)
-	center := m.renderCenter(compact)
 
-	return lg.JoinHorizontal(lg.Top,
-		styles.Place(w1, height, lg.Left, lg.Center, leftView),
-		styles.Place(w2, height, lg.Center, lg.Center, center),
-		styles.Place(w3, height, lg.Right, lg.Center, rightView),
-	)
+	return gameview.RenderTableRow(m.Global.Width, height, leftView, m.renderCenter(compact), rightView)
 }
 
 func (m *Model) renderSideStack(seats []Seat, compact bool, orientation gameview.Orientation) string {
@@ -187,7 +191,7 @@ func (m *Model) renderBoard(compact bool) string {
 				slots[i] = components.RenderCard(m.Global.Theme, m.board[i], false)
 			}
 		} else if compact {
-			slots[i] = m.Global.Theme.Dim.Render("[" + strings.Repeat(" ", miniRankWidth+1) + "]")
+			slots[i] = components.MiniCardSlot(m.Global.Theme)
 		} else {
 			slots[i] = renderEmptySlot(m.Global.Theme)
 		}
@@ -196,16 +200,12 @@ func (m *Model) renderBoard(compact bool) string {
 }
 
 func renderEmptySlot(t styles.Theme) string {
-	// Same chrome as components.RenderCard: FaceWidth×FaceHeight inside a rounded
-	// border with MarginTop. The old Place(7,5)+Padding box was a leftover from a
-	// smaller face, so the board jumped when a card landed in a slot.
+	// Theme.CardFrame is the same chrome components.RenderCard wears, which is what
+	// keeps the board from jumping by a column when a card lands in a slot. The old
+	// Place(7,5)+Padding box was a leftover from a smaller face.
 	blank := strings.Repeat(" ", components.FaceWidth)
 	inner := blank + strings.Repeat("\n"+blank, components.FaceHeight-1)
-	return lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(t.BorderMuted).
-		MarginTop(1).
-		Render(inner)
+	return t.CardFrame.BorderForeground(t.BorderMuted).MarginTop(1).Render(inner)
 }
 
 // renderFacedownCard is a single hole-card back that matches RenderCard's footprint,
@@ -216,24 +216,18 @@ func renderFacedownCard(t styles.Theme) string {
 	for i := range lines {
 		lines[i] = fill
 	}
-	return lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(t.CardFace).
-		MarginTop(1).
-		Render(strings.Join(lines, "\n"))
+	return t.CardFrame.MarginTop(1).Render(strings.Join(lines, "\n"))
 }
 
-// miniRankWidth is the width of the widest rank label, so a ten landing on the
-// board does not shift the cards beside it by a column.
-const miniRankWidth = 2
-
+// The mini card lives in components: Hearts falls back to the same four columns when
+// its trick will not fit, and two tables disagreeing about how a card reads at mini
+// size is how a player learns the wrong shorthand.
 func renderMiniCard(t styles.Theme, c deck.Card) string {
-	suit, style := suitGlyph(t, c.Suit)
-	return style.Render(fmt.Sprintf("[%*s%s]", miniRankWidth, components.RankLabel(c.Rank), suit))
+	return components.RenderMiniCard(t, c)
 }
 
 func renderHoleBack(t styles.Theme) string {
-	return t.Dim.Render("[" + strings.Repeat("?", miniRankWidth+1) + "]")
+	return components.MiniCardBack(t)
 }
 
 func (m *Model) renderSeat(s Seat, compact bool, orientation gameview.Orientation) string {
@@ -331,8 +325,8 @@ func (m *Model) renderHero(compact bool) string {
 	actions := m.renderActionBar()
 
 	parts := []string{seatBlock, status, actions}
-	if m.lastErr != nil {
-		parts = append(parts, m.Global.Theme.ErrorText.Render(m.lastErr.Error()))
+	if m.lastActionErr != nil {
+		parts = append(parts, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
 	}
 	block := lg.JoinVertical(lg.Center, parts...)
 	if !compact {
@@ -362,7 +356,7 @@ func (m *Model) renderActionBar() string {
 		opts = append(opts, "a all-in")
 	}
 	if len(opts) == 0 {
-		if m.handDone || m.Base.Phase == game.Finished {
+		if m.handComplete || m.Base.Phase == game.Finished {
 			return m.Global.Theme.Muted.Render("esc -> lobby")
 		}
 		return m.Global.Theme.Muted.Render("waiting…")
@@ -381,19 +375,4 @@ func (m *Model) renderRaisePrompt() string {
 		renderChipRack(m.Global.Theme),
 		keys,
 	)
-}
-
-func suitGlyph(t styles.Theme, s deck.Suit) (string, lg.Style) {
-	switch s {
-	case deck.Hearts:
-		return "♥", lg.NewStyle().Foreground(t.SuitRed)
-	case deck.Diamonds:
-		return "♦", lg.NewStyle().Foreground(t.SuitRed)
-	case deck.Clubs:
-		return "♣", lg.NewStyle().Foreground(t.SuitDark)
-	case deck.Spades:
-		return "♠", lg.NewStyle().Foreground(t.SuitDark)
-	default:
-		return "?", t.Dim
-	}
 }

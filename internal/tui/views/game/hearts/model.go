@@ -2,6 +2,7 @@ package hearts
 
 import (
 	"maps"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -16,8 +17,10 @@ import (
 type Model struct {
 	gameview.Session
 
-	// passSelected holds hand indices staged for ActionPassCards (space toggles).
-	passSelected map[int]struct{}
+	// passSelected holds the cards staged for ActionPassCards (space toggles). Keyed
+	// by card, not by hand position: the engine re-deals and re-sorts the hand under
+	// the view, and positions saved across that point to cards nobody picked.
+	passSelected map[deck.Card]struct{}
 
 	stage            logic.Stage
 	heartsBroken     bool
@@ -40,7 +43,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 	session, err := gameview.NewSession(global, engine, "hearts")
 	m := &Model{
 		Session:          session,
-		passSelected:     map[int]struct{}{},
+		passSelected:     map[deck.Card]struct{}{},
 		trickCards:       map[string]deck.Card{},
 		handPoints:       map[string]int{},
 		cumulativeScores: map[string]int{},
@@ -52,8 +55,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) syncState() {
-	m.SyncBase()
-	m.WithHiddenState(func(extra any) {
+	m.Sync(func(extra any) {
 		if s, ok := extra.(*logic.State); ok {
 			m.stage = s.Stage
 			m.heartsBroken = s.HeartsBroken
@@ -70,14 +72,31 @@ func (m *Model) syncState() {
 	m.seatOrder = m.Base.SeatOrder()
 	m.seatNames = m.Base.SeatNames()
 
-	for idx := range m.passSelected {
-		if idx >= len(m.Base.Hand) {
-			delete(m.passSelected, idx)
+	m.prunePassSelection()
+}
+
+// prunePassSelection drops staged cards that are no longer in the hand, and clears the
+// staging outright once the pass is over.
+func (m *Model) prunePassSelection() {
+	if m.stage != logic.StagePassing {
+		m.passSelected = map[deck.Card]struct{}{}
+		return
+	}
+	maps.DeleteFunc(m.passSelected, func(c deck.Card, _ struct{}) bool {
+		return !slices.Contains(m.Base.Hand, c)
+	})
+}
+
+// passIndices maps the staged cards onto their positions in the hand as it stands
+// right now, which is what the multi-select fan draws its markers from.
+func (m *Model) passIndices() map[int]struct{} {
+	idx := make(map[int]struct{}, len(m.passSelected))
+	for i, c := range m.Base.Hand {
+		if _, ok := m.passSelected[c]; ok {
+			idx[i] = struct{}{}
 		}
 	}
-	if m.stage != logic.StagePassing {
-		m.passSelected = map[int]struct{}{}
-	}
+	return idx
 }
 
 func (m *Model) Init() tea.Cmd {

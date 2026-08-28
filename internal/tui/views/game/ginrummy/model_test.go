@@ -53,3 +53,19 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	m.Close()
 	assert.Zero(t, engine.Broadcaster().Len())
 }
+
+// Mirrors the other game views' teardown test: without Close the listener goroutine
+// stays parked on the event channel and the broadcaster slot is never returned.
+func TestClose_IsIdempotentAndSurvivesAClosedEngine(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	require.Equal(t, 1, engine.Broadcaster().Len())
+
+	m.Close()
+	assert.Zero(t, engine.Broadcaster().Len())
+
+	assert.NotPanics(t, m.Close, "session teardown may follow a view that already exited")
+
+	engine.Close()
+	assert.NotPanics(t, m.Close, "and may follow the engine going away")
+}

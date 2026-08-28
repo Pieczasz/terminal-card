@@ -4,36 +4,20 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
+	// The table has moved on, so a complaint about a move the player tried against
+	// the old one has nothing left to refer to. Only on an event: clearing it on the
+	// clock tick too would wipe the message inside a second of it being shown.
+	clearErr := func() { m.lastActionErr = nil }
+	if cmd, handled := m.HandleFrame(msg, m.syncState, clearErr); handled {
 		return m, cmd
 	}
-
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case gameview.EventMsg:
-		if m.IdleRemoved(game.Event(msg)) {
-			// The engine took this seat for repeated missed turns. Quitting ends the
-			// bubbletea program, which is what tears the ssh session down and runs the
-			// ordinary leave path.
-			return m, tea.Quit
-		}
-		m.lastErr = nil
-		m.syncState()
-		return m, m.Listen()
-	case gameview.ClockTickMsg:
-		m.syncState()
-		if m.Base.Phase != game.Playing {
-			return m, nil
-		}
-		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleKey(key)
 	}
 	return m, nil
 }
@@ -111,7 +95,7 @@ func (m *Model) stepRaise(direction int) {
 
 // confirm deals the next hand, leaves a finished match, or commits the pending raise.
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
-	if m.matchDone {
+	if m.matchComplete {
 		return m, m.Leave()
 	}
 	if m.canDeal() {
@@ -141,12 +125,12 @@ func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if err := m.Bound.Submit(action); err != nil {
-		m.lastErr = err
+		m.lastActionErr = err
 		return m, nil
 	}
 	// Re-sync immediately so the turn indicator and actions reflect the applied
 	// move without waiting for the broadcast event to round-trip.
-	m.lastErr = nil
+	m.lastActionErr = nil
 	m.raising = false
 	m.syncState()
 	return m, nil

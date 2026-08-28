@@ -15,18 +15,20 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-const keyHints = "<-/h: left | ->/l: right | enter: play/confirm | d: draw | esc: leave/cancel"
+const keyHints = gameview.HandKeyHints
 
-var colorLabels = []string{"♥ Red", "♦ Yellow", "♣ Green", "♠ Blue"}
-
-var colorCellWidth = widestLabel(colorLabels) + 4
-
-func widestLabel(labels []string) int {
-	widest := 0
-	for _, l := range labels {
-		widest = max(widest, lg.Width(l))
-	}
-	return widest
+// colorChoices is the picker: the label, the colour it plays and the tone it is drawn
+// in are one entry, so the cell under the cursor cannot mean a different colour from
+// the one on screen.
+var colorChoices = []struct {
+	label string
+	color deck.Suit
+	tone  func(styles.Theme) color.Color
+}{
+	{"♥ Red", logic.ColorRed, func(t styles.Theme) color.Color { return t.UnoRed }},
+	{"♦ Yellow", logic.ColorYellow, func(t styles.Theme) color.Color { return t.UnoYellow }},
+	{"♣ Green", logic.ColorGreen, func(t styles.Theme) color.Color { return t.UnoGreen }},
+	{"♠ Blue", logic.ColorBlue, func(t styles.Theme) color.Color { return t.UnoBlue }},
 }
 
 func (m *Model) View() tea.View {
@@ -34,41 +36,16 @@ func (m *Model) View() tea.View {
 		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
 
-	compactMode := m.Global.Height < 30
-	superCompact := m.Global.Height < 24
+	// Seat art is the first thing to go: it costs seven rows per seat, and a name
+	// with a hand count says everything a player reads off somebody else's seat.
+	minimalSeats := gameview.IsCompact(m.Global.Width, m.Global.Height)
+	top := gameview.RenderOpponentTop(m.Global.Theme, m.Base, m.Global.Width, minimalSeats)
 
-	opponents := gameview.RenderOpponentEdges(m.Global.Theme, m.Base, superCompact)
-	topSection := opponents.Top
-	var topAreaContent string
-	if superCompact {
-		topAreaContent = topSection
-	} else {
-		topAreaContent = lg.NewStyle().MarginTop(1).Render(topSection)
-	}
-
-	mySection := m.renderPlayerSection()
-	var fullPlayerArea string
-	if superCompact {
-		fullPlayerArea = mySection
-	} else if compactMode {
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.Render(keyHints))
-	} else {
-		hints := m.Global.Theme.Dim.MarginTop(1).Render(keyHints)
-		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(lg.JoinVertical(lg.Center, mySection, hints))
-	}
-
-	topHeight := lg.Height(topAreaContent)
-	botHeight := lg.Height(fullPlayerArea)
-	midHeight := max(m.Global.Height-topHeight-botHeight, 0)
-
-	topArea := styles.PadCenter(m.Global.Width, topAreaContent)
-	midArea := m.renderMiddleLayer(midHeight, opponents)
-	botArea := styles.PadCenter(m.Global.Width, fullPlayerArea)
-
-	return tea.NewView(lg.JoinVertical(lg.Left, topArea, midArea, botArea))
+	return tea.NewView(gameview.RenderBands(m.Global, top, m.renderPlayerSection(), keyHints,
+		func(height int) string { return m.renderMiddleLayer(height, minimalSeats) }))
 }
 
-func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) string {
+func (m *Model) renderMiddleLayer(height int, minimalSeats bool) string {
 	var centerStack string
 	if m.pickingColor {
 		centerStack = m.renderColorPicker()
@@ -76,15 +53,10 @@ func (m *Model) renderMiddleLayer(height int, opponents gameview.OpponentEdges) 
 		centerStack = m.renderCenterTable()
 	}
 
-	w1 := m.Global.Width / 3
-	w2 := m.Global.Width / 3
-	w3 := m.Global.Width - w1 - w2
+	left, right := gameview.RenderOpponentSides(m.Global.Theme, m.Base, height, minimalSeats)
 
-	leftArea := styles.Place(w1, height, lg.Left, lg.Center, opponents.Left)
-	centerArea := styles.Place(w2, height, lg.Center, lg.Center, lg.NewStyle().MarginTop(1).Render(centerStack))
-	rightArea := styles.Place(w3, height, lg.Right, lg.Center, opponents.Right)
-
-	return lg.JoinHorizontal(lg.Top, leftArea, centerArea, rightArea)
+	return gameview.RenderTableRow(m.Global.Width, height,
+		left, lg.NewStyle().MarginTop(1).Render(centerStack), right)
 }
 
 func (m *Model) renderCenterTable() string {
@@ -130,8 +102,10 @@ func colorLabel(t styles.Theme, s deck.Suit) (string, color.Color) {
 
 func (m *Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
-	colorRow := m.renderHandColorRow()
-	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor)
+	colorRow := m.renderHandColorRow(gameview.HandWidth(m.Global.Width))
+	handWidth := gameview.HandWidth(m.Global.Width)
+	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor,
+		handWidth, gameview.HandRows(m.Global.Height))
 
 	sections := []string{statusView}
 	if colorRow != "" {
@@ -145,11 +119,14 @@ func (m *Model) renderPlayerSection() string {
 }
 
 // renderHandColorRow paints a Uno color glyph above each card so four colors stay
-// distinct without changing shared suitStyle (which only has red/dark).
-func (m *Model) renderHandColorRow() string {
+// distinct without changing shared suitStyle (which only has red/dark). It has to
+// measure the slots the same way the fan does, so it takes the same width budget: a
+// hand too wide for any fan has no card columns to sit over, and the row goes.
+func (m *Model) renderHandColorRow(maxWidth int) string {
 	hand := m.Base.Hand
 	n := len(hand)
-	if n == 0 {
+	tuck := components.FanTuck(n, maxWidth)
+	if n == 0 || tuck == 0 {
 		return ""
 	}
 	selected := m.Selected
@@ -158,7 +135,7 @@ func (m *Model) renderHandColorRow() string {
 	}
 	parts := make([]string, 0, n)
 	for i, c := range hand {
-		w := components.CardSlotWidth(i, n, selected)
+		w := components.CardSlotWidth(i, n, selected, tuck)
 		glyph, fg := colorGlyph(m.Global.Theme, c)
 		cell := lg.NewStyle().Foreground(fg).Width(w).Align(lg.Center).Render(glyph)
 		parts = append(parts, cell)
@@ -188,33 +165,16 @@ func (m *Model) renderColorPicker() string {
 	if !m.pickingColor {
 		return ""
 	}
-
-	t := m.Global.Theme
-	colors := []color.Color{t.UnoRed, t.UnoYellow, t.UnoGreen, t.UnoBlue}
-	rendered := make([]string, 0, len(colorLabels))
-	for i, name := range colorLabels {
-		style := lg.NewStyle().Padding(0, 1).Border(lg.RoundedBorder()).Foreground(colors[i])
-		if i == m.colorCursor {
-			style = style.BorderForeground(t.Selection).Bold(true)
-		} else {
-			style = style.BorderForeground(t.BorderMuted)
-		}
-		rendered = append(rendered, style.Width(colorCellWidth).Align(lg.Center).Render(name))
+	labels := make([]string, 0, len(colorChoices))
+	tones := make([]color.Color, 0, len(colorChoices))
+	for _, c := range colorChoices {
+		labels = append(labels, c.label)
+		tones = append(tones, c.tone(m.Global.Theme))
 	}
-
-	row1 := lg.JoinHorizontal(lg.Center, rendered[0], rendered[1])
-	row2 := lg.JoinHorizontal(lg.Center, rendered[2], rendered[3])
-	pickerBox := lg.JoinVertical(lg.Center, row1, row2)
-
-	return lg.NewStyle().
-		Border(lg.RoundedBorder()).
-		BorderForeground(t.Selection).
-		Padding(1, 2).
-		Render(
-			lg.JoinVertical(lg.Center,
-				lg.NewStyle().Bold(true).Foreground(t.Selection).Render("Pick a color:"),
-				"",
-				pickerBox,
-			),
-		)
+	return components.GridPicker{
+		Title:  "Pick a color:",
+		Labels: labels,
+		Colors: tones,
+		Cursor: m.colorCursor,
+	}.Render(m.Global.Theme)
 }

@@ -29,18 +29,17 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) syncState() {
-	m.SyncBase()
+	m.Sync(func(extra any) {
+		if s, ok := extra.(*logic.State); ok {
+			m.currentSuit = s.CurrentSuit
+		}
+	})
 	// The picker only means anything while the hero is the one to act, so a turn
 	// lost to the clock takes it down rather than leaving it over the table with
 	// nothing left to confirm.
 	if !m.Base.MyTurn {
 		m.pickingSuit = false
 	}
-	m.WithHiddenState(func(extra any) {
-		if s, ok := extra.(*logic.State); ok {
-			m.currentSuit = s.CurrentSuit
-		}
-	})
 }
 
 func (m *Model) Init() tea.Cmd {

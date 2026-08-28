@@ -41,8 +41,7 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) syncState() {
-	m.SyncBase()
-	m.WithHiddenState(func(extra any) {
+	m.Sync(func(extra any) {
 		if s, ok := extra.(*logic.State); ok {
 			m.handPhase = s.HandPhase
 			m.handNumber = s.HandNumber

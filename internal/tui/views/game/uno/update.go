@@ -4,37 +4,19 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/uno"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
+	if cmd, handled := m.HandleFrame(msg, m.syncState, nil); handled {
 		return m, cmd
 	}
-
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case gameview.EventMsg:
-		if m.IdleRemoved(game.Event(msg)) {
-			// The engine took this seat for repeated missed turns. Quitting ends the
-			// bubbletea program, which tears the ssh session down the ordinary way.
-			return m, tea.Quit
-		}
-		m.syncState()
-		return m, m.Listen()
-	case gameview.ClockTickMsg:
-		m.syncState()
-		if m.Base.Phase != game.Playing {
-			return m, nil
-		}
-		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleKey(key)
 	}
-
 	return m, nil
 }
 
@@ -43,13 +25,13 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		return m.handleEscape()
 	case "left", "h":
-		return m.moveCursor(-1)
+		return m.step(-1, 0)
 	case "right", "l":
-		return m.moveCursor(1)
+		return m.step(1, 0)
 	case "up", "k":
-		return m.moveColorCursor(-2)
+		return m.step(0, -1)
 	case "down", "j":
-		return m.moveColorCursor(2)
+		return m.step(0, 1)
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		if !m.pickingColor {
 			m.SelectDigit(key)
@@ -71,26 +53,14 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 	return m, m.Leave()
 }
 
-// moveCursor steps the hand, or the colour picker's row when it is open.
-func (m *Model) moveCursor(delta int) (tea.Model, tea.Cmd) {
-	if !m.pickingColor {
-		m.MoveCursor(delta)
+// step moves the colour picker's cursor while it is open, and the hand cursor
+// otherwise. Left/right walk a row of the picker grid, up/down move between rows.
+func (m *Model) step(dx, dy int) (tea.Model, tea.Cmd) {
+	if m.pickingColor {
+		m.colorCursor = components.GridStep(m.colorCursor, len(colorChoices), dx, dy)
 		return m, nil
 	}
-	// The picker is a 2x2 grid: left/right only move within a row.
-	if next := m.colorCursor + delta; next/2 == m.colorCursor/2 && next >= 0 && next < len(colorPickerOrder) {
-		m.colorCursor = next
-	}
-	return m, nil
-}
-
-func (m *Model) moveColorCursor(delta int) (tea.Model, tea.Cmd) {
-	if !m.pickingColor {
-		return m, nil
-	}
-	if next := m.colorCursor + delta; next >= 0 && next < len(colorPickerOrder) {
-		m.colorCursor = next
-	}
+	m.MoveCursor(dx)
 	return m, nil
 }
 
@@ -117,17 +87,14 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	return m.submit(logic.ActionPlayCard{Card: card})
 }
 
-// colorPickerOrder maps the picker grid position to a color; must match view.go.
-var colorPickerOrder = []deck.Suit{logic.ColorRed, logic.ColorYellow, logic.ColorGreen, logic.ColorBlue}
-
 func (m *Model) submitColorPick(card deck.Card) (tea.Model, tea.Cmd) {
-	if m.colorCursor < 0 || m.colorCursor >= len(colorPickerOrder) {
+	if m.colorCursor < 0 || m.colorCursor >= len(colorChoices) {
 		return m, nil
 	}
 	m.pickingColor = false
 	return m.submit(logic.ActionPlayCard{
 		Card:        card,
-		ChosenColor: colorPickerOrder[m.colorCursor],
+		ChosenColor: colorChoices[m.colorCursor].color,
 	})
 }
 

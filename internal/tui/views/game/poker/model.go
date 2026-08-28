@@ -32,21 +32,21 @@ type Seat struct {
 type Model struct {
 	gameview.Session
 
-	seats      []Seat
-	board      []deck.Card
-	pot        uint
-	sidePots   int
-	street     string
-	currentBet uint
-	toCall     uint
-	minRaise   uint
-	myChips    uint
-	handDone   bool
-	matchDone  bool
-	handNumber int
-	handsTotal int
-	winnerName string
-	lastErr    error
+	seats         []Seat
+	board         []deck.Card
+	pot           uint
+	sidePots      int
+	street        string
+	currentBet    uint
+	toCall        uint
+	minRaise      uint
+	myChips       uint
+	handComplete  bool
+	matchComplete bool
+	handNumber    int
+	handsTotal    int
+	winnerName    string
+	lastActionErr error
 
 	raising     bool
 	raiseAmount uint
@@ -55,7 +55,7 @@ type Model struct {
 // New creates a Hold'em TUI view bound to the session player.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 	session, err := gameview.NewSession(global, engine, "poker")
-	m := &Model{Session: session, lastErr: err}
+	m := &Model{Session: session, lastActionErr: err}
 	m.syncState()
 	return m
 }
@@ -65,7 +65,7 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) syncState() {
-	m.SyncBase()
+	m.Sync(nil)
 	m.seats = nil
 	m.board = nil
 	m.pot = 0
@@ -75,8 +75,8 @@ func (m *Model) syncState() {
 	m.toCall = 0
 	m.minRaise = 0
 	m.myChips = 0
-	m.handDone = false
-	m.matchDone = m.Base.Phase == game.Finished
+	m.handComplete = false
+	m.matchComplete = m.Base.Phase == game.Finished
 	m.handNumber = 0
 	m.handsTotal = 0
 	m.winnerName = m.Base.Winner
@@ -94,6 +94,11 @@ func (m *Model) syncState() {
 	// and this one let an opponent act in between, so the pot could render a bet
 	// short of the seat that had already posted it, and the action bar could offer
 	// a call the engine had already moved past.
+	//
+	// This is why the base state above is synced with a nil extra rather than
+	// folded into one Frame hold: Frame only hands out State.Extra, and buildSeats
+	// needs the players themselves - a snapshot carries no opponent hole cards, so
+	// there would be nothing to reveal at showdown.
 	m.Bound.Engine().WithState(func(state *game.State) {
 		e, ok := state.Extra.(*logic.State)
 		if !ok || e == nil {
@@ -106,13 +111,13 @@ func (m *Model) syncState() {
 		m.minRaise = e.MinRaise
 		m.toCall = logic.ToCall(e, heroID)
 		m.myChips = e.PlayerChips[heroID]
-		m.handDone = e.HandComplete || m.Base.Phase == game.Finished
-		m.matchDone = e.MatchComplete || m.Base.Phase == game.Finished
+		m.handComplete = e.HandComplete || m.Base.Phase == game.Finished
+		m.matchComplete = e.MatchComplete || m.Base.Phase == game.Finished
 		m.handNumber = e.HandNumber
 		m.handsTotal = e.HandsTotal
 		// Winners holds whoever took the last pot; the match itself is won by the
 		// biggest stack, which is the winner the engine settles on.
-		if len(e.Winners) > 0 && !m.matchDone {
+		if len(e.Winners) > 0 && !m.matchComplete {
 			m.winnerName = e.Winners[0].DisplayName()
 		}
 
@@ -191,15 +196,15 @@ func (m *Model) heroSeat() *Seat {
 }
 
 func (m *Model) canCheck() bool {
-	return m.Base.MyTurn && m.toCall == 0 && !m.handDone
+	return m.Base.MyTurn && m.toCall == 0 && !m.handComplete
 }
 
 func (m *Model) canCall() bool {
-	return m.Base.MyTurn && m.toCall > 0 && !m.handDone
+	return m.Base.MyTurn && m.toCall > 0 && !m.handComplete
 }
 
 func (m *Model) canRaise() bool {
-	if !m.Base.MyTurn || m.handDone {
+	if !m.Base.MyTurn || m.handComplete {
 		return false
 	}
 	hero := m.heroSeat()
@@ -212,17 +217,17 @@ func (m *Model) canRaise() bool {
 
 func (m *Model) canAllIn() bool {
 	hero := m.heroSeat()
-	return m.Base.MyTurn && !m.handDone && hero != nil && hero.Chips > 0
+	return m.Base.MyTurn && !m.handComplete && hero != nil && hero.Chips > 0
 }
 
 func (m *Model) canFold() bool {
-	return m.Base.MyTurn && !m.handDone
+	return m.Base.MyTurn && !m.handComplete
 }
 
 // canDeal reports whether the hero is the one holding the button between hands,
 // and so the one who deals the next one.
 func (m *Model) canDeal() bool {
-	return m.handDone && !m.matchDone && m.Base.MyTurn
+	return m.handComplete && !m.matchComplete && m.Base.MyTurn
 }
 
 // heroBusted reports whether the hero has lost their stack. They keep their seat
