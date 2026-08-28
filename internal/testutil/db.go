@@ -98,19 +98,29 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 		}
 	})
 
-	applyMigrations(t, gormDB)
+	// Up, down, up. A down file is never exercised in CI otherwise, so a broken one
+	// is only found during the rollback that needed it. The container is already
+	// paid for; a second pass over a handful of DDL statements is not.
+	runMigrations(t, gormDB, "*.up.sql")
+	runMigrations(t, gormDB, "*.down.sql")
+	runMigrations(t, gormDB, "*.up.sql")
 
 	return gormDB
 }
 
-func applyMigrations(t *testing.T, gormDB *gorm.DB) {
+// runMigrations applies every migration matching pattern, up files in ascending
+// version order and down files in descending order.
+func runMigrations(t *testing.T, gormDB *gorm.DB, pattern string) {
 	t.Helper()
 
-	steps, err := fs.Glob(db.Migrations, "migrations/*.up.sql")
+	steps, err := fs.Glob(db.Migrations, "migrations/"+pattern)
 	if err != nil {
 		t.Fatalf("failed to list migrations: %v", err)
 	}
 	slices.Sort(steps)
+	if strings.HasSuffix(pattern, ".down.sql") {
+		slices.Reverse(steps)
+	}
 
 	for _, step := range steps {
 		sql, err := db.Migrations.ReadFile(step)
