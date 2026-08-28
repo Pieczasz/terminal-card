@@ -58,3 +58,26 @@ prometheus.remote_write "default" {
     url = "http://prometheus:9090/api/v1/write"
   }
 }
+
+// Container stdout/stderr into Loki. Without this, everything that bypasses the
+// OTLP log path - panic dumps, the Postgres and nginx logs, anything a library
+// writes straight to stderr - exists only in `docker logs`.
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+}
+
+loki.source.docker "containers" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.write.default.receiver]
+  labels     = { source = "docker" }
+}

@@ -35,6 +35,9 @@ services:
       dockerfile: cmd/server/Dockerfile
     environment:
       - ENV=production
+      # Stamped onto service.version so dashboards can tell deploys apart; without
+      # it every release reports the same constant.
+      - SERVICE_VERSION=${SERVICE_VERSION:-dev}
       - SERVER_HOST=0.0.0.0
       - SERVER_PORT=6969
       # Stats feed for the website. Reached only through the proxy's /api/ location -
@@ -74,9 +77,10 @@ services:
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
-    # Longer than run's own drain (30s Shutdown + 15s finalizers), so a redeploy
-    # cannot SIGKILL the process while a ranked match is still being persisted.
-    stop_grace_period: 50s
+    # Longer than run's full sequential drain budget (30s SSH Shutdown + 5s stats
+    # API + 15s finalizers + 5s OTel flush = 55s), so a redeploy cannot SIGKILL the
+    # process while a ranked match is still being persisted or telemetry flushed.
+    stop_grace_period: 70s
     depends_on:
       db:
         condition: service_healthy
@@ -130,6 +134,9 @@ services:
     <<: *default-logging
     volumes:
       - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
+      # Read-only Docker socket so loki.source.docker can ship container
+      # stdout/stderr (panic dumps and third-party logs) into Loki.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
     command:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
@@ -176,6 +183,7 @@ services:
       - --storage.tsdb.retention.time=7d
     volumes:
       - ./internal/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./internal/config/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
     ports:
       - "127.0.0.1:9090:9090"
