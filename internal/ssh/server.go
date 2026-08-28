@@ -4,6 +4,7 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -79,26 +80,42 @@ func lookupSessionState(s ssh.Session) (*sessionState, bool) {
 	return st.(*sessionState), true
 }
 
+// ErrAlreadyConnected and ErrServerFull are Connect's refusals; the caller turns
+// each into a different message, because "come back later" and "you are already
+// here" call for different player action.
+var (
+	ErrAlreadyConnected = errors.New("account is already connected")
+	ErrServerFull       = errors.New("server is at capacity")
+)
+
 type SessionTracker struct {
 	mu     sync.Mutex
 	active map[uint]bool
+	// maxSessions is the player-visible capacity: Connect refuses beyond it with a
+	// message, unlike the TCP-level LimitListener, which silently stops accepting.
+	// Zero means unlimited.
+	maxSessions int
 }
 
-func NewSessionTracker() *SessionTracker {
+func NewSessionTracker(maxSessions int) *SessionTracker {
 	return &SessionTracker{
-		active: make(map[uint]bool),
+		active:      make(map[uint]bool),
+		maxSessions: maxSessions,
 	}
 }
 
-func (t *SessionTracker) Connect(userID uint) bool {
+func (t *SessionTracker) Connect(userID uint) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.active[userID] {
-		return false
+		return ErrAlreadyConnected
+	}
+	if t.maxSessions > 0 && len(t.active) >= t.maxSessions {
+		return ErrServerFull
 	}
 	t.active[userID] = true
 	observability.SSHSessionsActive.Add(1)
-	return true
+	return nil
 }
 
 func (t *SessionTracker) Count() int {
@@ -142,7 +159,7 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 
 	tracker := deps.Tracker
 	if tracker == nil {
-		tracker = NewSessionTracker()
+		tracker = NewSessionTracker(deps.Config.MaxConnections)
 	}
 	rateLimiter := ratelimit.NewSlidingWindowLimiter(deps.Config.RateLimitCount, deps.Config.RateLimitWindow)
 
@@ -235,9 +252,17 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 			failSessionf(s, "auth_failed", err, "%v\n", err)
 			return nil, nil
 		}
-		if !tracker.Connect(user.ID) {
-			failSessionf(s, "rejected_duplicate", errAlreadyConnected,
+		switch err := tracker.Connect(user.ID); {
+		case errors.Is(err, ErrAlreadyConnected):
+			failSessionf(s, "rejected_duplicate", err,
 				"Account '%s' is already connected from another session.\n", user.Username)
+			return nil, nil
+		case errors.Is(err, ErrServerFull):
+			failSessionf(s, "rejected_full", err,
+				"The server is full right now - please try again in a few minutes.\n")
+			return nil, nil
+		case err != nil:
+			failSessionf(s, "rejected", err, "%v\n", err)
 			return nil, nil
 		}
 		observability.SSHSession(traceCtx, "accepted")
@@ -424,6 +449,8 @@ func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTrac
 	if !ok || !st.owns || st.user == nil {
 		return
 	}
-	deps.LobbyManager.LeaveLobby(lobby.NewPlayer(st.user))
+	// DisconnectPlayer, not LeaveLobby: a dropped session keeps its mid-game seat
+	// for the grace window, so a reconnect resumes the match instead of forfeiting.
+	deps.LobbyManager.DisconnectPlayer(lobby.NewPlayer(st.user))
 	tracker.Disconnect(st.user.ID)
 }

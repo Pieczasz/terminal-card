@@ -95,9 +95,9 @@ func (panickyModel) Close() { panic("closing the view exploded") }
 // with `defer recoverSession(s)` deleted.
 func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.T) {
 	t.Parallel()
-	tracker := NewSessionTracker()
+	tracker := NewSessionTracker(0)
 	user := &db.User{Model: gorm.Model{ID: 7}}
-	require.True(t, tracker.Connect(user.ID))
+	require.NoError(t, tracker.Connect(user.ID))
 
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 	srv := &ssh.Server{

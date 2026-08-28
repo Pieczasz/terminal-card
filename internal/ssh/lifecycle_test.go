@@ -39,9 +39,9 @@ func (c recordingCloser) Close() { *c.closed = true }
 func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	t.Parallel()
 
-	tracker := NewSessionTracker()
+	tracker := NewSessionTracker(0)
 	user := &db.User{Model: gorm.Model{ID: 11}, Username: "shared"}
-	require.True(t, tracker.Connect(user.ID))
+	require.NoError(t, tracker.Connect(user.ID))
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 
 	// Both channels of one connection, so they would share an ssh.Context.
@@ -83,8 +83,8 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, manager.JoinLobbyByCode(table.Code(), guestPlayer))
 
-	tracker := NewSessionTracker()
-	require.True(t, tracker.Connect(guest.ID))
+	tracker := NewSessionTracker(0)
+	require.NoError(t, tracker.Connect(guest.ID))
 	deps := ServerDependencies{LobbyManager: manager}
 
 	// The reconnect claims the slot the moment it is free and immediately sits back
@@ -93,7 +93,7 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	reconnected := make(chan struct{})
 	reconnect := func() {
 		defer close(reconnected)
-		for !tracker.Connect(guest.ID) {
+		for tracker.Connect(guest.ID) != nil {
 			runtime.Gosched()
 		}
 		if err := manager.JoinLobbyByCode(table.Code(), guestPlayer); err != nil {
@@ -126,7 +126,7 @@ func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
 	release := make(chan struct{})
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 	srv := &ssh.Server{
-		Handler: sessionLifecycle(deps, NewSessionTracker())(func(_ ssh.Session) {
+		Handler: sessionLifecycle(deps, NewSessionTracker(0))(func(_ ssh.Session) {
 			admitted <- struct{}{}
 			<-release
 		}),
@@ -162,4 +162,17 @@ func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
 
 	close(release)
 	running.Wait()
+}
+
+func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
+	t.Parallel()
+	tracker := NewSessionTracker(2)
+	require.NoError(t, tracker.Connect(1))
+	require.NoError(t, tracker.Connect(2))
+	require.ErrorIs(t, tracker.Connect(3), ErrServerFull)
+	// A duplicate is reported as a duplicate even on a full server: the player
+	// action differs ("you are already here" vs "come back later").
+	require.ErrorIs(t, tracker.Connect(1), ErrAlreadyConnected)
+	tracker.Disconnect(2)
+	require.NoError(t, tracker.Connect(3), "capacity frees with the seat")
 }
