@@ -67,10 +67,14 @@ services:
       # The backstop that makes the line above safe: collection is forced as the heap
       # approaches this, so a traffic spike cannot turn a relaxed GOGC into an OOM.
       # Keep it at roughly 75% of whatever mem_limit this service is given.
-      # Measured (cmd/loadtest, menu journey): 1000 parked sessions sit right AT
-      # this limit (~1MB/session) with GC holding it and ~45% of one core; raise
-      # this before raising MAX_CONNECTIONS.
-      - GOMEMLIMIT=1GiB
+      # Measured (cmd/loadtest, menu journey): ~1MB per parked session. 1GiB sat
+      # exactly at the limit with 1000 sessions; 1536MiB gives the advertised
+      # MAX_CONNECTIONS=1000 real headroom. Raise both together before raising
+      # MAX_CONNECTIONS.
+      - GOMEMLIMIT=1536MiB
+    # The hard ceiling GOMEMLIMIT is 75% of; the kernel kills past this, Go GC
+    # holds well under it.
+    mem_limit: 2g
     volumes:
       - ssh-keys:/data/ssh
     # A card server needs no privileges and writes nothing outside its volume.
