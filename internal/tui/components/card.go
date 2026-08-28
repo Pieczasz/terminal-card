@@ -1,6 +1,8 @@
 package components
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -99,7 +101,7 @@ func RenderCard(t styles.Theme, card deck.Card, selected bool) string {
 }
 
 func renderCard(t styles.Theme, card deck.Card, selected bool) string {
-	style := lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(t.CardFace)
+	style := t.CardFrame
 	if selected {
 		// A selected card is lifted out of the hand as well as recoloured, so the
 		// selection survives a viewer who cannot tell the border colours apart.
@@ -206,11 +208,7 @@ func pipRow(cols, suit string) []string {
 }
 
 func blankRow() []string {
-	cells := make([]string, FaceWidth)
-	for i := range cells {
-		cells[i] = " "
-	}
-	return cells
+	return slices.Repeat([]string{" "}, FaceWidth)
 }
 
 // suitStyle is the one-column symbol for a suit, and the style it is drawn in.
@@ -245,4 +243,46 @@ var rankLabels = map[deck.Rank]string{
 // card it stands for can never disagree about what rank they are.
 func RankLabel(rank deck.Rank) string {
 	return rankLabels[rank]
+}
+
+// MiniRankWidth is the width of the widest rank label, so a ten landing on the table
+// does not shift the cards beside it by a column.
+const MiniRankWidth = 2
+
+// RenderMiniCard is a card in four columns, "[ A♥]", for a table with no room for a
+// face: poker's board on a short terminal, and Hearts' trick when the middle band
+// cannot hold three rows of card art. Nine rows per played card is what a trick costs,
+// and a trick a player cannot see all of is a trick they cannot play into.
+func RenderMiniCard(t styles.Theme, c deck.Card) string {
+	suit, style := miniSuit(t, c.Suit)
+	return style.Render(fmt.Sprintf("[%*s%s]", MiniRankWidth, RankLabel(c.Rank), suit))
+}
+
+// MiniCardBack is a face-down card at mini size, the same footprint as RenderMiniCard.
+func MiniCardBack(t styles.Theme) string {
+	return t.Dim.Render("[" + strings.Repeat("?", MiniRankWidth+1) + "]")
+}
+
+// MiniCardSlot is an empty slot at mini size.
+func MiniCardSlot(t styles.Theme) string {
+	return t.Dim.Render("[" + strings.Repeat(" ", MiniRankWidth+1) + "]")
+}
+
+// miniSuit is the suit symbol for a mini card. It has its own table rather than
+// sharing suitStyle: a mini card is one cell of text, so the heart needs no
+// text-presentation selector to hold the grid open, and an unknown suit has to be
+// visible rather than blank.
+func miniSuit(t styles.Theme, s deck.Suit) (string, lg.Style) {
+	switch s {
+	case deck.Hearts:
+		return "♥", lg.NewStyle().Foreground(t.SuitRed)
+	case deck.Diamonds:
+		return "♦", lg.NewStyle().Foreground(t.SuitRed)
+	case deck.Clubs:
+		return "♣", lg.NewStyle().Foreground(t.SuitDark)
+	case deck.Spades:
+		return "♠", lg.NewStyle().Foreground(t.SuitDark)
+	default:
+		return "?", t.Dim
+	}
 }

@@ -145,18 +145,18 @@ func TestRenderFan_OnlyTheTopCardClosesItsEdge(t *testing.T) {
 		{Rank: deck.Three, Suit: deck.Hearts},
 	}
 
-	flat := stripANSI(RenderFan(theme, hand, -1))
+	flat := stripANSI(RenderFan(theme, hand, -1, overlapWidth))
 	assert.Equal(t, 1, strings.Count(flat, "╮"), "only the rightmost card closes")
 	wantWidth := 0
 	for i := range hand {
-		wantWidth += CardSlotWidth(i, len(hand), -1)
+		wantWidth += CardSlotWidth(i, len(hand), -1, overlapWidth)
 	}
 	assert.Equal(t, wantWidth, lg.Width(flat), "the fan is as wide as it claims")
 
-	picked := stripANSI(RenderFan(theme, hand, 1))
+	picked := stripANSI(RenderFan(theme, hand, 1, overlapWidth))
 	assert.Equal(t, 2, strings.Count(picked, "╮"), "the picked card closes over its neighbour")
 
-	assert.Empty(t, RenderFan(theme, nil, -1), "no cards, nothing to draw")
+	assert.Empty(t, RenderFan(theme, nil, -1, overlapWidth), "no cards, nothing to draw")
 }
 
 // rankLabels replaced an exhaustive switch, so the compiler no longer catches a
