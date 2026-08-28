@@ -29,14 +29,31 @@ const (
 	cardsToPass         = 3
 	penaltyPointsTotal  = 26
 	DefaultTargetScore  = 100
-	PassTurnTimeout     = 45 * time.Second
-	HandOverTurnTimeout = time.Minute
+	passTurnTimeout     = 45 * time.Second
+	handOverTurnTimeout = time.Minute
 )
 
 var (
 	twoOfClubs    = deck.Card{Rank: deck.Two, Suit: deck.Clubs}
 	queenOfSpades = deck.Card{Rank: deck.Queen, Suit: deck.Spades}
 )
+
+// String names the direction for logs. The TUI renders its own labels; this exists
+// so a hand-end log line is readable without decoding an integer.
+func (d PassDirection) String() string {
+	switch d {
+	case PassLeft:
+		return "left"
+	case PassRight:
+		return "right"
+	case PassAcross:
+		return "across"
+	case PassNone:
+		return "hold"
+	default:
+		return "unknown"
+	}
+}
 
 // State is Hearts-specific match state stored in game.State.Extra.
 type State struct {

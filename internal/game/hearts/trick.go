@@ -1,6 +1,7 @@
 package hearts
 
 import (
+	"log/slog"
 	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -49,21 +50,12 @@ func nextUnpassedSeat(state *game.State, extra *State, from int) int {
 }
 
 func handHasSuit(hand []deck.Card, suit deck.Suit) bool {
-	for _, c := range hand {
-		if c.Suit == suit {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(hand, func(c deck.Card) bool { return c.Suit == suit })
 }
 
 func onlyHearts(hand []deck.Card) bool {
-	for _, c := range hand {
-		if c.Suit != deck.Hearts {
-			return false
-		}
-	}
-	return len(hand) > 0
+	return len(hand) > 0 &&
+		!slices.ContainsFunc(hand, func(c deck.Card) bool { return c.Suit != deck.Hearts })
 }
 
 func isPenaltyCard(c deck.Card) bool {
@@ -71,12 +63,7 @@ func isPenaltyCard(c deck.Card) bool {
 }
 
 func hasNonPenaltyCard(hand []deck.Card) bool {
-	for _, c := range hand {
-		if !isPenaltyCard(c) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(hand, func(c deck.Card) bool { return !isPenaltyCard(c) })
 }
 
 func trickWinner(state *game.State, extra *State) (string, int) {
@@ -117,20 +104,26 @@ func scoreHand(extra *State, players []*game.Player) {
 		}
 	}
 	if shooterID != "" {
+		// The moon moves a full hand of points onto three players who took nothing,
+		// so it is the one result of a hand that gets disputed. Nothing reads this
+		// back; it is the only server-side record that it happened at all.
+		slog.Info("hearts moon shot",
+			"hand", extra.HandNumber, "shooter", shooterID, "points_each", penaltyPointsTotal)
 		for _, p := range players {
 			if p.ID != shooterID {
 				extra.CumulativeScores[p.ID] += penaltyPointsTotal
 			}
 		}
-		return
+	} else {
+		for _, p := range players {
+			extra.CumulativeScores[p.ID] += extra.HandPoints[p.ID]
+		}
 	}
-	for _, p := range players {
-		extra.CumulativeScores[p.ID] += extra.HandPoints[p.ID]
-	}
-}
-
-func handTargetReached(extra *State) bool {
-	return game.AnyScoreAtLeast(extra.CumulativeScores, extra.TargetScore)
+	slog.Info("hearts hand scored",
+		"hand", extra.HandNumber,
+		"pass_direction", extra.PassDirection.String(),
+		"hand_points", extra.HandPoints,
+		"totals", extra.CumulativeScores)
 }
 
 func threeLowestCards(hand []deck.Card) []deck.Card {

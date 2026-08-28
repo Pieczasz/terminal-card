@@ -97,7 +97,7 @@ func TestMatch_ShootTheMoon_AndTargetEnd(t *testing.T) {
 	assert.Equal(t, 26, extra.CumulativeScores["p2"])
 
 	extra.TargetScore = 26
-	assert.True(t, handTargetReached(extra))
+	assert.True(t, game.AnyScoreAtLeast(extra.CumulativeScores, extra.TargetScore))
 
 	extra.Stage = StageHandOver
 	extra.HandComplete = true

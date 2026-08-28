@@ -492,3 +492,222 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 		assert.Zero(t, inHands)
 	})
 }
+
+// Only PassLeft was wired through applyAllPasses, and every direction is one modulo
+// away from another: an inverted right or a misplaced across would ship green.
+func TestApplyAllPasses_DeliversInEveryDirection(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		dir  PassDirection
+		// want[seat] is the seat whose cards land in seat's hand.
+		want [playerCount]int
+	}{
+		{name: "left", dir: PassLeft, want: [playerCount]int{3, 0, 1, 2}},
+		{name: "right", dir: PassRight, want: [playerCount]int{1, 2, 3, 0}},
+		{name: "across", dir: PassAcross, want: [playerCount]int{2, 3, 0, 1}},
+		{name: "hold", dir: PassNone, want: [playerCount]int{0, 1, 2, 3}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := createTestState()
+			extra := state.Extra.(*State)
+			extra.PassDirection = tt.dir
+			extra.PendingPasses = make(map[string][]deck.Card, playerCount)
+			// One card per seat, its rank naming the seat it came from.
+			for seat, p := range state.Players {
+				p.Cards = nil
+				extra.PendingPasses[p.ID] = []deck.Card{
+					{Rank: deck.Rank(seat + 2), Suit: deck.Clubs},
+				}
+			}
+
+			applyAllPasses(state, extra)
+
+			for seat, p := range state.Players {
+				require.Len(t, p.Cards, 1, "seat %d", seat)
+				assert.Equal(t, deck.Rank(tt.want[seat]+2), p.Cards[0].Rank,
+					"seat %d should receive from seat %d", seat, tt.want[seat])
+			}
+		})
+	}
+}
+
+// The moon has to be reachable from real trick play, not only from a HandPoints map
+// set by hand: one seat holding every club takes all thirteen tricks, and every heart
+// and the queen land in them.
+func TestMatch_MoonFromRealTrickPlay(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	suitOf := func(s deck.Suit) []deck.Card {
+		cards := make([]deck.Card, 0, cardsPerHand)
+		for r := deck.Two; r <= deck.King; r++ {
+			cards = append(cards, deck.Card{Rank: r, Suit: s})
+		}
+		return append(cards, deck.Card{Rank: deck.Ace, Suit: s})
+	}
+	// p1 holds every club: they lead the 2 of clubs and nobody can ever follow suit.
+	state := createTestState(
+		suitOf(deck.Clubs), suitOf(deck.Spades), suitOf(deck.Hearts), suitOf(deck.Diamonds),
+	)
+	extra := state.Extra.(*State)
+	extra.TargetScore = penaltyPointsTotal
+
+	for trick := range cardsPerHand {
+		for seat := range playerCount {
+			state.CurrentTurn = seat
+			p := state.Players[seat]
+			card, ok := firstLegalCard(state, extra, p)
+			require.True(t, ok, "trick %d seat %d has no legal card", trick, seat)
+			require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: card}))
+			rules.ApplyAction(state, ActionPlayCard{Card: card})
+			require.NoError(t, rules.AfterAction(state, ActionPlayCard{Card: card}))
+		}
+		require.Equal(t, "p1", extra.LastTrickWinner, "trick %d", trick)
+	}
+
+	assert.Equal(t, penaltyPointsTotal, extra.HandPoints["p1"], "every point landed in p1's tricks")
+	assert.Equal(t, 0, extra.CumulativeScores["p1"], "the shooter takes nothing")
+	for _, id := range []string{"p2", "p3", "p4"} {
+		assert.Equal(t, penaltyPointsTotal, extra.CumulativeScores[id], id)
+	}
+	assert.True(t, extra.MatchComplete, "the moon pushed the other three over the target")
+	assert.True(t, rules.CheckWinCondition(state))
+}
+
+// Both first-trick restrictions have an exemption for a hand with nothing else to
+// play. Only the refusals were tested, so an exemption that never fired would have
+// left those hands with no legal move at all.
+func TestRules_ValidateAction_FirstTrickExemptions(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	t.Run("a hand of nothing but hearts may lead one", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState([]deck.Card{
+			{Rank: deck.Ace, Suit: deck.Hearts},
+			{Rank: deck.Three, Suit: deck.Hearts},
+		})
+		state.Extra.(*State).TricksPlayed = 1
+
+		require.NoError(t, rules.ValidateAction(state,
+			ActionPlayCard{Card: deck.Card{Rank: deck.Ace, Suit: deck.Hearts}}))
+	})
+
+	t.Run("a hand of nothing but points may dump one on trick 1", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState([]deck.Card{
+			{Rank: deck.Ace, Suit: deck.Hearts},
+			queenOfSpades,
+		})
+		extra := state.Extra.(*State)
+		extra.LedSuit = deck.Clubs
+		extra.TrickCards["p2"] = twoOfClubs
+
+		require.NoError(t, rules.ValidateAction(state,
+			ActionPlayCard{Card: deck.Card{Rank: deck.Ace, Suit: deck.Hearts}}))
+		require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: queenOfSpades}))
+	})
+}
+
+// Trick play is the stage an absent player spends twelve of thirteen turns in, and
+// the move has to be one ValidateAction accepts or the engine takes the seat.
+func TestRules_TimeoutAction_TrickPlay(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	t.Run("plays the first legal card", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState([]deck.Card{
+			{Rank: deck.King, Suit: deck.Hearts}, // illegal: cannot dump points on trick 1
+			{Rank: deck.Nine, Suit: deck.Diamonds},
+		})
+		extra := state.Extra.(*State)
+		extra.LedSuit = deck.Clubs
+		extra.TrickCards["p2"] = twoOfClubs
+
+		act := rules.TimeoutAction(state)
+		play, ok := act.(ActionPlayCard)
+		require.True(t, ok, "got %T", act)
+		assert.Equal(t, deck.Card{Rank: deck.Nine, Suit: deck.Diamonds}, play.Card)
+		require.NoError(t, rules.ValidateAction(state, act), "the safe move must be legal")
+	})
+
+	t.Run("must follow suit when it can", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState([]deck.Card{
+			{Rank: deck.Nine, Suit: deck.Diamonds},
+			{Rank: deck.Four, Suit: deck.Clubs},
+		})
+		extra := state.Extra.(*State)
+		extra.TricksPlayed = 1
+		extra.LedSuit = deck.Clubs
+		extra.TrickCards["p2"] = twoOfClubs
+
+		act := rules.TimeoutAction(state)
+		require.NoError(t, rules.ValidateAction(state, act))
+		assert.Equal(t, ActionPlayCard{Card: deck.Card{Rank: deck.Four, Suit: deck.Clubs}}, act)
+	})
+
+	t.Run("an empty hand has no move", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		assert.Nil(t, rules.TimeoutAction(state))
+	})
+}
+
+// The fourth hand of a match is held, not passed. It still has to open on the 2 of
+// clubs, which is a different code path from the one the passing hands take.
+func TestRules_BeginHand_HoldHandSeatsTheTwoOfClubs(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createTestState()
+	extra := state.Extra.(*State)
+	extra.HandNumber = 3 // the next hand is the fourth: PassNone
+
+	require.NoError(t, rules.beginHand(state, extra, 2))
+
+	require.Equal(t, PassNone, extra.PassDirection)
+	assert.Equal(t, StageTrickPlay, extra.Stage, "nothing to pass, so trick play starts at once")
+	assert.Nil(t, extra.PendingPasses)
+	require.NotNil(t, state.OverrideNextTurn)
+	assert.Equal(t, findTwoOfClubs(state), *state.OverrideNextTurn)
+	assert.Contains(t, state.Players[state.CurrentTurn].Cards, twoOfClubs)
+}
+
+// The queen of spades is a point card but not a heart: playing her must not unlock
+// leading hearts a trick early.
+func TestRules_ApplyAction_QueenOfSpadesDoesNotBreakHearts(t *testing.T) {
+	t.Parallel()
+	state := createTestState([]deck.Card{queenOfSpades})
+	extra := state.Extra.(*State)
+	extra.TricksPlayed = 1
+	extra.LedSuit = deck.Spades
+	extra.TrickCards["p2"] = deck.Card{Rank: deck.Two, Suit: deck.Spades}
+
+	(&Rules{}).ApplyAction(state, ActionPlayCard{Card: queenOfSpades})
+
+	assert.False(t, extra.HeartsBroken, "the queen is a point card, not a heart")
+}
+
+// Standings and StandingScore have to agree, or the engine splits a genuine draw by
+// slice position and the seat that sorted first takes rating off the seat that did not.
+func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
+	t.Parallel()
+	engine := game.NewEngine(&Rules{}, fourPlayers(), deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra := s.Extra.(*State)
+		extra.CumulativeScores = map[string]int{"p1": 10, "p2": 10, "p3": 5, "p4": 20}
+	})
+
+	standings, places := engine.StandingsWithPlaces()
+	require.Len(t, standings, playerCount)
+	assert.Equal(t, "p3", standings[0].ID, "the fewest points wins hearts")
+	assert.Equal(t, []int{1, 2, 2, 4}, places, "equal totals are one place, not two")
+}
