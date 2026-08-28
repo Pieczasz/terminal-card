@@ -148,23 +148,11 @@ func registerAppMetrics(mp metric.MeterProvider) error {
 	if err != nil {
 		return fmt.Errorf("create sessions gauge: %w", err)
 	}
-	started, err := meter.Int64ObservableCounter("terminalcard.games.started",
-		metric.WithDescription("Games started since process start"))
-	if err != nil {
-		return fmt.Errorf("create games counter: %w", err)
-	}
-	rejects, err := meter.Int64ObservableCounter("terminalcard.ratelimit.rejects",
-		metric.WithDescription("Connections rejected by the rate limiter"))
-	if err != nil {
-		return fmt.Errorf("create rejects counter: %w", err)
-	}
 
 	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		o.ObserveInt64(active, SSHSessionsActive.Load())
-		o.ObserveInt64(started, GamesStartedTotal.Load())
-		o.ObserveInt64(rejects, RateLimitRejectsTotal.Load())
 		return nil
-	}, active, started, rejects)
+	}, active)
 	if err != nil {
 		return fmt.Errorf("register metric callback: %w", err)
 	}
