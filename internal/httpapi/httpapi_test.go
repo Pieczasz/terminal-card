@@ -334,3 +334,31 @@ func TestTrustedProxy_UsesLeftmostForwardedAddress(t *testing.T) {
 	assert.Equal(t, http.StatusTooManyRequests, send("198.51.100.5, 172.16.0.9"),
 		"same client through a different hop is still the same client")
 }
+
+// A HEAD is how a monitor checks the feed is alive; it must get the headers and
+// nothing else, or a client that trusts Content-Length reads a truncated body.
+func TestHeadReturnsHeadersWithoutABody(t *testing.T) {
+	t.Parallel()
+	h := Handler(Deps{Sessions: fakeSessions(3), Lobbies: fakeLobbies{inGame: 1, waiting: 2}})
+
+	req := httptest.NewRequest(http.MethodHead, "/v1/stats", nil)
+	req.RemoteAddr = "203.0.113.9:5555"
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json; charset=utf-8", rec.Header().Get("Content-Type"))
+	assert.Empty(t, rec.Body.String(), "a HEAD must not carry a body")
+}
+
+// A limit that does not fit in an int is a malformed request, not a server fault.
+func TestLeaderboard_LimitOverflowIsRejected(t *testing.T) {
+	t.Parallel()
+	users := &stubUsers{}
+	h := Handler(Deps{Users: users})
+
+	rec := get(t, h, "/v1/leaderboard?limit=99999999999999999999")
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, 0, users.gotLimit, "the repository must never be reached")
+}
