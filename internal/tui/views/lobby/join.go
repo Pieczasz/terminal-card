@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
@@ -132,13 +133,9 @@ func (m *joinModel) handleBrowsing(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch key.String() {
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.cursor = components.StepCursor(m.cursor, -1, len(m.entries)-1)
 	case "down", "j":
-		if m.cursor < len(m.entries)-1 {
-			m.cursor++
-		}
+		m.cursor = components.StepCursor(m.cursor, +1, len(m.entries)-1)
 	case "g":
 		m.cycleGame()
 	case "m":
@@ -244,25 +241,31 @@ func (m *joinModel) filterLine() string {
 	return m.global.Theme.Muted.Render(fmt.Sprintf("game: %s   mode: %s   showing: %s", game, m.modeLabel(), seats))
 }
 
-// Column widths match the leaderboard table style (fixed cells + " | " separators).
-// Codes stay off this list: JoinLobbyByCode never checks IsPrivate.
+// Column widths are fixed so a filter keypress cannot resize the list under the
+// cursor. Codes stay off this list: JoinLobbyByCode never checks IsPrivate.
 const (
 	colGame   = 16
 	colSeats  = 7
 	colMode   = 6
 	colRating = 4
-	// tableWidth is the printable width of one data row without the cursor gutter.
-	tableWidth = colGame + 3 + colSeats + 3 + colMode + 3 + colRating
 )
 
-func (m *joinModel) renderHeader() string {
-	header := m.global.Theme.SectionHeading.Render(
-		fmt.Sprintf(" %-*s | %-*s | %-*s | %s", colGame, "Game", colSeats, "Seats", colMode, "Mode", "Elo"),
-	)
-	rule := m.global.Theme.Dim.Render(" " + strings.Repeat("-", tableWidth))
-	return header + "\n" + rule
+// browseTable is the list's shape. Lead is the cursor gutter, which every row carries
+// so the marker does not push the columns sideways on the selected one.
+var browseTable = components.Table{
+	Cols: []components.Column{
+		{Title: "Game", Width: colGame},
+		{Title: "Seats", Width: colSeats},
+		{Title: "Mode", Width: colMode},
+		{Title: "Elo", Width: colRating},
+	},
+	Lead:  " ",
+	PadTo: visibleRows,
 }
 
+// renderRow lays the cells out itself rather than through Table.Cells: the mode cell
+// is styled, and a styled cell cannot be padded by rune count afterwards without
+// counting the escape sequence as text.
 func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 	theme := m.global.Theme
 
@@ -272,10 +275,9 @@ func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 		modeRendered = theme.Accented.Render(styles.PadTruncate("ranked", colMode))
 	}
 
-	seats := styles.PadTruncate(fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers), colSeats)
 	cells := fmt.Sprintf("%s | %s | %s | %s",
 		styles.PadTruncate(entry.GameName, colGame),
-		seats,
+		styles.PadTruncate(fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers), colSeats),
 		modeRendered,
 		styles.PadTruncate(fmt.Sprint(entry.AvgElo), colRating),
 	)
@@ -302,18 +304,13 @@ func (m *joinModel) renderList() string {
 	}
 
 	start, end := m.visibleWindow()
-	rows := make([]string, 0, visibleRows+3)
-	rows = append(rows, m.renderHeader())
+	rows := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		rows = append(rows, m.renderRow(m.entries[i], !m.writingCode && m.cursor == i))
 	}
-	// Keep the list height stable so filters and the code field do not jump.
-	for pad := end - start; pad < visibleRows; pad++ {
-		rows = append(rows, strings.Repeat(" ", tableWidth+1))
-	}
-	rows = append(rows, m.global.Theme.Dim.Render(
-		fmt.Sprintf(" %d-%d of %d  ↑/↓ scroll", start+1, end, len(m.entries))))
-	return strings.Join(rows, "\n")
+	pager := m.global.Theme.Dim.Render(
+		fmt.Sprintf(" %d-%d of %d  ↑/↓ scroll", start+1, end, len(m.entries)))
+	return browseTable.Render(m.global.Theme, rows) + "\n" + pager
 }
 
 func (m *joinModel) View() tea.View {
@@ -335,15 +332,7 @@ func (m *joinModel) View() tea.View {
 		content += m.global.Theme.ErrorText.Render(fmt.Sprintf("\nError: %v", m.err))
 	}
 
-	innerWidth := styles.InnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureASCII("Join Game", innerWidth)
-	titleText := m.global.Theme.Title.Render(titleFig)
-
-	footerActions := slices.Concat(
-		[]string{"c - Enter Code", "g - Game", "m - Mode", "o - Seats"},
-		styles.GlobalActions,
-	)
-	footer := m.global.Theme.RenderActionFooter(footerActions)
-
-	return tea.NewView(views.RenderCenteredLayout(m.global, titleText, content, footer))
+	actions := []string{"c - Enter Code", "g - Game", "m - Mode", "o - Seats"}
+	return tea.NewView(views.RenderScreen(m.global, "Join Game", actions,
+		func(int) string { return content }))
 }

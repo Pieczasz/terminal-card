@@ -3,12 +3,12 @@ package lobby
 import (
 	"fmt"
 	"log/slog"
-	"slices"
 	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
@@ -23,6 +23,11 @@ type model struct {
 	global       router.GlobalContext
 	currentLobby *lobby.Lobby
 	lobbyChan    <-chan lobby.Event
+
+	// leaving is set once this view has asked the router to take the player
+	// somewhere else, so it asks once rather than on every message that arrives
+	// afterwards - a resize alone would otherwise re-issue the navigation.
+	leaving bool
 
 	cursor           int
 	gameOptions      []string
@@ -81,8 +86,9 @@ func (m *model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
-// Elo comes from the ratings the player was seated with, which are refreshed from
-// the database whenever a game ends.
+// Elo comes from the ratings the player was seated with, which are the snapshot taken
+// when they logged in - not a live read. A rating that changes mid-session shows up
+// the next time they connect.
 func (m *model) getElo(p *game.Player) uint32 {
 	if p == nil {
 		return elo.ToUint32(elo.DefaultRating)
@@ -116,6 +122,11 @@ func (m *model) selfPlayer() *game.Player {
 	return views.SessionPlayer(m.global)
 }
 
+// maxCursor is the last row the cursor can sit on: the settings, then one row per guest.
+func (m *model) maxCursor() int {
+	return cursorMode + len(m.currentLobby.Guests())
+}
+
 const (
 	cursorGame = iota
 	cursorMaxPlayers
@@ -126,7 +137,7 @@ const (
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.currentLobby == nil {
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+		return m, m.goHome()
 	}
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
@@ -168,13 +179,12 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "up", "k":
-		if isLeader && m.cursor > 0 {
-			m.cursor--
+		if isLeader {
+			m.cursor = components.StepCursor(m.cursor, -1, m.maxCursor())
 		}
 	case "down", "j":
-		maxCursor := cursorMode + len(m.currentLobby.Guests())
-		if isLeader && m.cursor < maxCursor {
-			m.cursor++
+		if isLeader {
+			m.cursor = components.StepCursor(m.cursor, +1, m.maxCursor())
 		}
 	case "left", "h":
 		if isLeader {
@@ -198,12 +208,23 @@ func (m *model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// goHome navigates to the home screen once. Without the guard a view with no lobby
+// returns a ChangeViewMsg for every message it is handed, resize messages included,
+// and the router rebuilds the home view on each one.
+func (m *model) goHome() tea.Cmd {
+	if m.leaving {
+		return nil
+	}
+	m.leaving = true
+	return func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+}
+
 func (m *model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "y", "Y":
 		m.global.LobbyManager.LeaveLobby(m.selfPlayer())
 		m.unsubscribe()
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+		return m, m.goHome()
 	case "n", "N", "esc":
 		m.showLeaveConfirm = false
 	}
@@ -249,7 +270,7 @@ func (m *model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case lobby.EventLobbyClosed:
 		m.unsubscribe()
-		return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+		return m, m.goHome()
 	case lobby.EventGameStarted:
 		engine, ok := msg.Payload.(*game.Engine)
 		if !ok || engine == nil {
@@ -280,16 +301,13 @@ func (m *model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 			}
 			if !found {
 				m.unsubscribe()
-				return m, func() tea.Msg { return router.ChangeViewMsg{ViewName: router.RouteHome} }
+				return m, m.goHome()
 			}
 		}
 		m.isPrivate = m.currentLobby.IsPrivate()
 		m.isRanked = m.currentLobby.IsRanked()
 		m.maxPlayers = m.currentLobby.MaxPlayers()
-		maxCursor := cursorMode + len(m.currentLobby.Guests())
-		if m.cursor > maxCursor {
-			m.cursor = maxCursor
-		}
+		m.cursor = components.StepCursor(m.cursor, 0, m.maxCursor())
 	}
 	return m, listenToLobbyBroadcaster(m.lobbyChan)
 }
@@ -299,29 +317,19 @@ func (m *model) View() tea.View {
 		return tea.NewView("No active lobby.")
 	}
 
-	innerWidth := styles.InnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureASCII("Lobby", innerWidth)
-	header := m.global.Theme.Title.Render(titleFig)
+	actions := []string{"x - Leave Lobby", "r - Ready"}
+	return tea.NewView(views.RenderScreen(m.global, "Lobby", actions, func(int) string {
+		if m.showLeaveConfirm {
+			redYes := m.global.Theme.ErrorText.Bold(true).Render("Yes")
+			return fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
+		}
 
-	isLeader := m.currentLobby.IsLeader(m.selfPlayer())
-
-	footerActions := slices.Concat([]string{"x - Leave Lobby", "r - Ready"}, styles.GlobalActions)
-	footer := m.global.Theme.RenderActionFooter(footerActions)
-
-	if m.showLeaveConfirm {
-		redYes := m.global.Theme.ErrorText.Bold(true).Render("Yes")
-		popupText := fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
-
-		return tea.NewView(views.RenderCenteredLayout(m.global, header, popupText, footer))
-	}
-
-	form := m.renderForm(isLeader, innerWidth)
-	if m.actionErr != nil {
-		errLine := m.global.Theme.ErrorText.Render(m.actionErr.Error())
-		form = lg.JoinVertical(lg.Center, form, "", errLine)
-	}
-
-	return tea.NewView(views.RenderCenteredLayout(m.global, header, form, footer))
+		form := m.renderForm(m.currentLobby.IsLeader(m.selfPlayer()), styles.InnerWidth(m.global.Width))
+		if m.actionErr != nil {
+			form = lg.JoinVertical(lg.Center, form, "", m.global.Theme.ErrorText.Render(m.actionErr.Error()))
+		}
+		return form
+	}))
 }
 
 // renderForm lays the settings and player columns side by side, stacking them

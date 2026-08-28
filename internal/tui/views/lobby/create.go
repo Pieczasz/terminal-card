@@ -3,13 +3,12 @@ package lobby
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
@@ -74,13 +73,9 @@ func (m *createModel) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	switch key.String() {
 	case "up", "k":
-		if m.cursor > 0 {
-			m.cursor--
-		}
+		m.cursor = components.StepCursor(m.cursor, -1, createCursorSubmit)
 	case "down", "j":
-		if m.cursor < createCursorSubmit {
-			m.cursor++
-		}
+		m.cursor = components.StepCursor(m.cursor, +1, createCursorSubmit)
 	case "left", "h":
 		m.adjustSetting(-1)
 	case "right", "l":
@@ -217,12 +212,7 @@ func (m *createModel) View() tea.View {
 		content += "\n\n" + m.global.Theme.ErrorText.Render(fmt.Sprintf("Error: %v", m.err))
 	}
 
-	innerWidth := styles.InnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureASCII("Create New Lobby", innerWidth)
-	header := m.global.Theme.Title.Render(titleFig)
-
-	footerActions := slices.Concat([]string{"enter - Confirm"}, styles.GlobalActions)
-	footer := m.global.Theme.RenderActionFooter(footerActions)
-
-	return tea.NewView(views.RenderCenteredLayout(m.global, header, content, footer))
+	actions := []string{"enter - Confirm"}
+	return tea.NewView(views.RenderScreen(m.global, "Create New Lobby", actions,
+		func(int) string { return content }))
 }

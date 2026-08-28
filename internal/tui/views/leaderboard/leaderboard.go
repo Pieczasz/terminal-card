@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/catalog"
+	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
@@ -26,7 +26,11 @@ const (
 	maxLeaderboardPlayers = 200
 
 	minPlayerWidth = 10
-	fixedDataWidth = 34 // Rank(5) + Game(15) + Elo(5) + dividers(9)
+	maxPlayerWidth = 16
+
+	colRank = 5
+	colGame = 15
+	colElo  = 5
 )
 
 // filterAll is the empty BestPlayers gameName: every ranking across every game.
@@ -102,8 +106,7 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) cycleFilter(delta int) (tea.Model, tea.Cmd) {
-	n := len(m.filters)
-	m.filterIndex = (m.filterIndex + delta%n + n) % n
+	m.filterIndex = components.CycleIndex(m.filterIndex, delta, len(m.filters))
 	m.rankings = nil
 	m.err = nil
 	m.page = 0
@@ -166,27 +169,20 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	innerWidth := styles.InnerWidth(m.global.Width)
-	titleFig := styles.RenderFigureASCII("Leaderboard", innerWidth)
-	titleText := m.global.Theme.Title.Render(titleFig)
-	footer := m.global.Theme.RenderActionFooter(append(styles.GlobalActions,
-		"g/←/→ - Filter: "+m.filters[m.filterIndex],
-		"↑/↓ - Page",
-	))
+	actions := []string{"g/←/→ - Filter: " + m.filters[m.filterIndex], "↑/↓ - Page"}
 
-	var content string
-	switch {
-	case m.err != nil:
-		content = m.renderError()
-	case m.rankings == nil || m.loading && len(m.rankings) == 0:
-		content = m.renderLoading()
-	case len(m.rankings) == 0:
-		content = m.renderEmpty()
-	default:
-		content = m.renderRankings(styles.InnerWidth(m.global.Width))
-	}
-
-	return tea.NewView(views.RenderCenteredLayout(m.global, titleText, content, footer))
+	return tea.NewView(views.RenderScreen(m.global, "Leaderboard", actions, func(int) string {
+		switch {
+		case m.err != nil:
+			return m.renderError()
+		case m.rankings == nil || m.loading && len(m.rankings) == 0:
+			return m.renderLoading()
+		case len(m.rankings) == 0:
+			return m.renderEmpty()
+		default:
+			return m.renderRankings(styles.InnerWidth(m.global.Width))
+		}
+	}))
 }
 
 func (m model) renderError() string {
@@ -204,24 +200,32 @@ func (m model) renderEmpty() string {
 	return lg.JoinVertical(lg.Center, fmt.Sprintf("No rankings for %s yet.", m.filters[m.filterIndex]))
 }
 
+// table is the fixed-cell board. The player column is the only one that flexes, and
+// only with the terminal: the rest stay put so paging cannot shift the columns.
+func (m model) table(contentWidth int) components.Table {
+	playerWidth := min(max(contentWidth-(colRank+colGame+colElo+9), minPlayerWidth), maxPlayerWidth)
+	return components.Table{
+		Cols: []components.Column{
+			{Title: "Rank", Width: colRank},
+			{Title: "Player", Width: playerWidth},
+			{Title: "Game", Width: colGame},
+			{Title: "Elo", Width: colElo},
+		},
+		PadTo: pageSize,
+	}
+}
+
 func (m model) renderRankings(contentWidth int) string {
-	playerWidth := min(max(contentWidth-fixedDataWidth, minPlayerWidth), 16)
+	tbl := m.table(contentWidth)
 	start := m.page * pageSize
 	end := min(start+pageSize, len(m.rankings))
 
-	rows := []string{
-		m.renderHeaderRow(playerWidth),
-		strings.Repeat("-", fixedDataWidth+playerWidth),
-	}
+	rows := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		rows = append(rows, m.renderPlayerRow(i, m.rankings[i], playerWidth))
-	}
-	// Keep the table height stable across pages that are not full.
-	for pad := end - start; pad < pageSize; pad++ {
-		rows = append(rows, strings.Repeat(" ", fixedDataWidth+playerWidth))
+		rows = append(rows, m.renderPlayerRow(tbl, i, m.rankings[i]))
 	}
 
-	table := lg.JoinVertical(lg.Left, rows...)
+	table := tbl.Render(m.global.Theme, rows)
 	heading := m.global.Theme.Title.
 		Bold(true).
 		MarginBottom(1).
@@ -234,17 +238,15 @@ func (m model) renderRankings(contentWidth int) string {
 	return lg.JoinVertical(lg.Center, "", heading, table, pager)
 }
 
-func (m model) renderHeaderRow(playerWidth int) string {
-	return m.global.Theme.SectionHeading.Render(
-		fmt.Sprintf("%-5s | %-*s | %-15s | %s", "Rank", playerWidth, "Player", "Game", "Elo"),
-	)
-}
-
-func (m model) renderPlayerRow(index int, r db.Ranking, playerWidth int) string {
+// renderPlayerRow lays the cells out itself rather than through Table.Cells: the
+// viewer's own row is highlighted, and a styled cell cannot be padded by rune count
+// afterwards without counting the escape sequence as text.
+func (m model) renderPlayerRow(tbl components.Table, index int, r db.Ranking) string {
+	playerWidth := tbl.Cols[1].Width
 	userStr := styles.PadTruncate(r.User.Username, playerWidth)
-
 	if m.global.User != nil && r.User.ID == m.global.User.ID {
 		userStr = m.global.Theme.PlayerItemSelected.Bold(true).Render(userStr)
 	}
-	return fmt.Sprintf("%-5d | %s | %-15s | %d", index+1, userStr, r.Game.Name, r.Elo)
+	return fmt.Sprintf("%-*d | %s | %-*s | %d",
+		colRank, index+1, userStr, colGame, styles.PadTruncate(r.Game.Name, colGame), r.Elo)
 }

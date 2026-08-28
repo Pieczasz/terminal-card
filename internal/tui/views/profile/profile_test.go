@@ -43,7 +43,7 @@ func TestUpdate_AFailedHistoryKeepsTheProfile(t *testing.T) {
 	m := loaded(t, profileLoadedMsg{user: alice(), historyErr: errQuery})
 
 	require.NotNil(t, m.userProfile, "the profile query succeeded")
-	out := stripANSI(m.renderContent("", ""))
+	out := stripANSI(m.renderContent(20))
 
 	assert.Contains(t, out, "Profile for: alice")
 	assert.Contains(t, out, "Poker", "the rankings came back with the profile")
@@ -58,14 +58,14 @@ func TestUpdate_AFailedProfileIsStillAnErrorScreen(t *testing.T) {
 	t.Parallel()
 	m := loaded(t, profileLoadedMsg{err: errQuery})
 
-	assert.Contains(t, m.renderContent("", ""), "Unable to load profile")
+	assert.Contains(t, m.renderContent(20), "Unable to load profile")
 }
 
 func TestRenderContent_SaysWhenThereAreNoMatchesRatherThanAnError(t *testing.T) {
 	t.Parallel()
 	m := loaded(t, profileLoadedMsg{user: alice()})
 
-	out := stripANSI(m.renderContent("", ""))
+	out := stripANSI(m.renderContent(20))
 	assert.Contains(t, out, "No matches for this filter.")
 	assert.NotContains(t, out, "Unable to load match history.")
 }
@@ -96,11 +96,11 @@ func TestRenderContent_FilterDoesNotResizeLayout(t *testing.T) {
 	}
 	m := loaded(t, profileLoadedMsg{user: alice(), history: history})
 
-	base := stripANSI(m.renderContent("", ""))
+	base := stripANSI(m.renderContent(20))
 	m.gameFilterIdx = slices.Index(m.gameFilters, "Crazy Eights")
 	require.NotEqual(t, -1, m.gameFilterIdx)
 	m.resultIdx = slices.Index(m.resultFilters, filterLosses)
-	filtered := stripANSI(m.renderContent("", ""))
+	filtered := stripANSI(m.renderContent(20))
 
 	assert.Equal(t, lg.Width(base), lg.Width(filtered),
 		"cycling game/result filters must not change the profile width")

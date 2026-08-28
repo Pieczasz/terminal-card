@@ -46,20 +46,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	innerWidth := styles.InnerWidth(m.global.Width)
-
-	titleFig := styles.RenderFigureASCII("Terminal Cards", innerWidth)
-	titleText := m.global.Theme.Title.Render(titleFig)
-
 	welcomeName := "Player"
 	if m.global.User != nil {
 		welcomeName = m.global.User.Username
 	}
-	welcomeUser := fmt.Sprintf("Welcome %s", welcomeName)
-	welcomeFig := styles.RenderFigureASCII(welcomeUser, innerWidth)
-	welcomeText := m.global.Theme.Welcome.Render(welcomeFig)
 
-	homePageActions := m.global.Theme.RenderActionFooter(styles.GlobalActions)
-
-	return tea.NewView(views.RenderCenteredLayout(m.global, titleText, welcomeText, homePageActions))
+	return tea.NewView(views.RenderScreen(m.global, "Terminal Cards", nil, func(int) string {
+		welcomeFig := styles.RenderFigureASCII(
+			fmt.Sprintf("Welcome %s", welcomeName), styles.InnerWidth(m.global.Width))
+		return m.global.Theme.Welcome.Render(welcomeFig)
+	}))
 }
