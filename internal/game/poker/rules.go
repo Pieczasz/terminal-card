@@ -3,6 +3,7 @@ package poker
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -56,11 +57,11 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 	return ActionFold{}
 }
 
-// DealTurnTimeout is how long the incoming dealer has to start the next hand. Dealing
+// dealTurnTimeout is how long the incoming dealer has to start the next hand. Dealing
 // is a decision about whether to keep playing rather than a move made under pressure,
 // so it gets longer than a betting turn - but it stays bounded, because an absent
 // dealer is the one seat that can freeze the match for everybody else.
-const DealTurnTimeout = time.Minute
+const dealTurnTimeout = time.Minute
 
 // TurnTimeout gives the between-hands deal its own clock and leaves every betting
 // turn on the engine's.
@@ -69,7 +70,7 @@ func (r *Rules) TurnTimeout(state *game.State) time.Duration {
 	if !ok || !extra.HandComplete || extra.MatchComplete {
 		return 0
 	}
-	return DealTurnTimeout
+	return dealTurnTimeout
 }
 
 func (r *Rules) MinPlayers() int { return 2 }
@@ -142,15 +143,19 @@ func (r *Rules) beginHandOrFinish(state *game.State, extra *State, dealer int) e
 func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	resetForHand(state, extra)
 	extra.HandNumber++
+	extra.handStartChips = chipsInPlay(extra)
 
 	state.Deck = deck.New(r.InitialDeck())
 	if err := state.Deck.Shuffle(); err != nil {
+		slog.Error("poker shuffle failed", "hand", extra.HandNumber, "error", err)
 		return fmt.Errorf("shuffle deck: %w", err)
 	}
 	if err := dealHoleCards(state, extra, holeCards); err != nil {
 		return err
 	}
 	if state.Deck.Size() < minDeckAfterDeal {
+		slog.Error("poker deck too small to run the board",
+			"hand", extra.HandNumber, "size", state.Deck.Size(), "want", minDeckAfterDeal)
 		return errors.New("not enough cards to run the board")
 	}
 
@@ -160,6 +165,9 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	setBlinds(state, extra, dealer, headsUp)
 	postBlind(extra, state.Players[extra.SBIndex], extra.SmallBlind)
 	postBlind(extra, state.Players[extra.BBIndex], extra.BigBlind)
+	// Deviation worth naming: a big blind too short to post in full lowers the
+	// bring-in, because CurrentBet follows what was actually posted. A casino keeps
+	// the bring-in at the full big blind and treats the shortfall as dead money.
 	extra.CurrentBet = max(
 		extra.PlayerBets[state.Players[extra.SBIndex].ID],
 		extra.PlayerBets[state.Players[extra.BBIndex].ID],
@@ -206,12 +214,15 @@ func dealHoleCards(state *game.State, extra *State, count int) error {
 		}
 		cards, ok := state.Deck.DrawNCards(count)
 		if !ok {
+			slog.Error("poker deck empty dealing hole cards",
+				"hand", extra.HandNumber, "player", p.ID, "dealt", funded)
 			return errors.New("insufficient number of cards to deal for all players")
 		}
 		p.Cards = cards
 		funded++
 	}
 	if funded < 2 {
+		slog.Error("poker cannot deal a hand", "hand", extra.HandNumber, "funded", funded)
 		return errors.New("not enough funded players to deal a hand")
 	}
 	return nil
@@ -268,14 +279,13 @@ func fundedSeats(state *game.State, extra *State) int {
 }
 
 func nextFundedSeat(state *game.State, extra *State, from int) int {
-	n := len(state.Players)
-	for i := 1; i <= n; i++ {
-		idx := (from + i) % n
-		if extra.PlayerChips[state.Players[idx].ID] > 0 {
-			return idx
-		}
+	idx := nextSeat(from, len(state.Players), func(idx int) bool {
+		return extra.PlayerChips[state.Players[idx].ID] > 0
+	})
+	if idx < 0 {
+		return from
 	}
-	return from
+	return idx
 }
 
 // finishHand closes out a hand. It ends the match once the hands run out or only
@@ -284,6 +294,7 @@ func nextFundedSeat(state *game.State, extra *State, from int) int {
 func finishHand(state *game.State, extra *State) {
 	extra.HandComplete = true
 	extra.Phase = Showdown
+	checkChipConservation(extra)
 	recordBustouts(state, extra)
 	if extra.HandNumber >= extra.HandsTotal || fundedSeats(state, extra) <= 1 {
 		extra.MatchComplete = true
@@ -293,6 +304,25 @@ func finishHand(state *game.State, extra *State) {
 	next := nextFundedSeat(state, extra, extra.DealerIndex)
 	state.CurrentTurn = next
 	state.OverrideNextTurn = &next
+}
+
+// checkChipConservation is a money-bug tripwire. Chips only ever move between a stack
+// and the pool, so once a hand is closed out the two together must still add up to
+// what the table had when the hand was dealt. A mismatch means a pot paid out more or
+// less than it collected, which is worth a log line even though it is too late to fix.
+func checkChipConservation(extra *State) {
+	if extra.handStartChips == 0 {
+		return // a hand-shaped State assembled by hand, not dealt by beginHand
+	}
+	total := chipsInPlay(extra)
+	if total == extra.handStartChips {
+		return
+	}
+	slog.Error("poker chip conservation broken",
+		"hand", extra.HandNumber,
+		"phase", extra.Phase.String(),
+		"delta", int64(total)-int64(extra.handStartChips),
+	)
 }
 
 func postBlind(extra *State, p *game.Player, amount uint) {
@@ -324,9 +354,13 @@ func (r *Rules) Standings(state *game.State) []*game.Player {
 
 // OnPlayerLeave folds the departing player. Turn and seat resolution runs in
 // AfterPlayerRemoved, once the seats have actually shifted.
+//
+// An all-in player is left alone: they have no decisions left to make, so folding
+// them would forfeit chips they had no way to protect. They stay in the pot they are
+// committed to (see contenders) and are shown down like anybody else.
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
 	extra, ok := state.Extra.(*State)
-	if !ok || extra.HandComplete {
+	if !ok || extra.HandComplete || extra.PlayersAllIn[playerID] {
 		return
 	}
 	extra.Folded[playerID] = true
@@ -356,11 +390,11 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 		return
 	}
 
-	active := activePlayers(state, extra)
-	if len(active) <= 1 {
-		if len(active) == 1 {
-			awardUncontested(extra, active[0])
-			extra.Winners = active
+	live := contenders(state, extra)
+	if len(live) <= 1 {
+		if len(live) == 1 {
+			awardUncontested(extra, live[0])
+			extra.Winners = live
 		}
 		finishHand(state, extra)
 		return
@@ -412,13 +446,7 @@ func adjustSeatIndex(seat, removed, nAfter int) int {
 	case seat == removed:
 		seat = (removed - 1 + nAfter) % nAfter
 	}
-	if seat >= nAfter {
-		seat = nAfter - 1
-	}
-	if seat < 0 {
-		seat = 0
-	}
-	return seat
+	return min(max(seat, 0), nAfter-1)
 }
 
 type ActionFold struct{}
@@ -452,16 +480,10 @@ func (a ActionNextHand) Name() string { return "poker.NextHand" }
 func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 	if _, isNextHand := action.(ActionNextHand); isNextHand {
-		if !extra.HandComplete {
-			return errors.New("the hand is still being played")
-		}
-		if extra.MatchComplete {
-			return errors.New("the match is over")
-		}
-		return nil
+		return validateNextHand(extra)
 	}
 	if extra.HandComplete || extra.Phase == Showdown {
 		return errors.New("hand is over")
@@ -504,6 +526,16 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	}
 }
 
+func validateNextHand(extra *State) error {
+	if !extra.HandComplete {
+		return errors.New("the hand is still being played")
+	}
+	if extra.MatchComplete {
+		return errors.New("the match is over")
+	}
+	return nil
+}
+
 // checkBettingReopened refuses a raise from a player who has already acted this
 // round. Only a full-size raise clears ActedThisRound (see applyBetIncrease), so a
 // player still on turn with it set is facing the uncalled part of a sub-minimum
@@ -533,14 +565,14 @@ func validateRaiseTo(extra *State, p *game.Player, amount uint) error {
 	return nil
 }
 
-func (r *Rules) ApplyAction(state *game.State, action game.Action) {
+func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return
+		return game.ErrInvalidState
 	}
 	if _, isNextHand := action.(ActionNextHand); isNextHand {
 		// Dealing happens in AfterAction, the only hook that can report a bad deal.
-		return
+		return nil
 	}
 	p := state.Players[state.CurrentTurn]
 
@@ -551,7 +583,7 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 	case ActionCheck:
 		extra.ActedThisRound[p.ID] = true
 	case ActionCall:
-		callTo(extra, p, extra.CurrentBet)
+		commitTo(extra, p, extra.CurrentBet)
 		extra.ActedThisRound[p.ID] = true
 	case ActionRaiseTo:
 		commitTo(extra, p, action.Amount)
@@ -567,27 +599,19 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) {
 		extra.ActedThisRound[p.ID] = true
 	}
 	extra.LastAction = action
+	return nil
 }
 
-func callTo(extra *State, p *game.Player, target uint) {
-	if target < extra.PlayerBets[p.ID] {
-		return
-	}
-	needed := min(target-extra.PlayerBets[p.ID], extra.PlayerChips[p.ID])
-	commitTo(extra, p, extra.PlayerBets[p.ID]+needed)
-}
-
+// commitTo raises the player's street bet to streetTotal, clamped to the chips they
+// actually have - so it doubles as "call what is owed" for a stack too short to cover
+// it.
 func commitTo(extra *State, p *game.Player, streetTotal uint) {
 	if streetTotal < extra.PlayerBets[p.ID] {
 		return
 	}
-	additional := streetTotal - extra.PlayerBets[p.ID]
-	if additional > extra.PlayerChips[p.ID] {
-		additional = extra.PlayerChips[p.ID]
-		streetTotal = extra.PlayerBets[p.ID] + additional
-	}
+	additional := min(streetTotal-extra.PlayerBets[p.ID], extra.PlayerChips[p.ID])
 	extra.PlayerChips[p.ID] -= additional
-	extra.PlayerBets[p.ID] = streetTotal
+	extra.PlayerBets[p.ID] += additional
 	extra.TotalContributed[p.ID] += additional
 	extra.MainPool += additional
 	if extra.PlayerChips[p.ID] == 0 {
@@ -598,6 +622,11 @@ func commitTo(extra *State, p *game.Player, streetTotal uint) {
 // applyBetIncrease raises CurrentBet to newBet. Only a full-size raise
 // (>= MinRaise) reopens the round; a sub-minimum all-in advances the amount
 // owed without granting already-acted players fresh action.
+//
+// Deviation worth naming: MinRaise becomes the size of the last full raise, so after
+// a sub-minimum all-in the next legal raise is measured from the raised CurrentBet.
+// That is one level above the standard rule, which keeps the minimum at the last
+// *complete* raise increment. It only ever asks for more, never less.
 func applyBetIncrease(extra *State, state *game.State, raiser *game.Player, newBet uint) {
 	if newBet <= extra.CurrentBet {
 		return
@@ -623,7 +652,7 @@ func resetActedExcept(extra *State, state *game.State, exceptID string) {
 func (r *Rules) AfterAction(state *game.State, action game.Action) error {
 	extra, ok := state.Extra.(*State)
 	if !ok {
-		return errors.New("invalid state type")
+		return game.ErrInvalidState
 	}
 	if _, isNextHand := action.(ActionNextHand); isNextHand {
 		return r.beginHandOrFinish(state, extra, nextFundedSeat(state, extra, extra.DealerIndex))
@@ -636,14 +665,14 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 		return nil
 	}
 
-	active := activePlayers(state, extra)
-	if len(active) == 1 {
-		awardUncontested(extra, active[0])
-		extra.Winners = []*game.Player{active[0]}
+	live := contenders(state, extra)
+	if len(live) == 1 {
+		awardUncontested(extra, live[0])
+		extra.Winners = []*game.Player{live[0]}
 		finishHand(state, extra)
 		return nil
 	}
-	if len(active) == 0 {
+	if len(live) == 0 {
 		finishHand(state, extra)
 		return nil
 	}
@@ -663,7 +692,8 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 		finishHand(state, extra)
 		return nil
 	}
-	state.OverrideNextTurn = new(firstToActPostflop(state, extra))
+	first := firstToActPostflop(state, extra)
+	state.OverrideNextTurn = &first
 	return nil
 }
 

@@ -53,6 +53,10 @@ type State struct {
 	// busts ends on zero chips, so it is the only thing that separates them: going
 	// out later is a better finish.
 	BustedAtHand map[string]int
+
+	// handStartChips is what the table held when the current hand was dealt, read
+	// only by the chip-conservation tripwire in finishHand.
+	handStartChips uint
 }
 
 type RoundPhase uint8
