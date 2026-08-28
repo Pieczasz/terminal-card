@@ -16,10 +16,6 @@ var (
 	ErrNoPublicKey        = errors.New("SSH key authentication is required")
 	ErrInternal           = errors.New("internal server error")
 	ErrRegistrationFailed = errors.New("registration failed")
-
-	// errAlreadyConnected is only ever reported on the span; the client gets the
-	// username-bearing message instead.
-	errAlreadyConnected = errors.New("account is already connected from another session")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
