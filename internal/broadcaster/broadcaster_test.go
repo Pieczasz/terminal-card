@@ -20,9 +20,9 @@ func TestBroadcaster_Subscribe(t *testing.T) {
 	ch2 := mustSubscribe(t, b)
 	assert.NotNil(t, ch2)
 
-	b.mu.RLock()
+	b.mu.Lock()
 	assert.Len(t, b.subscribers, 2)
-	b.mu.RUnlock()
+	b.mu.Unlock()
 }
 
 func TestBroadcaster_Broadcast(t *testing.T) {
@@ -56,15 +56,15 @@ func TestBroadcaster_Unsubscribe(t *testing.T) {
 	ch1 := mustSubscribe(t, b)
 	ch2 := mustSubscribe(t, b)
 
-	b.mu.RLock()
+	b.mu.Lock()
 	assert.Len(t, b.subscribers, 2)
-	b.mu.RUnlock()
+	b.mu.Unlock()
 
 	b.Unsubscribe(ch1)
 
-	b.mu.RLock()
+	b.mu.Lock()
 	assert.Len(t, b.subscribers, 1)
-	b.mu.RUnlock()
+	b.mu.Unlock()
 
 	select {
 	case _, ok := <-ch1:
@@ -103,9 +103,9 @@ func TestBroadcaster_Close(t *testing.T) {
 
 	b.Close()
 
-	b.mu.RLock()
+	b.mu.Lock()
 	assert.Empty(t, b.subscribers)
-	b.mu.RUnlock()
+	b.mu.Unlock()
 
 	_, ok1 := <-ch1
 	assert.False(t, ok1)
