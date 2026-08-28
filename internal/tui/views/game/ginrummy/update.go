@@ -4,36 +4,17 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/ginrummy"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
+	if cmd, handled := m.HandleFrame(msg, m.syncState, nil); handled {
 		return m, cmd
 	}
-
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case gameview.EventMsg:
-		if m.IdleRemoved(game.Event(msg)) {
-			// The engine took this seat for repeated missed turns; quitting ends the
-			// bubbletea program, which tears the ssh session down the ordinary way.
-			return m, tea.Quit
-		}
-		m.syncState()
-		return m, m.Listen()
-	case gameview.ClockTickMsg:
-		m.syncState()
-		if m.Base.Phase != game.Playing {
-			return m, nil
-		}
-		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleKey(key)
 	}
-
 	return m, nil
 }
 

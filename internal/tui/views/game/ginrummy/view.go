@@ -18,46 +18,19 @@ import (
 
 func (m *Model) View() tea.View {
 	if m.handComplete || m.matchComplete || m.handPhase == logic.HandOver {
-		return tea.NewView(m.renderHandOver())
+		return tea.NewView(styles.Clamp(m.Global.Width, m.Global.Height, m.renderHandOver()))
 	}
 	if m.Base.Phase != game.Playing {
 		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
 
-	compactMode := m.Global.Height < 30
-	superCompact := m.Global.Height < 24
+	// Seat art is the first thing to go: it costs seven rows, and a name with a hand
+	// count says everything a player reads off the other seat.
+	minimalSeat := gameview.IsCompact(m.Global.Width, m.Global.Height)
 
-	topSection := m.renderTopOpponent(superCompact)
-	var topAreaContent string
-	if superCompact {
-		topAreaContent = topSection
-	} else {
-		topAreaContent = lg.NewStyle().MarginTop(1).Render(topSection)
-	}
-
-	mySection := m.renderPlayerSection()
-	hints := m.keyHints()
-	var fullPlayerArea string
-	switch {
-	case superCompact:
-		fullPlayerArea = mySection
-	case compactMode:
-		fullPlayerArea = lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.Render(hints))
-	default:
-		fullPlayerArea = lg.NewStyle().MarginBottom(1).Render(
-			lg.JoinVertical(lg.Center, mySection, m.Global.Theme.Dim.MarginTop(1).Render(hints)),
-		)
-	}
-
-	topHeight := lg.Height(topAreaContent)
-	botHeight := lg.Height(fullPlayerArea)
-	midHeight := max(m.Global.Height-topHeight-botHeight, 0)
-
-	return tea.NewView(lg.JoinVertical(lg.Left,
-		styles.PadCenter(m.Global.Width, topAreaContent),
-		m.renderMiddleLayer(midHeight),
-		styles.PadCenter(m.Global.Width, fullPlayerArea),
-	))
+	return tea.NewView(gameview.RenderBands(m.Global,
+		m.renderTopOpponent(minimalSeat), m.renderPlayerSection(), m.keyHints(),
+		m.renderMiddleLayer))
 }
 
 func (m *Model) keyHints() string {
@@ -71,16 +44,17 @@ func (m *Model) keyHints() string {
 	}
 }
 
-func (m *Model) renderTopOpponent(superCompact bool) string {
+func (m *Model) renderTopOpponent(minimal bool) string {
 	if len(m.Base.Opponents) == 0 {
 		return ""
 	}
 	o := m.Base.Opponents[0]
 	isTurn := m.Base.CurrentPlayerID == o.ID
-	if superCompact {
+	if minimal {
 		return gameview.RenderOpponentMinimal(m.Global.Theme, o, isTurn)
 	}
-	return gameview.RenderOpponent(m.Global.Theme, o, isTurn, gameview.OrientationTop, m.Base.TurnRemaining)
+	return gameview.RenderOpponent(m.Global.Theme, o, isTurn, gameview.OrientationTop,
+		m.Base.TurnRemaining, m.Global.Width)
 }
 
 func (m *Model) renderMiddleLayer(height int) string {
@@ -97,16 +71,13 @@ func (m *Model) renderScoreLine() string {
 	for _, id := range m.seatOrder {
 		parts = append(parts, fmt.Sprintf("%s %d", m.seatNames[id], m.cumulativeScores[id]))
 	}
-	return m.Global.Theme.Dim.Render(fmt.Sprintf("hand %d · %s", m.handNumber, joinSep(parts, "  ")))
-}
-
-func joinSep(parts []string, sep string) string {
-	return strings.Join(parts, sep)
+	return m.Global.Theme.Dim.Render(fmt.Sprintf("hand %d · %s", m.handNumber, strings.Join(parts, "  ")))
 }
 
 func (m *Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
-	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false)
+	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false,
+		gameview.HandWidth(m.Global.Width), gameview.HandRows(m.Global.Height))
 
 	sections := []string{statusView, handView}
 	if m.lastActionErr != nil {
@@ -191,8 +162,8 @@ func (m *Model) renderMeldGroups(label string, melds [][]deck.Card, laidOff bool
 			cards = append(cards, components.RenderCard(m.Global.Theme, card, laidOff))
 		}
 		box := lg.JoinHorizontal(lg.Top, cards...)
-		border := lg.NewStyle().Border(lg.RoundedBorder()).BorderForeground(m.Global.Theme.BorderMuted).Padding(0, 1)
-		groups = append(groups, border.Render(lg.JoinVertical(lg.Left, m.Global.Theme.Dim.Render(kind), box)))
+		groups = append(groups, m.Global.Theme.MeldBox.Render(
+			lg.JoinVertical(lg.Left, m.Global.Theme.Dim.Render(kind), box)))
 	}
 	return lg.JoinVertical(lg.Left,
 		m.Global.Theme.Muted.Render(label),

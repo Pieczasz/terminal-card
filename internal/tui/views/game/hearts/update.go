@@ -2,41 +2,24 @@ package hearts
 
 import (
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/hearts"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
-	"github.com/Pieczasz/terminal-card/internal/tui/views"
-	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
 )
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if handled, cmd := views.HandleCommonMsg(msg, &m.Global); handled {
+	if cmd, handled := m.HandleFrame(msg, m.syncState, nil); handled {
 		return m, cmd
 	}
-
-	switch msg := msg.(type) {
-	case tea.KeyPressMsg:
-		return m.handleKey(msg)
-	case gameview.EventMsg:
-		if m.IdleRemoved(game.Event(msg)) {
-			// The engine took this seat for repeated missed turns; quitting ends the
-			// bubbletea program, which tears the ssh session down the ordinary way.
-			return m, tea.Quit
-		}
-		m.syncState()
-		return m, m.Listen()
-	case gameview.ClockTickMsg:
-		m.syncState()
-		if m.Base.Phase != game.Playing {
-			return m, nil
-		}
-		return m, gameview.ClockTickFor(m.Base.TurnRemaining, m.Base.MyTurn)
+	if key, ok := msg.(tea.KeyPressMsg); ok {
+		return m.handleKey(key)
 	}
-
 	return m, nil
 }
 
@@ -65,18 +48,18 @@ func (m *Model) handleSpace() (tea.Model, tea.Cmd) {
 	if m.stage != logic.StagePassing || !m.Base.MyTurn {
 		return m, nil
 	}
-	if len(m.Base.Hand) == 0 {
+	card, ok := m.SelectedCard()
+	if !ok {
 		return m, nil
 	}
-	idx := m.Selected
-	if _, ok := m.passSelected[idx]; ok {
-		delete(m.passSelected, idx)
+	if _, staged := m.passSelected[card]; staged {
+		delete(m.passSelected, card)
 		return m, nil
 	}
 	if len(m.passSelected) >= 3 {
 		return m, nil
 	}
-	m.passSelected[idx] = struct{}{}
+	m.passSelected[card] = struct{}{}
 	return m, nil
 }
 
@@ -112,18 +95,14 @@ func (m *Model) submitPass() (tea.Model, tea.Cmd) {
 		m.lastActionErr = errNeedThreeCards
 		return m, nil
 	}
-	cards := make([]deck.Card, 0, 3)
-	for idx := range m.passSelected {
-		cards = append(cards, m.Base.Hand[idx])
-	}
-	return m.submit(logic.ActionPassCards{Cards: cards})
+	return m.submit(logic.ActionPassCards{Cards: slices.Collect(maps.Keys(m.passSelected))})
 }
 
 var errNeedThreeCards = errors.New("select exactly 3 cards (space to toggle)")
 
 func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	if m.lastActionErr = m.Submit(action); m.lastActionErr == nil {
-		m.passSelected = map[int]struct{}{}
+		m.passSelected = map[deck.Card]struct{}{}
 	}
 	return m, nil
 }

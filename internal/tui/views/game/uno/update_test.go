@@ -61,7 +61,7 @@ func tableOnTurn(t *testing.T) (*game.Engine, *Model) {
 		{ID: "2", UserID: 2, Name: "bob"},
 		{ID: "3", UserID: 3, Name: "carol"},
 	}
-	engine := game.NewEngine(&logic.Rules{}, players, logic.InitialDeck())
+	engine := game.NewEngine(&logic.Rules{}, players, (&logic.Rules{}).InitialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
@@ -108,7 +108,7 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 		{ID: "1", UserID: 1, Name: "alice"},
 		{ID: "2", UserID: 2, Name: "bob"},
 	}
-	engine := game.NewEngine(&logic.Rules{}, players, logic.InitialDeck())
+	engine := game.NewEngine(&logic.Rules{}, players, (&logic.Rules{}).InitialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 

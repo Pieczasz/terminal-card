@@ -121,20 +121,20 @@ func TestConfirm_DealsTheNextHandInsteadOfLeaving(t *testing.T) {
 	// Fold the hand out heads-up; the match still has hands left to play.
 	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
 	m.syncState()
-	require.True(t, m.handDone)
-	require.False(t, m.matchDone, "one hand is not the whole match")
+	require.True(t, m.handComplete)
+	require.False(t, m.matchComplete, "one hand is not the whole match")
 
 	// The button lands on either seat, so both sides of the prompt get asserted.
 	heroDeals := m.canDeal()
 	_, cmd := m.confirm()
 	assert.Nil(t, cmd, "enter between hands never navigates away")
 	if !heroDeals {
-		assert.True(t, m.handDone, "the hero cannot deal on another player's button")
+		assert.True(t, m.handComplete, "the hero cannot deal on another player's button")
 		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionNextHand{}))
 		m.syncState()
 	}
 
-	assert.False(t, m.handDone, "the next hand is under way")
+	assert.False(t, m.handComplete, "the next hand is under way")
 	assert.Equal(t, 2, m.handNumber)
 }
 
@@ -146,7 +146,7 @@ func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
 
 	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
 	m.syncState()
-	require.True(t, m.handDone)
+	require.True(t, m.handComplete)
 
 	for _, s := range m.seats {
 		if s.IsHero {
@@ -161,12 +161,12 @@ func TestSyncState_UncontestedPotKeepsOpponentCardsHidden(t *testing.T) {
 func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
-	m.handDone = true
-	m.matchDone = false
+	m.handComplete = true
+	m.matchComplete = false
 
 	assert.Contains(t, m.handOverHint(), "forfeiting")
 
-	m.matchDone = true
+	m.matchComplete = true
 	assert.NotContains(t, m.handOverHint(), "forfeiting", "the match is over, esc costs nothing")
 }
 
@@ -174,8 +174,8 @@ func TestHandOverHint_SaysWhatEscCosts(t *testing.T) {
 func TestHandOverHint_NamesTheHandAboutToBeDealt(t *testing.T) {
 	t.Parallel()
 	_, m := startedTable(t)
-	m.handDone = true
-	m.matchDone = false
+	m.handComplete = true
+	m.matchComplete = false
 	m.handNumber = 1
 
 	m.Base.MyTurn = true
@@ -303,30 +303,30 @@ func TestNew_HealthyTableReportsNoError(t *testing.T) {
 	engine, m := startedTable(t)
 	t.Cleanup(engine.Close)
 
-	require.NoError(t, m.lastErr, "a successful subscription is not an error")
+	require.NoError(t, m.lastActionErr, "a successful subscription is not an error")
 	assert.NotNil(t, m.Events, "and the feed is live")
 }
 
-// matchDone is what turns esc from "forfeit" into "leave", and what stops the hero being
+// matchComplete is what turns esc from "forfeit" into "leave", and what stops the hero being
 // offered actions after the match is over.
 func TestSyncState_MatchDoneTracksTheEnginePhase(t *testing.T) {
 	t.Parallel()
 	engine, m := startedTable(t)
 	t.Cleanup(engine.Close)
 
-	require.False(t, m.matchDone, "the match has only just started")
+	require.False(t, m.matchComplete, "the match has only just started")
 
 	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
 	m.syncState()
 
-	assert.True(t, m.matchDone)
+	assert.True(t, m.matchComplete)
 
 	// Without readable poker state the engine phase is all there is to go on, and it
 	// still has to be believed: this is the path a view lands on if Extra is not there.
 	engine.WithState(func(state *game.State) { state.Extra = nil })
 	m.syncState()
 
-	assert.True(t, m.matchDone, "a finished engine is a finished match either way")
+	assert.True(t, m.matchComplete, "a finished engine is a finished match either way")
 }
 
 // The action prompts are the only thing standing between a player and an action the engine
@@ -335,16 +335,16 @@ func TestCanAllInAndHeroBusted(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name       string
-		myTurn     bool
-		handDone   bool
-		chips      uint
-		wantAllIn  bool
-		wantBusted bool
+		name         string
+		myTurn       bool
+		handComplete bool
+		chips        uint
+		wantAllIn    bool
+		wantBusted   bool
 	}{
 		{name: "on turn with chips", myTurn: true, chips: 500, wantAllIn: true},
 		{name: "not on turn", myTurn: false, chips: 500},
-		{name: "hand already over", myTurn: true, handDone: true, chips: 500},
+		{name: "hand already over", myTurn: true, handComplete: true, chips: 500},
 		{name: "no chips left", myTurn: true, chips: 0, wantBusted: true},
 	}
 
@@ -358,7 +358,7 @@ func TestCanAllInAndHeroBusted(t *testing.T) {
 			require.NotNil(t, hero)
 			hero.Chips = tt.chips
 			m.Base.MyTurn = tt.myTurn
-			m.handDone = tt.handDone
+			m.handComplete = tt.handComplete
 
 			assert.Equal(t, tt.wantAllIn, m.canAllIn(), "canAllIn")
 			assert.Equal(t, tt.wantBusted, m.heroBusted(), "heroBusted")
@@ -397,7 +397,7 @@ func TestSubmit(t *testing.T) {
 		t.Cleanup(engine.Close)
 		heroOnTurn(t, engine, m)
 
-		m.lastErr = assert.AnError
+		m.lastActionErr = assert.AnError
 		m.raising = true
 
 		// Which of the two is free depends on where the button landed.
@@ -408,7 +408,7 @@ func TestSubmit(t *testing.T) {
 		_, cmd := m.submit(action)
 
 		assert.Nil(t, cmd)
-		require.NoError(t, m.lastErr, "a successful move clears the previous complaint")
+		require.NoError(t, m.lastActionErr, "a successful move clears the previous complaint")
 		assert.False(t, m.raising, "and closes the raise prompt")
 
 		// ActedThisRound is wiped when a completed round advances the street, so it
@@ -431,7 +431,7 @@ func TestSubmit(t *testing.T) {
 		_, cmd := m.submit(logic.ActionRaiseTo{Amount: 1})
 
 		assert.Nil(t, cmd)
-		require.Error(t, m.lastErr, "the player has to be told why nothing happened")
+		require.Error(t, m.lastActionErr, "the player has to be told why nothing happened")
 		assert.Equal(t, street, m.street, "and the table has not moved")
 	})
 
@@ -440,13 +440,13 @@ func TestSubmit(t *testing.T) {
 		engine, m := startedTable(t)
 		t.Cleanup(engine.Close)
 		m.Base.MyTurn = false
-		m.lastErr = nil
+		m.lastActionErr = nil
 
 		_, cmd := m.submit(logic.ActionFold{})
 
 		assert.Nil(t, cmd)
-		require.NoError(t, m.lastErr, "there is nothing to report, the key is simply not ours")
-		assert.False(t, m.handDone, "and the hand is untouched")
+		require.NoError(t, m.lastActionErr, "there is nothing to report, the key is simply not ours")
+		assert.False(t, m.handComplete, "and the hand is untouched")
 	})
 }
 
@@ -467,7 +467,7 @@ func TestBuildSeats_TurnMarkerNamesOneLiveSeat(t *testing.T) {
 
 	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
 	m.syncState()
-	require.True(t, m.handDone)
+	require.True(t, m.handComplete)
 
 	for _, s := range m.seats {
 		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
@@ -496,7 +496,7 @@ func TestView_NoCountdownBetweenHands(t *testing.T) {
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), logic.ActionFold{}))
 	m.syncState()
-	require.True(t, m.handDone)
+	require.True(t, m.handComplete)
 
 	for _, s := range m.seats {
 		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
