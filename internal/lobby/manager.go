@@ -16,6 +16,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
+	"github.com/Pieczasz/terminal-card/internal/observability"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 )
 
@@ -55,6 +56,14 @@ type Manager struct {
 	finalizerMu       sync.Mutex
 	finalizersStopped bool
 	finalizing        sync.WaitGroup
+	// drained is closed by the one waiter goroutine WaitForFinalizers ever starts.
+	// Created lazily and reused, so a timed-out drain does not strand a waiter per
+	// call the way a fresh goroutine per invocation did.
+	drained chan struct{}
+	// shuttingDown is set before sessions are torn down, which is earlier than
+	// finalizersStopped: a match ending during the drain must still be recorded, just
+	// not rated. See persistFinishedMatch.
+	shuttingDown atomic.Bool
 }
 
 func NewManager(ctx context.Context, matchRepo db.MatchRepository) *Manager {
@@ -145,6 +154,7 @@ func (m *Manager) New(leader *game.Player, opts ...Option) (*Lobby, error) {
 		ready:       make(map[string]bool),
 		broadcaster: broadcaster.New[Event](maxLobbySubscribers),
 		playerSubs:  make(map[string][]<-chan Event),
+		createdAt:   time.Now(),
 	}
 
 	m.lobbies[code] = lobby
@@ -154,10 +164,14 @@ func (m *Manager) New(leader *game.Player, opts ...Option) (*Lobby, error) {
 }
 
 func (m *Manager) JoinLobbyByCode(code string, p *game.Player) error {
+	ctx := m.shutdownCtx()
 	if !ValidLobbyCode(code) {
+		observability.LobbyJoin(ctx, "invalid_code")
 		return errors.New("invalid lobby code")
 	}
 	if m.joinLimiter != nil && !m.joinLimiter.Allow("join:"+p.ID) {
+		observability.LobbyJoin(ctx, "rate_limited")
+		observability.RateLimitReject(ctx, "lobby_join")
 		return errors.New("too many join attempts, please try again later")
 	}
 
@@ -165,18 +179,22 @@ func (m *Manager) JoinLobbyByCode(code string, p *game.Player) error {
 	defer m.mu.Unlock()
 
 	if m.playerInLobbyLocked(p) {
+		observability.LobbyJoin(ctx, "already_in_lobby")
 		return errors.New("player is already in a lobby")
 	}
 
 	lobby, exists := m.lobbies[code]
 	if !exists {
+		observability.LobbyJoin(ctx, "not_found")
 		return errors.New("lobby not found")
 	}
 
 	if err := lobby.addGuest(p); err != nil {
+		observability.LobbyJoin(ctx, "refused")
 		return err
 	}
 	m.playerLobby[p.ID] = lobby
+	observability.LobbyJoin(ctx, "ok")
 	return nil
 }
 
@@ -213,18 +231,39 @@ func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
 	return lobby, nil
 }
 
+// LeaveLobby drops a player from their lobby. The roster mutation and the
+// playerLobby index update happen under one hold of m.mu (taking l.mu inside it, per
+// the documented manager-then-lobby order), so the two can never disagree about
+// where a player is. The engine and broadcast calls run with both locks dropped, the
+// way Kick does it.
 func (m *Manager) LeaveLobby(p *game.Player) {
-	l := m.FindLobbyByPlayer(p)
-	if l == nil {
+	if p == nil {
 		return
 	}
 
-	if l.RemovePlayer(p) {
-		m.RemoveLobby(l.Code())
-	} else {
-		m.mu.Lock()
-		delete(m.playerLobby, p.ID)
+	m.mu.Lock()
+	l, ok := m.playerLobby[p.ID]
+	if !ok || l == nil {
 		m.mu.Unlock()
+		return
+	}
+
+	l.mu.Lock()
+	l.unsubscribePlayerLocked(p.ID)
+	engine, bc, eventType, shouldClose, found := l.detachPlayerLocked(p)
+	code := l.code
+	l.mu.Unlock()
+	if found {
+		delete(m.playerLobby, p.ID)
+	}
+	m.mu.Unlock()
+
+	if !found {
+		return
+	}
+	notifyEngineAndBroadcast(engine, bc, p.ID, eventType)
+	if shouldClose {
+		m.RemoveLobby(code)
 	}
 }
 
@@ -246,22 +285,45 @@ func (m *Manager) registerFinalizer() bool {
 	return true
 }
 
+// BeginShutdown marks the process as going away without stopping finished-match
+// writes: a hand that ends while sessions are torn down still belongs in the
+// players' history, it just must not move anyone's rating.
+func (m *Manager) BeginShutdown() {
+	if m != nil {
+		m.shuttingDown.Store(true)
+	}
+}
+
+func (m *Manager) isShuttingDown() bool {
+	return m != nil && m.shuttingDown.Load()
+}
+
 // WaitForFinalizers stops accepting finished-match writes, then blocks until all
 // previously registered writes finish or timeout elapses. A non-positive timeout
 // waits indefinitely.
+//
+// The waiter goroutine is started once and reused, so a caller that times out and
+// calls again does not strand one waiter per attempt. Because finalizersStopped is
+// already set, the group only ever counts down, so that goroutine always exits.
 func (m *Manager) WaitForFinalizers(timeout time.Duration) bool {
 	if m == nil {
 		return true
 	}
+	m.shuttingDown.Store(true)
+
 	m.finalizerMu.Lock()
 	m.finalizersStopped = true
+	if m.drained == nil {
+		ch := make(chan struct{})
+		m.drained = ch
+		go func() {
+			m.finalizing.Wait()
+			close(ch)
+		}()
+	}
+	drained := m.drained
 	m.finalizerMu.Unlock()
 
-	drained := make(chan struct{})
-	go func() {
-		m.finalizing.Wait()
-		close(drained)
-	}()
 	if timeout <= 0 {
 		<-drained
 		return true
@@ -305,6 +367,27 @@ func (m *Manager) Stats() (inGame, waiting int) {
 	return inGame, waiting
 }
 
+// kickableGuestLocked returns the guest index host may remove. Caller holds l.mu.
+func (l *Lobby) kickableGuestLocked(host, target *game.Player) (int, error) {
+	switch {
+	case l.state == Closed:
+		return -1, errors.New("lobby is closed")
+	// A leader who can kick mid-hand can farm Elo: drop whoever is winning, let the
+	// engine finish the match without them, and take the rating.
+	case l.state == InGame:
+		return -1, errors.New("cannot kick during a game")
+	case !l.leader.Equal(host):
+		return -1, errors.New("only the leader can kick players")
+	case l.leader.Equal(target):
+		return -1, errors.New("cannot kick the lobby leader")
+	}
+	idx := slices.IndexFunc(l.guests, func(g *game.Player) bool { return g.Equal(target) })
+	if idx == -1 {
+		return -1, errors.New("player not in lobby")
+	}
+	return idx, nil
+}
+
 // Kick removes a guest from the lobby. Only the current leader may kick guests.
 func (m *Manager) Kick(host, target *game.Player) error {
 	if host == nil || target == nil {
@@ -322,26 +405,11 @@ func (m *Manager) Kick(host, target *game.Player) error {
 	}
 	// Hold manager lock while mutating lobby so join/leave cannot interleave.
 	l.mu.Lock()
-	if l.state == Closed {
+	idx, err := l.kickableGuestLocked(host, target)
+	if err != nil {
 		l.mu.Unlock()
 		m.mu.Unlock()
-		return errors.New("lobby is closed")
-	}
-	if !l.leader.Equal(host) {
-		l.mu.Unlock()
-		m.mu.Unlock()
-		return errors.New("only the leader can kick players")
-	}
-	if l.leader.Equal(target) {
-		l.mu.Unlock()
-		m.mu.Unlock()
-		return errors.New("cannot kick the lobby leader")
-	}
-	idx := slices.IndexFunc(l.guests, func(g *game.Player) bool { return g.Equal(target) })
-	if idx == -1 {
-		l.mu.Unlock()
-		m.mu.Unlock()
-		return errors.New("player not in lobby")
+		return err
 	}
 
 	engine := l.activeEngine
@@ -392,6 +460,9 @@ func (m *Manager) RemoveLobby(code string) {
 		engine.Close()
 	}
 	if bc != nil {
+		if n := bc.Dropped(); n > 0 {
+			observability.BroadcastDropped(m.shutdownCtx(), "lobby", n)
+		}
 		bc.Close()
 	}
 }
@@ -409,24 +480,37 @@ func (m *Manager) invalidatePublicCache() {
 	}
 }
 
+// getCachedPublicLobbies serves the cache under a read lock and, on a miss, copies
+// the lobby set and releases m.mu before touching any l.mu - the same shape as
+// Stats. Two simultaneous misses both rescan and the later write wins, which costs
+// one extra scan and cannot produce a wrong list.
 func (m *Manager) getCachedPublicLobbies() []*Lobby {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.mu.RLock()
 	if !m.cacheDirty.Load() && time.Since(m.cacheLastUpdated) < publicLobbyCacheTTL {
 		lobbies := slices.Clone(m.cachedPublicLobbies)
+		m.mu.RUnlock()
 		return lobbies
 	}
-	m.cacheDirty.Store(false)
-
-	publicLobbies := make([]*Lobby, 0, len(m.lobbies))
+	all := make([]*Lobby, 0, len(m.lobbies))
 	for _, l := range m.lobbies {
-		if !l.IsPrivate() && l.IsWaiting() {
+		all = append(all, l)
+	}
+	m.mu.RUnlock()
+
+	m.cacheDirty.Store(false)
+	publicLobbies := make([]*Lobby, 0, len(all))
+	for _, l := range all {
+		l.mu.RLock()
+		if !l.options.isPrivate && l.state == Waiting {
 			publicLobbies = append(publicLobbies, l)
 		}
+		l.mu.RUnlock()
 	}
 
+	m.mu.Lock()
 	m.cachedPublicLobbies = publicLobbies
 	m.cacheLastUpdated = time.Now()
+	m.mu.Unlock()
 
 	lobbies := slices.Clone(publicLobbies)
 	return lobbies
