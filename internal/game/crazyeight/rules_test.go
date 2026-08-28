@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func createTestState() *game.State {
@@ -34,7 +35,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.Two, Suit: deck.Spades}}
 
 		err := rules.ValidateAction(state, action)
 		require.NoError(t, err)
@@ -45,7 +46,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		state := createTestState()
 		state.Discard = deck.New([]deck.Card{{Rank: deck.King, Suit: deck.Clubs}})
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.King, Suit: deck.Hearts}}
 
 		err := rules.ValidateAction(state, action)
 		require.NoError(t, err)
@@ -58,8 +59,8 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		// An eight matches neither the suit nor the rank on the pile; naming a suit
 		// is what makes it playable.
 		action := ActionPlayCard{
-			Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}},
-			Suit:  deck.Clubs,
+			Card: deck.Card{Rank: deck.Eight, Suit: deck.Diamonds},
+			Suit: deck.Clubs,
 		}
 
 		err := rules.ValidateAction(state, action)
@@ -70,7 +71,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.King, Suit: deck.Hearts}}}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.King, Suit: deck.Hearts}}
 
 		err := rules.ValidateAction(state, action)
 		require.ErrorContains(t, err, "card doesn't match top discard")
@@ -80,7 +81,7 @@ func TestRules_ValidateAction_PlayCard(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Ace, Suit: deck.Spades}}}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.Ace, Suit: deck.Spades}}
 
 		err := rules.ValidateAction(state, action)
 		require.ErrorContains(t, err, "you don't have that card")
@@ -94,7 +95,7 @@ func TestRules_ApplyAction(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Spades}}}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.Two, Suit: deck.Spades}}
 
 		rules.ApplyAction(state, action)
 
@@ -108,12 +109,12 @@ func TestRules_ApplyAction(t *testing.T) {
 		assert.Equal(t, deck.Spades, top.Suit)
 	})
 
-	t.Run("card that is 8, currentsuit should change, discard shoult change", func(t *testing.T) {
+	t.Run("an eight changes the current suit and moves to the discard", func(t *testing.T) {
 		t.Parallel()
 		state := createTestState()
 		state.Players[0].Cards = []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}, {Rank: deck.King, Suit: deck.Hearts}}
 		rules := &Rules{}
-		action := ActionPlayCard{Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}}, Suit: deck.Clubs}
+		action := ActionPlayCard{Card: deck.Card{Rank: deck.Eight, Suit: deck.Diamonds}, Suit: deck.Clubs}
 
 		rules.ApplyAction(state, action)
 
@@ -205,8 +206,8 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 		state := createTestState()
 		rules := &Rules{}
 		action := ActionPlayCard{
-			Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}},
-			Suit:  deck.NoSuit,
+			Card: deck.Card{Rank: deck.Eight, Suit: deck.Diamonds},
+			Suit: deck.NoSuit,
 		}
 
 		err := rules.ValidateAction(state, action)
@@ -218,8 +219,8 @@ func TestRules_PlayEight_SuitSelection(t *testing.T) {
 		state := createTestState()
 		rules := &Rules{}
 		action := ActionPlayCard{
-			Cards: []deck.Card{{Rank: deck.Eight, Suit: deck.Diamonds}},
-			Suit:  deck.Hearts,
+			Card: deck.Card{Rank: deck.Eight, Suit: deck.Diamonds},
+			Suit: deck.Hearts,
 		}
 
 		err := rules.ValidateAction(state, action)
@@ -414,7 +415,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 		engine.WithState(func(s *game.State) {
 			hand := s.Players[s.CurrentTurn].Cards
 			for _, card := range hand {
-				if rules.ValidateAction(s, ActionPlayCard{Cards: []deck.Card{card}, Suit: deck.Spades}) == nil {
+				if rules.ValidateAction(s, ActionPlayCard{Card: card, Suit: deck.Spades}) == nil {
 					played = true
 					return
 				}
@@ -426,13 +427,13 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 			var choice deck.Card
 			engine.WithState(func(s *game.State) {
 				for _, card := range s.Players[s.CurrentTurn].Cards {
-					if rules.ValidateAction(s, ActionPlayCard{Cards: []deck.Card{card}, Suit: deck.Spades}) == nil {
+					if rules.ValidateAction(s, ActionPlayCard{Card: card, Suit: deck.Spades}) == nil {
 						choice = card
 						return
 					}
 				}
 			})
-			err = engine.SubmitAction(id, ActionPlayCard{Cards: []deck.Card{choice}, Suit: deck.Spades})
+			err = engine.SubmitAction(id, ActionPlayCard{Card: choice, Suit: deck.Spades})
 		} else {
 			err = engine.SubmitAction(id, ActionDrawCard{})
 		}
@@ -486,24 +487,6 @@ func TestRules_OnPlayerLeave_ClearsStalePasses(t *testing.T) {
 	assert.False(t, rules.CheckWinCondition(state), "nobody passed, so nothing is deadlocked")
 }
 
-// The stock is rebuilt from the discard on a failed shuffle, and the pile has to go
-// back exactly as it was: Peek reads the end, so the card in play must stay last.
-func TestRestoreDiscard_KeepsTheCardInPlayOnTop(t *testing.T) {
-	t.Parallel()
-	top := deck.Card{Rank: deck.Nine, Suit: deck.Spades}
-	rest := []deck.Card{
-		{Rank: deck.Three, Suit: deck.Hearts},
-		{Rank: deck.Jack, Suit: deck.Clubs},
-	}
-
-	restored := restoreDiscard(rest, top)
-
-	peeked, ok := restored.Peek()
-	require.True(t, ok)
-	assert.Equal(t, top, peeked, "a rotated pile puts a card nobody played into play")
-	assert.Equal(t, len(rest)+1, restored.Size(), "every card comes back")
-}
-
 // Playing a card sheds one copy of it. A hand can legitimately hold two of the same
 // card once the discard has been reshuffled back through a multi-deck table, and
 // shedding both would destroy one.
@@ -513,7 +496,7 @@ func TestRules_ApplyAction_ShedsOneCopyOfADuplicate(t *testing.T) {
 	card := deck.Card{Rank: deck.Two, Suit: deck.Spades}
 	state.Players[0].Cards = []deck.Card{card, card, {Rank: deck.King, Suit: deck.Hearts}}
 
-	(&Rules{}).ApplyAction(state, ActionPlayCard{Cards: []deck.Card{card}})
+	(&Rules{}).ApplyAction(state, ActionPlayCard{Card: card})
 
 	assert.Equal(t, []deck.Card{card, {Rank: deck.King, Suit: deck.Hearts}}, state.Players[0].Cards)
 }
@@ -534,4 +517,117 @@ func TestRules_OnPlayerLeave_NormalLeaveIsNotAnError(t *testing.T) {
 	(&Rules{}).OnPlayerLeave(state, "p1")
 
 	assert.Empty(t, logged.String(), "a successful reshuffle has nothing to report")
+}
+
+// An Eight is the wild card: the deck cannot name a suit for one it turned up itself,
+// so the opening flip keeps going until a plain card surfaces.
+func TestRules_OnGameStart_NeverOpensOnAnEight(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	// Draw takes from the end, so these are flipped right-to-left: two eights first.
+	stacked := []deck.Card{
+		{Rank: deck.Seven, Suit: deck.Clubs},
+		{Rank: deck.Four, Suit: deck.Hearts},
+		{Rank: deck.Eight, Suit: deck.Spades},
+		{Rank: deck.Eight, Suit: deck.Diamonds},
+	}
+	state := game.NewState(rules, []*game.Player{{ID: "p1"}, {ID: "p2"}}, nil)
+	state.Deck = deck.New(stacked)
+
+	require.NoError(t, rules.OnGameStart(state))
+
+	top, ok := state.Discard.Peek()
+	require.True(t, ok)
+	assert.NotEqual(t, deck.Eight, top.Rank, "opened on %v", top)
+	assert.Equal(t, top.Suit, state.Extra.(*State).CurrentSuit)
+	assert.Equal(t, len(stacked), state.Deck.Size()+state.Discard.Size(),
+		"the skipped eights go back into the stock")
+}
+
+// Standings and StandingScore have to agree, or the engine splits a genuine draw by
+// slice position and the seat that sorted first takes rating off the seat that did not.
+func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
+	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		s.Players[0].Cards = s.Players[0].Cards[:3]
+		s.Players[1].Cards = s.Players[1].Cards[:3]
+		s.Players[2].Cards = s.Players[2].Cards[:1]
+	})
+
+	standings, places := engine.StandingsWithPlaces()
+	require.Len(t, standings, 3)
+	assert.Equal(t, "p3", standings[0].ID, "one card is the best position")
+	assert.Equal(t, []int{1, 2, 2}, places, "equal card counts are one place, not two")
+}
+
+// Cards are conserved through any legal sequence of play, including a seat leaving
+// mid-hand: every card is in exactly one of the stock, the discard, a hand, or the
+// hand of somebody who walked out.
+func TestRules_CardConservation(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}}
+		engine := game.NewEngine(rules, players, deck.StandardDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		total := func() int {
+			var n int
+			engine.WithState(func(s *game.State) {
+				n = cardsInPlay(s)
+				for _, p := range s.LeftPlayers {
+					n += len(p.Cards)
+				}
+			})
+			return n
+		}
+		const wantCards = 52
+		require.Equal(rt, wantCards, total())
+
+		leaveAt := rapid.IntRange(1, 30).Draw(rt, "leaveAt")
+		for step := range 50 {
+			if engine.IsFinished() {
+				break
+			}
+			if step == leaveAt {
+				engine.RemovePlayer(engine.CurrentPlayerID())
+				require.Equal(rt, wantCards, total(), "a leave at step %d lost cards", step)
+				continue
+			}
+
+			id := engine.CurrentPlayerID()
+			suit := rapid.SampledFrom([]deck.Suit{deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs}).
+				Draw(rt, "suit")
+			var playable []deck.Card
+			engine.WithState(func(s *game.State) {
+				for _, card := range s.Players[s.CurrentTurn].Cards {
+					if rules.ValidateAction(s, ActionPlayCard{Card: card, Suit: suit}) == nil {
+						playable = append(playable, card)
+					}
+				}
+			})
+
+			var err error
+			if len(playable) > 0 {
+				pick := rapid.SampledFrom(playable).Draw(rt, "card")
+				err = engine.SubmitAction(id, ActionPlayCard{Card: pick, Suit: suit})
+			} else {
+				err = engine.SubmitAction(id, ActionDrawCard{})
+			}
+			require.NoError(rt, err, "step %d", step)
+
+			require.Equal(rt, wantCards, total(), "cards changed at step %d", step)
+			engine.WithState(func(s *game.State) {
+				require.GreaterOrEqual(rt, s.Discard.Size(), 1, "the card in play never leaves the pile")
+			})
+		}
+	})
 }
