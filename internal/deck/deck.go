@@ -66,10 +66,6 @@ func (p *Pile) AddCard(cards ...Card) {
 	p.cards = append(p.cards, cards...)
 }
 
-func (p *Pile) AddAllCards(cards []Card) {
-	p.cards = append(p.cards, cards...)
-}
-
 func (p *Pile) Size() int {
 	return len(p.cards)
 }
