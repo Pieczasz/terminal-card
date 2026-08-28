@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/config"
@@ -24,29 +25,59 @@ import (
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
-	"charm.land/wish/v2/logging"
 	"github.com/charmbracelet/keygen"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
 
 // ctxKey namespaces ssh.Context values to avoid collision with other middleware.
 type ctxKey int
 
-const (
-	ctxKeyOwnsConnection ctxKey = iota
-	ctxKeyUser
-	ctxKeyTraceCtx
-	ctxKeyModel
-)
+// ctxKeyChannelCount is the only thing that belongs on the ssh.Context: charm ssh
+// hands one Context per TCP connection to every channel opened on it, which is
+// exactly the scope a per-connection counter wants. Everything else a session needs
+// lives in sessionState, keyed by the session itself.
+const ctxKeyChannelCount ctxKey = iota
 
 const (
 	handshakeTimeout  = 20 * time.Second
 	connIdleTimeout   = 30 * time.Minute
 	maxTerminalWidth  = 2000
 	maxTerminalHeight = 600
+	// maxSessionsPerConnection bounds concurrent session channels on one connection.
+	// Every channel loads the user with three preloads against a small connection
+	// pool, so an unbounded client could exhaust the database from a single TCP
+	// connection. Two allows the reconnect overlap a real client produces.
+	maxSessionsPerConnection = 2
 )
+
+// sessionState is per-channel session state. It cannot live on the ssh.Context: that
+// is shared by every channel of the connection, so a rejected second channel's
+// teardown would close the first channel's model and free its tracker slot. Fields
+// are written and read from the one goroutine that runs the session handler chain.
+type sessionState struct {
+	traceCtx context.Context
+	span     trace.Span
+	started  time.Time
+	user     *db.User
+	model    interface{ Close() }
+	owns     bool
+	panicked bool
+}
+
+// sessionStates maps a live ssh.Session to its state. sessionLifecycle creates the
+// entry and deletes it last; sessionModel and the teardown defers look it up.
+var sessionStates sync.Map
+
+func lookupSessionState(s ssh.Session) (*sessionState, bool) {
+	st, ok := sessionStates.Load(s)
+	if !ok {
+		return nil, false
+	}
+	return st.(*sessionState), true
+}
 
 type SessionTracker struct {
 	mu     sync.Mutex
@@ -124,11 +155,12 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		})),
 		boundedPty(),
 		// wish runs the last middleware first, so this slice is in reverse execution
-		// order.
+		// order. Connect/disconnect logging is sessionLifecycle's job rather than
+		// wish's logging middleware: that one writes through the charm logger, which
+		// bypasses slog and so never reaches the OTLP handler.
 		wish.WithMiddleware(
 			bm.MiddlewareWithProgramHandler(sessionProgram(deps, tracker)),
 			activeterm.Middleware(),
-			logging.StructuredMiddleware(),
 			sessionLifecycle(deps, tracker),
 		),
 	)
@@ -161,8 +193,10 @@ func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHa
 			host = ctx.RemoteAddr().String()
 		}
 		if !limiter.Allow(ratelimit.NetKey(host)) {
-			observability.RateLimitRejectsTotal.Add(1)
-			slog.Warn("rate limited ssh connection", "remote_addr", ctx.RemoteAddr().String(), "session_id", ctx.SessionID())
+			observability.RateLimitReject(ctx, "ssh")
+			observability.SSHSession(ctx, "rejected_ratelimit")
+			slog.WarnContext(ctx, "rate limited ssh connection",
+				"remote_addr", ctx.RemoteAddr().String(), "session_id", ctx.SessionID())
 			return false
 		}
 		return next(ctx, key)
@@ -170,10 +204,22 @@ func rateLimitAuth(limiter *ratelimit.SlidingWindowLimiter, next ssh.PublicKeyHa
 }
 
 func sessionTraceContext(s ssh.Session) context.Context {
-	if ctx, ok := s.Context().Value(ctxKeyTraceCtx).(context.Context); ok {
-		return ctx
+	if st, ok := lookupSessionState(s); ok && st.traceCtx != nil {
+		return st.traceCtx
 	}
 	return s.Context()
+}
+
+// failSession reports a refusal on the session span as well as to the client, so a
+// trace shows why a connection never got a screen.
+func failSessionf(s ssh.Session, outcome string, err error, format string, args ...any) {
+	ctx := sessionTraceContext(s)
+	if st, ok := lookupSessionState(s); ok && st.span != nil {
+		st.span.RecordError(err)
+		st.span.SetStatus(codes.Error, outcome)
+	}
+	observability.SSHSession(ctx, outcome)
+	wish.Fatalf(s, format, args...)
 }
 
 func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Session) (tea.Model, []tea.ProgramOption) {
@@ -181,21 +227,20 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 		traceCtx := sessionTraceContext(s)
 		fingerprint, err := AuthenticateSession(s)
 		if err != nil {
-			wish.Fatalf(s, "%v\n", err)
+			failSessionf(s, "auth_failed", err, "%v\n", err)
 			return nil, nil
 		}
 		user, err := LoadOrRegisterUser(traceCtx, deps.UserRepository, s.User(), fingerprint)
 		if err != nil {
-			wish.Fatalf(s, "%v\n", err)
+			failSessionf(s, "auth_failed", err, "%v\n", err)
 			return nil, nil
 		}
 		if !tracker.Connect(user.ID) {
-			wish.Fatalf(s, "Account '%s' is already connected from another session.\n", user.Username)
+			failSessionf(s, "rejected_duplicate", errAlreadyConnected,
+				"Account '%s' is already connected from another session.\n", user.Username)
 			return nil, nil
 		}
-
-		s.Context().SetValue(ctxKeyOwnsConnection, true)
-		s.Context().SetValue(ctxKeyUser, user)
+		observability.SSHSession(traceCtx, "accepted")
 
 		model := tui.Model(tui.ModelDependencies{
 			SessionCtx:   traceCtx,
@@ -205,9 +250,16 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 			LobbyManager: deps.LobbyManager,
 			GameRegistry: deps.GameRegistry,
 		})
-		s.Context().SetValue(ctxKeyModel, model)
 
-		return model, []tea.ProgramOption{}
+		if st, ok := lookupSessionState(s); ok {
+			st.owns = true
+			st.user = user
+			st.model = model
+		}
+
+		// bubbletea recovers panics itself and prints them to stderr, which loses both
+		// the trace and the span status; recoverSession is the handler that reports them.
+		return model, []tea.ProgramOption{tea.WithoutCatchPanics()}
 	}
 }
 
@@ -244,18 +296,46 @@ func clampWindowSize(_ tea.Model, msg tea.Msg) tea.Msg {
 	return msg
 }
 
+// acquireChannelSlot claims one of the connection's session slots. The counter is
+// stored on the connection-scoped Context, whose own lock makes the first-writer
+// race harmless.
+func acquireChannelSlot(s ssh.Session) bool {
+	ctx := s.Context()
+	ctx.Lock()
+	counter, ok := ctx.Value(ctxKeyChannelCount).(*atomic.Int32)
+	if !ok {
+		counter = new(atomic.Int32)
+		ctx.SetValue(ctxKeyChannelCount, counter)
+	}
+	ctx.Unlock()
+
+	if counter.Add(1) > maxSessionsPerConnection {
+		counter.Add(-1)
+		return false
+	}
+	return true
+}
+
+func releaseChannelSlot(s ssh.Session) {
+	if counter, ok := s.Context().Value(ctxKeyChannelCount).(*atomic.Int32); ok {
+		counter.Add(-1)
+	}
+}
+
 func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Middleware {
 	return func(sh ssh.Handler) ssh.Handler {
 		return func(s ssh.Session) {
-			ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
-				trace.WithAttributes(attribute.String("remote_addr", s.RemoteAddr().String())))
-			s.Context().SetValue(ctxKeyTraceCtx, ctx)
-			defer func() {
-				if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
-					span.SetAttributes(attribute.String("user", u.Username))
-				}
-				span.End()
-			}()
+			if !acquireChannelSlot(s) {
+				observability.SSHSession(s.Context(), "rejected_channel_limit")
+				slog.WarnContext(s.Context(), "too many session channels on one connection",
+					"remote_addr", s.RemoteAddr().String(), "limit", maxSessionsPerConnection)
+				wish.Fatalf(s, "Too many sessions open on this connection.\n")
+				return
+			}
+			defer releaseChannelSlot(s)
+
+			st := startSession(s)
+			defer finishSession(s, st)
 			defer recoverSession(s)
 			defer releaseSession(s, deps, tracker)
 			defer closeSessionModel(s)
@@ -265,12 +345,65 @@ func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Mid
 	}
 }
 
+func startSession(s ssh.Session) *sessionState {
+	pty, _, _ := s.Pty()
+	ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
+		trace.WithAttributes(
+			attribute.String("remote_addr", s.RemoteAddr().String()),
+			attribute.String("client_version", s.Context().ClientVersion()),
+			attribute.Int("terminal.width", pty.Window.Width),
+			attribute.Int("terminal.height", pty.Window.Height),
+		))
+
+	st := &sessionState{traceCtx: ctx, span: span, started: time.Now()}
+	sessionStates.Store(s, st)
+
+	slog.InfoContext(ctx, "ssh session connected",
+		"remote_addr", s.RemoteAddr().String(),
+		"client_version", s.Context().ClientVersion(),
+	)
+	return st
+}
+
+func finishSession(s ssh.Session, st *sessionState) {
+	defer sessionStates.Delete(s)
+
+	outcome := "normal"
+	if st.panicked {
+		outcome = "panic"
+	}
+	elapsed := time.Since(st.started)
+
+	observability.SSHSessionEnded(st.traceCtx, elapsed, outcome)
+	slog.InfoContext(st.traceCtx, "ssh session disconnected",
+		"remote_addr", s.RemoteAddr().String(),
+		"client_version", s.Context().ClientVersion(),
+		"duration_seconds", elapsed.Seconds(),
+		"outcome", outcome,
+	)
+
+	if st.user != nil {
+		st.span.SetAttributes(attribute.String("user", st.user.Username))
+	}
+	st.span.End()
+}
+
 func recoverSession(s ssh.Session) {
 	r := recover()
 	if r == nil {
 		return
 	}
-	slog.Error("critical panic recovered during ssh session",
+	err := fmt.Errorf("panic during ssh session: %v", r)
+	ctx := sessionTraceContext(s)
+	if st, ok := lookupSessionState(s); ok {
+		st.panicked = true
+		if st.span != nil {
+			st.span.RecordError(err, trace.WithStackTrace(true))
+			st.span.SetStatus(codes.Error, "panic during ssh session")
+		}
+	}
+	observability.SSHPanicRecovered(ctx)
+	slog.ErrorContext(ctx, "critical panic recovered during ssh session",
 		"panic", r,
 		"remote_addr", s.RemoteAddr().String(),
 	)
@@ -278,17 +411,19 @@ func recoverSession(s ssh.Session) {
 }
 
 func closeSessionModel(s ssh.Session) {
-	if c, ok := s.Context().Value(ctxKeyModel).(interface{ Close() }); ok {
-		c.Close()
+	if st, ok := lookupSessionState(s); ok && st.model != nil {
+		st.model.Close()
 	}
 }
 
+// releaseSession gives up the seat before the tracker slot. The other order lets a
+// fast reconnect take the slot and then have its lobby seat torn down by the old
+// session's LeaveLobby.
 func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
-	if s.Context().Value(ctxKeyOwnsConnection) != true {
+	st, ok := lookupSessionState(s)
+	if !ok || !st.owns || st.user == nil {
 		return
 	}
-	if u, ok := s.Context().Value(ctxKeyUser).(*db.User); ok {
-		tracker.Disconnect(u.ID)
-		deps.LobbyManager.LeaveLobby(lobby.NewPlayer(u))
-	}
+	deps.LobbyManager.LeaveLobby(lobby.NewPlayer(st.user))
+	tracker.Disconnect(st.user.ID)
 }
