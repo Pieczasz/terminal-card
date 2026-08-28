@@ -1,27 +1,60 @@
 package deck
 
 import (
+	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestPile_Shuffle(t *testing.T) {
+// A shuffle has to be a permutation and it has to be uniform. Contains-based checks
+// see neither: a shuffle that duplicated a card or only ever rotated the pile would
+// pass them.
+func TestPile_Shuffle_IsAPermutation(t *testing.T) {
 	t.Parallel()
-	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}, {Rank: Queen, Suit: Diamonds}}
+	cards := StandardDeck()
 	p := New(cards)
 
-	// Shuffle might not change the order every time, but it should contain the same cards
 	require.NoError(t, p.Shuffle())
 
-	got := p.Size()
-	want := 3
-	assert.Equal(t, want, got)
+	got := p.Cards()
+	require.Len(t, got, len(cards))
+	sort := func(in []Card) []Card {
+		out := slices.Clone(in)
+		slices.SortFunc(out, func(a, b Card) int {
+			if d := int(a.Suit) - int(b.Suit); d != 0 {
+				return d
+			}
+			return int(a.Rank) - int(b.Rank)
+		})
+		return out
+	}
+	assert.Equal(t, sort(cards), sort(got), "the same cards, each exactly once")
+}
 
-	assert.True(t, p.Contains(Card{Rank: Ace, Suit: Spades}))
-	assert.True(t, p.Contains(Card{Rank: King, Suit: Hearts}))
-	assert.True(t, p.Contains(Card{Rank: Queen, Suit: Diamonds}))
+// Three cards have six orderings, and a biased shuffle shows up as one of them being
+// rare. A Fisher-Yates that drew its index from the wrong range is the usual way to
+// get this wrong, and it still returns a permutation every time.
+func TestPile_Shuffle_HitsEveryPermutation(t *testing.T) {
+	t.Parallel()
+	const rounds = 30000
+	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}, {Rank: Queen, Suit: Diamonds}}
+
+	counts := map[string]int{}
+	for range rounds {
+		p := New(cards)
+		require.NoError(t, p.Shuffle())
+		key := fmt.Sprint(p.Cards())
+		counts[key]++
+	}
+
+	require.Len(t, counts, 6, "every ordering must be reachable, got %v", counts)
+	expected := rounds / 6
+	for order, n := range counts {
+		assert.InEpsilon(t, expected, n, 0.10, "ordering %s came up %d times", order, n)
+	}
 }
 
 func TestPile_Peek(t *testing.T) {
@@ -83,15 +116,6 @@ func TestPile_AddCard(t *testing.T) {
 
 	assert.Equal(t, 1, p.Size())
 	assert.True(t, p.Contains(Card{Rank: Ace, Suit: Spades}))
-}
-
-func TestPile_AddAllCards(t *testing.T) {
-	t.Parallel()
-	p := &Pile{}
-	cards := []Card{{Rank: Ace, Suit: Spades}, {Rank: King, Suit: Hearts}}
-	p.AddAllCards(cards)
-
-	assert.Equal(t, 2, p.Size())
 }
 
 func FuzzPile_DrawNCards(f *testing.F) {

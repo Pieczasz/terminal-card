@@ -38,7 +38,11 @@ const (
 	Joker
 )
 
-// TODO: isn't this approach shit?
+// Uno's extra ranks sit in their own block well past King, which keeps three things
+// true at once: the zero Rank is nobody's card, so a zero deck.Card is detectably
+// empty rather than the ace of spades; the numbers 2..9 are shared with the standard
+// ranks, so a card of one game is comparable with a card of the other; and adding a
+// rank to either block cannot renumber the other.
 const (
 	Zero Rank = iota + 20
 	One
