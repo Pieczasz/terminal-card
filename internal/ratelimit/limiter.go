@@ -1,6 +1,7 @@
 package ratelimit
 
 import (
+	"slices"
 	"sync"
 	"time"
 )
@@ -68,17 +69,11 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 	return true
 }
 
+// filterExpired drops timestamps at or before threshold in place. Both callers
+// reassign the result, so reusing the backing array costs nothing and keeps the hot
+// path allocation-free.
 func filterExpired(timestamps []time.Time, threshold time.Time) []time.Time {
-	if len(timestamps) == 0 {
-		return nil
-	}
-	valid := make([]time.Time, 0, len(timestamps))
-	for _, t := range timestamps {
-		if t.After(threshold) {
-			valid = append(valid, t)
-		}
-	}
-	return valid
+	return slices.DeleteFunc(timestamps, func(t time.Time) bool { return !t.After(threshold) })
 }
 
 func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
