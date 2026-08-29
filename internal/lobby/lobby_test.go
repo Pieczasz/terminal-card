@@ -330,9 +330,10 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	err = l2.ToggleReady(guest3, registry)
 	require.ErrorContains(t, err, "not in lobby")
 
-	// Remove non-existent player
-	removed := l3.RemovePlayer(guest3)
-	assert.False(t, removed)
+	// Removing a player who is in no lobby is a no-op and closes nothing.
+	m.LeaveLobby(guest3)
+	_, err = m.FindLobbyByCode(l3.Code())
+	require.NoError(t, err)
 }
 
 // newTestLobby is a lobby with rules registered under "Mock" that accepts up to
@@ -411,7 +412,7 @@ func TestLobby_ChangesAreBroadcast(t *testing.T) {
 
 	t.Run("the leader leaving an empty lobby closes it", func(t *testing.T) {
 		t.Parallel()
-		_, l, _ := newTestLobby(t, 4)
+		m, l, _ := newTestLobby(t, 4)
 		// Not l.Subscribe: a leaving player's own subscription is closed before the
 		// event goes out, so only an observer that is not the leaver can see it.
 		observer, err := l.Broadcaster().Subscribe()
@@ -419,8 +420,10 @@ func TestLobby_ChangesAreBroadcast(t *testing.T) {
 		own, err := l.Subscribe("p1")
 		require.NoError(t, err)
 
-		assert.True(t, l.RemovePlayer(l.Leader()), "the last player out closes the lobby")
+		m.LeaveLobby(l.Leader())
 
+		_, err = m.FindLobbyByCode(l.Code())
+		require.Error(t, err, "the last player out closes the lobby")
 		assert.Equal(t, []string{EventLobbyClosed}, drainEventTypes(observer))
 		assert.Empty(t, drainEventTypes(own), "the leaver's own stream is already closed")
 	})
