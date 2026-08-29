@@ -28,8 +28,8 @@ type Lobby struct {
 	ready        map[string]bool
 	activeEngine *game.Engine
 	playerSubs   map[string][]<-chan Event
-	// createdAt and startedAt are what turn "a game ended" into the two durations
-	// worth watching: how long a table waited for players, and how long a hand ran.
+	// createdAt and startedAt give the two durations worth watching: how long a table
+	// waited for players, and how long a hand ran.
 	createdAt time.Time
 	startedAt time.Time
 }
@@ -149,8 +149,8 @@ func (l *Lobby) SetCardGame(actor *game.Player, g *db.Game) error {
 	})
 }
 
-// withLeaderSettings runs mutate while holding the lobby lock after verifying the
-// actor is the leader and the lobby is Waiting. Broadcasts SETTINGS_UPDATED on success.
+// withLeaderSettings runs mutate under l.mu once the actor is confirmed as leader of a
+// Waiting lobby, then broadcasts SETTINGS_UPDATED.
 func (l *Lobby) withLeaderSettings(actor *game.Player, mutate func() error) error {
 	l.mu.Lock()
 	if !l.leader.Equal(actor) {
@@ -165,8 +165,8 @@ func (l *Lobby) withLeaderSettings(actor *game.Player, mutate func() error) erro
 		l.mu.Unlock()
 		return err
 	}
-	// Visibility is one of these settings, so a browse served from the cache would
-	// keep offering a table that just went private, or hide one that just opened.
+	// Visibility is one of these settings: a cached browse would keep offering a table
+	// that just went private.
 	l.manager.invalidatePublicCache()
 	bc := l.broadcaster
 	l.mu.Unlock()
@@ -222,9 +222,9 @@ func notifyEngineAndBroadcast(engine *game.Engine, bc *broadcaster.Broadcaster[E
 	}
 }
 
-// Subscribe registers a lobby event channel for playerID so disconnect can
-// unsubscribe. An error means the caller will receive nothing and must say so
-// rather than sitting on a channel that stays silent forever.
+// Subscribe registers a lobby event channel for playerID so disconnect can unsubscribe.
+// An error means the caller receives nothing and must say so rather than sitting on a
+// silent channel.
 func (l *Lobby) Subscribe(playerID string) (<-chan Event, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -300,8 +300,7 @@ func (l *Lobby) ToggleReady(p *game.Player, registry *game.Registry) error {
 
 	if _, err := l.startGameLocked(registry); err != nil {
 		// The ready flip is already committed, so the other clients have to see it even
-		// though the start failed; otherwise their rosters disagree with the server
-		// until something else happens to broadcast.
+		// though the start failed, or their rosters disagree with the server.
 		l.broadcastLocked(Event{Type: EventPlayersUpdated})
 		return err
 	}
@@ -355,8 +354,7 @@ func (l *Lobby) IsPrivate() bool {
 	return l.options.isPrivate
 }
 
-// ActiveGame returns the running engine, or nil while the lobby is not mid-game.
-// A reconnecting player's view uses it to land back at the table.
+// ActiveGame is the running engine, or nil; a reconnecting view lands back through it.
 func (l *Lobby) ActiveGame() *game.Engine {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -419,8 +417,8 @@ func playerEloForGame(p *game.Player, gameName string) uint32 {
 	return elo.ToUint32(elo.DefaultRating)
 }
 
-// averageEloLocked is the table's average rating in gameName. An unnamed game has
-// no ratings to average, so it reports the starting rating. Caller holds l.mu.
+// averageEloLocked is the table's average rating in gameName, or the starting rating
+// when the game is unnamed. Caller holds l.mu.
 func (l *Lobby) averageEloLocked(gameName string) uint32 {
 	if gameName == "" {
 		return elo.ToUint32(elo.DefaultRating)
@@ -531,11 +529,10 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	return engine, nil
 }
 
-// watchGameLocked starts the goroutine that persists the result and counts the
-// engine's own events. It is the only thing that persists a match, so a failure to
-// subscribe costs the players their history and Elo. The engine sizes its
-// broadcaster at len(players)+8 precisely so this cannot happen; if it ever does,
-// the match is still playable and the loss is recorded loudly. Caller holds l.mu.
+// watchGameLocked starts the goroutine that persists the result and counts engine
+// events. It is the only thing that persists a match, so a failed subscribe costs the
+// players their history and Elo - the engine's len(players)+8 broadcaster exists so
+// that cannot happen, and it is logged loudly if it ever does. Caller holds l.mu.
 func (l *Lobby) watchGameLocked(engine *game.Engine) {
 	if l.manager == nil || l.manager.matchRepo == nil {
 		return
@@ -569,35 +566,29 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			observability.TurnTimedOut(ctx, gameName)
 		case game.EventPlayerIdle:
 			observability.PlayerIdleRemoved(ctx, gameName)
-			// The engine took the seat, so the lobby roster follows: without this a
-			// disconnected player kicked for idling would reconnect into a lobby
-			// whose game no longer has them. Equal falls back to ID for a zero
-			// UserID, so the stub player matches the roster entry.
+			// The engine took the seat, so the roster follows, or a player kicked for
+			// idling reconnects into a lobby whose game no longer has them. Equal falls
+			// back to ID, so a zero-UserID stub still matches.
 			l.manager.LeaveLobby(&game.Player{ID: event.PlayerID})
 		case game.EventGameEnded:
 			l.finalizeFinishedGame(engine, event.Reason)
-			// The table has to reopen as soon as the match is over, not the next time
-			// somebody presses ready: until it does the lobby is still InGame, and a
-			// leader who inherited it when everyone else left finds that no setting
-			// on the screen can be changed.
+			// Reopen now, not on the next ready press: until it does the lobby is still
+			// InGame and an inherited leader can change no setting on the screen.
 			l.releaseFinishedGame()
 			return
 		}
 	}
 
-	// The feed ended without a terminal event. That is not proof the match did not
-	// finish: the broadcaster is latest-wins and can drop EventGameEnded, and
-	// RemoveLobby closes the feed out from under this goroutine. A finished engine
-	// still holds a result the players expect in their history.
+	// The feed ending is not proof the match did not finish: the broadcaster is
+	// latest-wins and can drop EventGameEnded, and RemoveLobby closes the feed from
+	// under this goroutine.
 	if engine.IsFinished() {
 		l.finalizeFinishedGame(engine, game.EndReasonUnknown)
 	}
 }
 
-// releaseFinishedGameLocked returns a lobby whose match is over to Waiting so the
-// table can be reconfigured and played again, and hands back the engine to close.
-// Closing is the caller's job because both callers already hold l.mu, and this is a
-// no-op unless there really is a finished game to release. Caller holds l.mu.
+// releaseFinishedGameLocked returns a finished lobby to Waiting and hands back the
+// engine to close - closing is the caller's job, since both callers hold l.mu.
 func (l *Lobby) releaseFinishedGameLocked() *game.Engine {
 	if l.state != InGame || l.activeEngine == nil || !l.activeEngine.IsFinished() {
 		return nil
@@ -609,9 +600,8 @@ func (l *Lobby) releaseFinishedGameLocked() *game.Engine {
 	return finished
 }
 
-// releaseFinishedGame is releaseFinishedGameLocked for a caller holding no lock. It
-// announces the reopened table so every lobby view re-reads the settings it may now
-// change.
+// releaseFinishedGame is releaseFinishedGameLocked for a caller holding no lock, and
+// announces the reopened table.
 func (l *Lobby) releaseFinishedGame() {
 	l.mu.Lock()
 	finished := l.releaseFinishedGameLocked()
@@ -627,12 +617,10 @@ func (l *Lobby) releaseFinishedGame() {
 	}
 }
 
-// finalizeFinishedGame persists the result of a game that just ended.
-//
-// registerFinalizer is the first thing it does, before reading standings or lobby
-// settings: every statement between observing the end of the game and that call is a
-// window in which shutdown can begin, and a refusal after the window means a
-// finished match is dropped with nothing left for WaitForFinalizers to wait on.
+// finalizeFinishedGame persists the result of a game that just ended. registerFinalizer
+// runs before anything else: every statement between observing the end and that call is
+// a window for shutdown to begin, and a refusal then drops a finished match with
+// nothing left for WaitForFinalizers to wait on.
 func (l *Lobby) finalizeFinishedGame(engine *game.Engine, reason game.EndReason) {
 	// Guarded before any use of l.manager below, not after.
 	if l.manager == nil || l.manager.matchRepo == nil {
@@ -688,9 +676,8 @@ func endReasonLabel(reason game.EndReason) string {
 	}
 }
 
-// persistFinishedMatch writes the standings of a finished game. Both bail-outs are
-// logged with the lobby attached: a match that never reaches the database is
-// invisible to everyone except this line.
+// persistFinishedMatch writes the standings of a finished game. Both bail-outs log the
+// lobby: a match that never reaches the database is invisible except through this line.
 func (l *Lobby) persistFinishedMatch(
 	ctx context.Context, engine *game.Engine, reason game.EndReason, gameName string, isRanked bool,
 ) {
