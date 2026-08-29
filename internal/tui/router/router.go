@@ -25,7 +25,6 @@ const (
 	RouteGamePrefix  = "game_"
 )
 
-// GameRoute returns the route key for a game module slug.
 func GameRoute(slug string) string {
 	return RouteGamePrefix + slug
 }
@@ -100,8 +99,7 @@ func (r *Router) Register(name string, factory func(GlobalContext, any) tea.Mode
 	r.views[name] = factory
 }
 
-// HasRoute reports whether a route is registered. Goto on an unknown route is a
-// silent no-op by design, so this is how a caller checks its own wiring.
+// HasRoute exists because Goto on an unknown route is a silent no-op.
 func (r *Router) HasRoute(name string) bool {
 	_, ok := r.views[name]
 	return ok
@@ -146,10 +144,9 @@ func (r *Router) Init() tea.Cmd {
 	// Ask the terminal for its background so the theme can match it. Terminals
 	// that don't answer simply leave the dark default in place.
 	cmds := []tea.Cmd{tick(), tea.RequestBackgroundColor}
-	// The first view is built here rather than at construction, and Goto is what
-	// runs a view's Init. Doing both - constructing the home view early and calling
-	// Init on it again from here - armed every command twice, which for a view
-	// holding a subscription is two listener goroutines racing for one channel.
+	// Goto is what runs a view's Init, so the first view is built here rather than at
+	// construction: doing both armed every command twice, which for a view holding a
+	// subscription is two listener goroutines racing for one channel.
 	if cmd := r.Goto(r.initialRoute, r.initialCtx); cmd != nil {
 		cmds = append(cmds, cmd)
 	}

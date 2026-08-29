@@ -24,18 +24,15 @@ func fanFits(maxRows int) bool {
 	return maxRows <= 0 || maxRows >= components.FanRows+1
 }
 
-// FansHand reports whether RenderHand will draw a fan rather than the compact strip.
-// A caller that decorates the fan's card slots (uno's colour row) has to ask the same
-// question the renderer does, or it paints slot-spaced decoration over a strip that
-// has no slots.
+// FansHand lets a caller decorating the fan's card slots (uno's colour row) ask the same
+// question the renderer does, instead of painting slot-spaced glyphs over a strip.
 func FansHand(handSize, maxWidth, maxRows int) bool {
 	return handSize > 0 && components.FanTuck(handSize, maxWidth) != 0 && fanFits(maxRows)
 }
 
-// RenderHand draws the hero's hand into at most maxWidth columns and maxRows rows,
-// with the index row under it. A hand that will not fit as a fan - too narrow even at
-// the tightest overlap, or too short for the card art - falls back to the compact
-// rank-and-suit strip, which has no index row to line up.
+// RenderHand draws the hero's hand into at most maxWidth columns and maxRows rows, with
+// an index row under it. A hand that fits no fan falls back to the rank-and-suit strip,
+// which has no index row to line up.
 func RenderHand(
 	t styles.Theme,
 	hand []deck.Card,
@@ -125,10 +122,9 @@ const (
 // left edge, the seven columns of back on the last card, and its right edge.
 const topCardsFrame = 8
 
-// renderTopCards draws count face-down cards along the top edge, in at most maxWidth
-// columns. Past the budget the stack is cut short rather than run off the screen -
-// the seat prints its hand count beside the art, which is what a player actually
-// reads off somebody else's seat. maxWidth of zero or less means unbounded.
+// renderTopCards draws count face-down cards along the top edge. Past maxWidth the stack
+// is cut short rather than run off screen; the seat's hand count beside the art is what a
+// player actually reads. Zero or less means unbounded.
 func renderTopCards(t styles.Theme, count, maxWidth int) string {
 	if maxWidth > 0 {
 		count = min(count, maxWidth-topCardsFrame)
@@ -165,9 +161,8 @@ func renderTopCards(t styles.Theme, count, maxWidth int) string {
 // of exposed back on the last card, plus the two edges.
 const sideCardsFrame = 5
 
-// renderLeftCards draws count face-down cards down the left edge in at most maxRows
-// rows. Unbounded stacks were the one place a table could grow taller than the
-// terminal: an Uno hand runs past twenty cards, and each one is another row.
+// renderLeftCards draws count face-down cards down the left edge. Unbounded stacks were
+// the one place a table outgrew the terminal: an Uno hand runs past twenty cards.
 func renderLeftCards(t styles.Theme, count, maxRows int) string {
 	count = capSideCards(count, maxRows)
 	if count <= 0 {
@@ -283,9 +278,8 @@ func RenderOpponentMinimal(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }
 
-// RenderStatus names whose turn it is. When it is the hero's turn the countdown sits
-// on the same line as the banner: a second row under the hand would grow botHeight and
-// shove the discard pile every time the clock arms.
+// RenderStatus names whose turn it is, with the countdown on the same line: a second row
+// would grow botHeight and shove the discard pile every time the clock arms.
 func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining time.Duration) string {
 	statusStyle := t.Dim.MarginTop(1).MarginBottom(1)
 	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)
@@ -299,24 +293,18 @@ func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining
 	return statusStyle.Render(statusStr)
 }
 
-// preciseClockThreshold is when the countdown starts counting in tenths. Whole seconds
-// hide up to a second of the time a player actually has, and in the last few seconds
-// that is the difference between acting and being folded for them.
+// Below this the countdown shows tenths: whole seconds hide up to a second of the time a
+// player has, which late in a turn is the difference between acting and being folded.
 const preciseClockThreshold = 6 * time.Second
 
-// tenthTickInterval is the tick rate while the countdown is showing tenths. It is only
-// paid for the last seconds of a turn: ten renders a second, for every client at the
-// table, is not something to run for a whole thirty-second turn over SSH.
+// Tick rate while showing tenths, paid only for the last seconds of a turn: ten renders
+// a second per client is not something to run for a whole turn over ssh.
 const tenthTickInterval = 100 * time.Millisecond
 
-// FormatTurnClock renders the turn countdown, or empty when no clock is running.
-//
-// precise asks for tenths (5.5, 5.4, ...) below preciseClockThreshold; without it the
-// clock stays in m:ss the whole way down. Only the player who has to act needs the
-// finer reading, and it is not free: tenths have to be driven by a tick ten times a
-// second, and every client at the table paying that for somebody else's clock is the
-// most expensive thing a table does. Both forms round up, so the display never claims
-// less time than the player has and never reads zero while they can still act.
+// FormatTurnClock renders the turn countdown, or empty when no clock is running. precise
+// asks for tenths below preciseClockThreshold, which only the player who has to act
+// needs - it costs a tick ten times a second. Both forms round up, so the display never
+// claims less time than the player has.
 func FormatTurnClock(remaining time.Duration, precise bool) string {
 	if remaining <= 0 {
 		return ""
@@ -329,9 +317,8 @@ func FormatTurnClock(remaining time.Duration, precise bool) string {
 	return fmt.Sprintf("%d:%02d", secs/60, secs%60)
 }
 
-// RenderTurnClock is the countdown as drawn on the seat that is on turn. It turns
-// urgent inside the last seconds whoever is reading it, and counts in tenths only for
-// the player those seconds belong to.
+// RenderTurnClock turns urgent in the last seconds for whoever reads it, but counts in
+// tenths only for the player those seconds belong to.
 func RenderTurnClock(t styles.Theme, remaining time.Duration, precise bool) string {
 	clock := FormatTurnClock(remaining, precise)
 	if clock == "" {
@@ -343,10 +330,8 @@ func RenderTurnClock(t styles.Theme, remaining time.Duration, precise bool) stri
 	return t.Muted.Render(clock)
 }
 
-// AttachTurnClock places the countdown against a seat block: underneath for the seats
-// along the top and bottom, and alongside for the ones stacked down the sides, where
-// another row would push the stack apart. The clock sits toward the middle of the
-// table on both sides. An empty clock leaves the block untouched.
+// AttachTurnClock puts the countdown under a top or bottom seat and alongside a side one,
+// where another row would push the stack apart. An empty clock changes nothing.
 func AttachTurnClock(block, clock string, orientation Orientation) string {
 	if clock == "" {
 		return block
@@ -364,14 +349,10 @@ func AttachTurnClock(block, clock string, orientation Orientation) string {
 // ClockTickMsg drives the turn countdown.
 type ClockTickMsg time.Time
 
-// ClockTickFor schedules the next countdown tick at the rate the current reading
-// needs: once a second while the clock shows whole seconds, ten times a second only
-// for the player whose clock is running out.
-//
-// onTurn is what keeps a table cheap. A frame costs the server thousands of
-// allocations, so every seat re-rendering ten times a second because one player is
-// running late would cost the table six times its own worth of work, for a digit
-// nobody but that player is acting on.
+// ClockTickFor ticks once a second, or ten times a second only for the player whose clock
+// is running out. onTurn is what keeps a table cheap: a frame costs thousands of
+// allocations, and every seat paying that rate for somebody else's digit multiplies the
+// table's work for nothing.
 func ClockTickFor(remaining time.Duration, onTurn bool) tea.Cmd {
 	interval := time.Second
 	if onTurn && remaining > 0 && remaining < preciseClockThreshold {
