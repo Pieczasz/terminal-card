@@ -22,8 +22,7 @@ type State struct {
 	SmallBlind uint
 	BigBlind   uint
 
-	Phase      RoundPhase
-	LastAction game.Action
+	Phase RoundPhase
 
 	Folded       map[string]bool
 	PlayersAllIn map[string]bool

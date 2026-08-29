@@ -193,7 +193,6 @@ func resetForHand(state *game.State, extra *State) {
 	extra.Table = extra.Table[:0]
 	extra.Pots = nil
 	extra.Winners = nil
-	extra.LastAction = nil
 	extra.MainPool = 0
 	extra.CurrentBet = 0
 	extra.MinRaise = extra.BigBlind
@@ -598,7 +597,6 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 		}
 		extra.ActedThisRound[p.ID] = true
 	}
-	extra.LastAction = action
 	return nil
 }
 
