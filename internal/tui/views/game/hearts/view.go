@@ -185,21 +185,9 @@ func (m *Model) renderPassDirection() string {
 	if m.stage != logic.StagePassing {
 		return ""
 	}
-	label := passLabel(m.passDirection)
-	return m.Global.Theme.Dim.Render("Pass: " + label)
-}
-
-func passLabel(d logic.PassDirection) string {
-	switch d {
-	case logic.PassLeft:
-		return "left"
-	case logic.PassRight:
-		return "right"
-	case logic.PassAcross:
-		return "across"
-	default:
-		return "none"
-	}
+	// PassDirection.String is the one label table for the enum; a hold hand never
+	// reaches the passing stage, so its "hold" label cannot show here anyway.
+	return m.Global.Theme.Dim.Render("Pass: " + m.passDirection.String())
 }
 
 func (m *Model) renderPlayerSection() string {
