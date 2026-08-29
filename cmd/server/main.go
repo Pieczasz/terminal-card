@@ -344,6 +344,11 @@ func serve(ctx context.Context, d serveDeps) error {
 		}
 		return errors.New("ssh server stopped accepting connections unexpectedly")
 	case err := <-d.apiErr:
+		// This teardown ends live matches the same way a deploy does, so they
+		// must not be rated either.
+		if d.onShutdown != nil {
+			d.onShutdown()
+		}
 		stopServer(server)
 		return err
 	case <-done:
