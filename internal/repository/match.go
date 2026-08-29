@@ -140,8 +140,9 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 // (user_id, game_id) has no row, so FOR UPDATE locks nothing and two concurrent
 // finalizes both insert: one hits 23505, its transaction rolls back and the match is
 // lost. Seeding at the default rating first turns that into an ordinary row lock.
-// Sorted by user_id so two overlapping seeds take the locks in the same order and
-// cannot deadlock.
+// Sorted by user_id because an insert that does conflict still waits on the
+// inserting transaction; the lock ordering that actually matters is fetchRankings',
+// since ON CONFLICT DO NOTHING takes no lock at all on a row that already exists.
 func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
 	seeds := make([]db.Ranking, 0, len(userIDs))
 	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
@@ -308,8 +309,15 @@ func (q *gormMatchRepository) recordMatchTx(
 func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uint) (map[uint]*db.Ranking, error) {
 	var rankings []db.Ranking
 	// FOR UPDATE: serialize concurrent finalize transactions to avoid lost Elo updates.
+	//
+	// ORDER BY user_id is what makes that safe rather than deadlock-prone: this is
+	// where the row locks are actually taken (the seed's ON CONFLICT DO NOTHING locks
+	// nothing when the row already exists, which is the common case), so without a
+	// fixed order two finalizes over overlapping seats can lock in opposite orders.
+	// Postgres then aborts one, and that match is lost from history and Elo.
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id IN ? AND game_id = ?", userIDs, gameID).Find(&rankings).Error; err != nil {
+		Where("user_id IN ? AND game_id = ?", userIDs, gameID).
+		Order("user_id").Find(&rankings).Error; err != nil {
 		return nil, fmt.Errorf("query rankings: %w", err)
 	}
 
