@@ -176,26 +176,6 @@ func (l *Lobby) withLeaderSettings(actor *game.Player, mutate func() error) erro
 	return nil
 }
 
-// RemovePlayer removes a player. Returns true if the lobby should be closed (empty).
-// Prefer Manager.LeaveLobby / Manager.Kick so playerLobby stays consistent.
-func (l *Lobby) RemovePlayer(p *game.Player) bool {
-	if p == nil {
-		return false
-	}
-	l.mu.Lock()
-
-	playerID := p.ID
-	l.unsubscribePlayerLocked(playerID)
-
-	engine, bc, eventType, shouldClose, ok := l.detachPlayerLocked(p)
-	l.mu.Unlock()
-	if !ok {
-		return false
-	}
-	notifyEngineAndBroadcast(engine, bc, playerID, eventType)
-	return shouldClose
-}
-
 // detachPlayerLocked mutates roster for a leaving player. Caller holds l.mu.
 // Returns false in ok if the player was not in the lobby.
 func (l *Lobby) detachPlayerLocked(p *game.Player) (
