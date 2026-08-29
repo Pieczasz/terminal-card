@@ -282,10 +282,53 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 			st.model = model
 		}
 
-		// bubbletea recovers panics itself and prints them to stderr, which loses both
-		// the trace and the span status; recoverSession is the handler that reports them.
-		return model, []tea.ProgramOption{tea.WithoutCatchPanics()}
+		// bubbletea's own recover prints to stderr and knows nothing about the span
+		// or the metric, so reportingModel catches Init/Update/View first. Its
+		// catching stays enabled all the same: it is the only thing covering the
+		// goroutines bubbletea spawns per Cmd, and an unrecovered panic there takes
+		// down the process for every connected player, not just this session.
+		return reportingModel{Model: model, session: s}, nil
 	}
+}
+
+// reportingModel reports a panic in the TUI against the session's trace context and
+// then quits, so the session ends the same way an idle removal does. It wraps the
+// three methods bubbletea calls on the event-loop goroutine; a panic inside a Cmd
+// runs on a goroutine bubbletea owns and is left to bubbletea's own recover.
+type reportingModel struct {
+	tea.Model
+	session ssh.Session
+}
+
+func (m reportingModel) Init() tea.Cmd {
+	defer reportPanic(m.session)
+	return m.Model.Init()
+}
+
+func (m reportingModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// A recovered Update leaves the model on the state the panic interrupted, so
+	// the session quits rather than rendering on from a half-applied message.
+	defer reportPanic(m.session)
+	inner, cmd := m.Model.Update(msg)
+	m.Model = inner
+	return m, cmd
+}
+
+func (m reportingModel) View() tea.View {
+	defer reportPanic(m.session)
+	return m.Model.View()
+}
+
+// reportPanic records a recovered panic and re-panics so the caller's own frame
+// unwinds; the panic stops at bubbletea, which ends the program without taking the
+// process with it. It must be a direct defer - a recover() one call deeper is nil.
+func reportPanic(s ssh.Session) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	recordSessionPanic(s, r)
+	panic(r)
 }
 
 func boundedPty() ssh.Option {
@@ -418,6 +461,14 @@ func recoverSession(s ssh.Session) {
 	if r == nil {
 		return
 	}
+	recordSessionPanic(s, r)
+	wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+}
+
+// recordSessionPanic puts a recovered panic on the session span, the metric and the
+// log, all against the session's own trace context. It reports only: whether the
+// session can be told about it is the caller's business.
+func recordSessionPanic(s ssh.Session, r any) {
 	err := fmt.Errorf("panic during ssh session: %v", r)
 	ctx := sessionTraceContext(s)
 	if st, ok := lookupSessionState(s); ok {
@@ -432,7 +483,6 @@ func recoverSession(s ssh.Session) {
 		"panic", r,
 		"remote_addr", s.RemoteAddr().String(),
 	)
-	wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
 }
 
 func closeSessionModel(s ssh.Session) {

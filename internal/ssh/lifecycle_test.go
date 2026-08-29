@@ -10,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/ssh"
 	"charm.land/wish/v2/testsession"
 	"github.com/stretchr/testify/assert"
@@ -174,4 +175,76 @@ func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	require.ErrorIs(t, tracker.Connect(1), ErrAlreadyConnected)
 	tracker.Disconnect(2)
 	require.NoError(t, tracker.Connect(3), "capacity frees with the seat")
+}
+
+// panicModel panics from whichever method the test asks for.
+type panicModel struct{ on string }
+
+func (m panicModel) Init() tea.Cmd {
+	if m.on == "init" {
+		panic("init boom")
+	}
+	return nil
+}
+
+func (m panicModel) Update(tea.Msg) (tea.Model, tea.Cmd) {
+	if m.on == "update" {
+		panic("update boom")
+	}
+	return m, nil
+}
+
+func (m panicModel) View() tea.View {
+	if m.on == "view" {
+		panic("view boom")
+	}
+	return tea.NewView("")
+}
+
+// A TUI panic has to be reported against the session's own span before it leaves
+// our code: bubbletea's recover is what keeps it off the process, but it knows
+// nothing about the span, the metric or the trace.
+func TestReportingModel_RecordsPanicsAndLetsThemUnwind(t *testing.T) {
+	t.Parallel()
+
+	for _, method := range []string{"init", "update", "view"} {
+		t.Run(method, func(t *testing.T) {
+			t.Parallel()
+
+			s := &fakeSession{}
+			st := &sessionState{traceCtx: context.Background()}
+			sessionStates.Store(s, st)
+			t.Cleanup(func() { sessionStates.Delete(s) })
+
+			m := reportingModel{Model: panicModel{on: method}, session: s}
+			require.Panics(t, func() {
+				switch method {
+				case "init":
+					m.Init()
+				case "update":
+					m.Update(nil)
+				case "view":
+					m.View()
+				}
+			}, "the panic still unwinds, so bubbletea ends the program")
+
+			assert.True(t, st.panicked, "the session is marked as having panicked")
+		})
+	}
+}
+
+// A model that does not panic must pass its command and view through untouched.
+func TestReportingModel_PassesThroughWhenNothingPanics(t *testing.T) {
+	t.Parallel()
+
+	s := &fakeSession{}
+	sessionStates.Store(s, &sessionState{traceCtx: context.Background()})
+	t.Cleanup(func() { sessionStates.Delete(s) })
+
+	m := reportingModel{Model: panicModel{on: "none"}, session: s}
+
+	assert.Nil(t, m.Init())
+	got, cmd := m.Update(nil)
+	assert.Nil(t, cmd)
+	assert.IsType(t, reportingModel{}, got, "the wrapper survives an update")
 }
