@@ -207,7 +207,6 @@ func ResetFigureCacheForTest() {
 	figureCached.Store(0)
 }
 
-// FigureCacheLenForTest reports how many banners are held.
 func FigureCacheLenForTest() int {
 	return int(figureCached.Load())
 }

@@ -46,7 +46,6 @@ func (m *Model) View() tea.View {
 // elsewhere, and the five community cards sit above it.
 const artTableHeight = 48
 
-// compact reports whether this table is down to mini cards.
 func (m *Model) compact() bool {
 	return m.Global.Height < artTableHeight || gameview.IsCompact(m.Global.Width, m.Global.Height)
 }

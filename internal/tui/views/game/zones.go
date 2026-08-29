@@ -19,12 +19,9 @@ type TableZones[T any] struct {
 // rest. Beyond four the row runs wider than a terminal.
 const topCapacity = 4
 
-// SplitZones seats opponents clockwise from the hero's left: down the left edge,
-// across the top, then down the right.
-//
-// Every opponent is placed. A layout with a fixed number of slots drops whoever
-// does not fit, and a seat that is not drawn is a player still holding cards that
-// nobody at the table can see.
+// SplitZones seats opponents clockwise from the hero's left: left edge, top, right edge.
+// Every opponent is placed - a fixed number of slots would drop one, and an undrawn seat
+// is a player holding cards nobody can see.
 func SplitZones[T any](opponents []T) TableZones[T] {
 	n := len(opponents)
 	if n == 0 {
@@ -32,9 +29,8 @@ func SplitZones[T any](opponents []T) TableZones[T] {
 	}
 
 	side := max((n-topCapacity+1)/2, 0)
-	// Two opponents read as sitting across the corners from the hero rather than
-	// shoulder to shoulder above them, so the sides take one each before the top
-	// starts filling.
+	// Two opponents read as sitting across the corners rather than shoulder to shoulder,
+	// so the sides take one each before the top fills.
 	if n > 1 && side == 0 {
 		side = 1
 	}
@@ -46,10 +42,8 @@ func SplitZones[T any](opponents []T) TableZones[T] {
 	}
 }
 
-// artSeatLimit is how many opponents can be drawn with their card backs before the
-// table stops reading as a table: past this the seats are down to a name and a count
-// whatever the terminal size, because five stacks of art have nothing to say that the
-// five counts do not.
+// Past this many opponents the seats are down to a name and a count whatever the
+// terminal size: five stacks of art say nothing the five counts do not.
 const artSeatLimit = 3
 
 // RenderOpponentTop is the row of opponents across the top edge, laid out in at most
@@ -73,9 +67,8 @@ func RenderOpponentTop(t styles.Theme, base BaseState, width int, compact bool) 
 	return styles.Clamp(width, 0, lg.JoinHorizontal(lg.Bottom, parts...))
 }
 
-// RenderOpponentSides is the two stacks of opponents down the left and right edges,
-// each fitting into at most height rows - which is the middle band's height, not the
-// terminal's, since that is all the stacks have to sit in.
+// RenderOpponentSides fits each side stack into height rows, which is the middle band's
+// height rather than the terminal's.
 func RenderOpponentSides(t styles.Theme, base BaseState, height int, compact bool) (left, right string) {
 	zones := SplitZones(base.Opponents)
 	minimal := minimalSeats(base, compact)
@@ -115,9 +108,8 @@ func renderOpponentStack(
 	return lg.JoinVertical(lg.Center, parts...)
 }
 
-// seatArtFloor is the smallest budget one card of art fits in, on the axis the
-// orientation stacks along. Below it the seat is drawn minimally: art cut down to
-// nothing reads as a bug, a name and a count reads as a small terminal.
+// Smallest budget one card of art fits in. Below it the seat is drawn minimally: art cut
+// to nothing reads as a bug, a name and a count reads as a small terminal.
 func seatArtFloor(orientation Orientation) int {
 	if orientation == OrientationTop {
 		return 1 + topCardsFrame

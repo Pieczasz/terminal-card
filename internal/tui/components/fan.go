@@ -12,13 +12,11 @@ import (
 )
 
 const (
-	// overlapWidth is how much of a card stays visible once the next one covers it:
-	// the left border plus all but one column of the face. Hiding a single column is
-	// enough to tuck the cards into each other while every rank and pip stays readable.
+	// How much of a card stays visible once the next covers it: hiding one column is
+	// enough to tuck them together while every rank and pip stays readable.
 	overlapWidth = FaceWidth - 1
-	// minTuckWidth is the narrowest a covered card may be squeezed to. It is the
-	// centre pip column and no less: the suit of a card with a single central pip -
-	// an ace - lives there, and a hand whose suits are invisible is unplayable.
+	// The centre pip column and no less: an ace's only pip lives there, and a hand whose
+	// suits are invisible is unplayable.
 	minTuckWidth = CentreColumn + 1
 	// cardRows is a framed card: the two borders plus the face.
 	cardRows = FaceHeight + 2
@@ -26,9 +24,9 @@ const (
 	FanRows = cardRows
 )
 
-// FanTuck is how many face columns each covered card shows so a fan of n cards fits
-// maxWidth, or 0 when not even the tightest fan does and the caller has to fall back
-// to RenderStrip. A maxWidth of zero or less means unbounded.
+// FanTuck is how many face columns each covered card shows so a fan of n fits maxWidth,
+// or 0 when no fan does and the caller falls back to RenderStrip. Zero maxWidth is
+// unbounded.
 func FanTuck(n, maxWidth int) int {
 	if n <= 0 || maxWidth <= 0 {
 		return overlapWidth
@@ -41,10 +39,9 @@ func FanTuck(n, maxWidth int) int {
 	return 0
 }
 
-// fanWidth is the widest a fan of n cards at this tuck can get: it budgets for a
-// picked-out card in the middle of the hand, which keeps its own closing border.
-// Budgeting for the worst case is what stops the hand changing width - and so the
-// whole layout shifting sideways - as the cursor moves along it.
+// fanWidth budgets for a picked-out card mid-hand, which keeps its own closing border.
+// Worst case, so the hand does not change width - shifting the layout - as the cursor
+// moves.
 func fanWidth(n, tuck int) int {
 	if n <= 0 {
 		return 0
@@ -56,9 +53,8 @@ func fanWidth(n, tuck int) int {
 	return width
 }
 
-// CardSlotWidth is the visible width of card i in a fan of n drawn at this tuck,
-// where selected is the picked-out index or -1. A closed card is wider, so anything
-// lined up under the fan has to ask rather than assume.
+// CardSlotWidth is the visible width of card i in a fan of n at this tuck; selected is
+// the picked-out index or -1. A closed card is wider, so callers have to ask.
 func CardSlotWidth(i, n, selected, tuck int) int {
 	// Every card contributes its left border plus the columns of face it still shows;
 	// a closed one adds its right border too.
@@ -79,14 +75,10 @@ func CardSlotWidthMulti(i, n, tuck int, selected map[int]struct{}) int {
 	return 1 + tuck
 }
 
-// RenderFan draws cards overlapping left to right, the way a hand sits in a player's
-// grip: each card covers all but tuck columns of the one before it, and only the
-// rightmost card shows its closing edge.
-//
-// selected is the index to draw as picked out, or -1 for none. That card keeps its own
-// right border and is drawn in the selection colour, so it reads as lying on top of the
-// fan. There is no vertical lift: raising one card would break the shared top edge that
-// makes the rest read as a single hand.
+// RenderFan draws cards overlapping left to right, each covering all but tuck columns of
+// the one before. selected (or -1) keeps its own right border and the selection colour,
+// so it reads as lying on top; there is no vertical lift, which would break the shared
+// top edge that makes the rest read as one hand.
 func RenderFan(t styles.Theme, cards []deck.Card, selected, tuck int) string {
 	sel := map[int]struct{}{}
 	if selected >= 0 {
@@ -134,12 +126,9 @@ func renderFanCore(t styles.Theme, cards []deck.Card, selected map[int]struct{},
 // and the suit. Fixed so the cells line up in a grid however the ranks vary.
 const stripCellWidth = 4
 
-// RenderStrip is the hand written out as rank-and-suit cells, wrapped to maxWidth.
-//
-// It is what a hand falls back to when no fan fits at all: thirteen cards of art run
-// past a hundred columns and a terminal is admitted at MinWidth, so a Hearts hand on a
-// standard-width terminal has nowhere to be drawn. selected marks staged cards and
-// cursor the focused one; pass a nil map for single selection.
+// RenderStrip is the hand as rank-and-suit cells wrapped to maxWidth, for when no fan
+// fits: thirteen cards of art run past a hundred columns. selected marks staged cards,
+// cursor the focused one; nil map means single selection.
 func RenderStrip(t styles.Theme, cards []deck.Card, selected map[int]struct{}, cursor, maxWidth int) string {
 	if len(cards) == 0 {
 		return ""
@@ -184,9 +173,8 @@ type columnKey struct {
 	dark     bool
 }
 
-// columnCache memoises fan columns. Every row of every card would otherwise re-emit
-// its own colour sequence on every frame - a seven-card hand is over a hundred style
-// renders - and a column only has a few hundred possible forms.
+// columnCache memoises fan columns: a seven-card hand is over a hundred style renders per
+// frame, and a column has only a few hundred possible forms.
 var columnCache sync.Map // columnKey -> []string
 
 // fanColumn renders one card's slice of the fan: top border, face rows, bottom border.

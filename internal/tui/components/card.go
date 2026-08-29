@@ -263,7 +263,6 @@ func MiniCardBack(t styles.Theme) string {
 	return t.Dim.Render("[" + strings.Repeat("?", MiniRankWidth+1) + "]")
 }
 
-// MiniCardSlot is an empty slot at mini size.
 func MiniCardSlot(t styles.Theme) string {
 	return t.Dim.Render("[" + strings.Repeat(" ", MiniRankWidth+1) + "]")
 }

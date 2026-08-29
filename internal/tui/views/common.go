@@ -12,14 +12,13 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-// SessionPlayer builds the player for the authenticated user, or nil when unauthenticated.
 func SessionPlayer(g router.GlobalContext) *game.Player {
 	return lobby.NewPlayer(g.User)
 }
 
-// SessionPlayerID is the seat key the engine and the lobby know this user by, empty
-// when unauthenticated. It reads the ID off the player rather than formatting the
-// user ID again: a subscription keyed on a different spelling silently never fires.
+// SessionPlayerID is the seat key the engine and lobby know this user by. It reads the
+// ID off the player rather than formatting the user ID again, since a subscription keyed
+// on a different spelling silently never fires.
 func SessionPlayerID(g router.GlobalContext) string {
 	p := SessionPlayer(g)
 	if p == nil {
@@ -29,8 +28,8 @@ func SessionPlayerID(g router.GlobalContext) string {
 }
 
 // ListenOn delivers the next value from ch as a message. A closed or absent channel
-// ends the stream by returning a nil message rather than blocking forever, so a view
-// that has released its subscription simply stops updating.
+// returns nil rather than blocking, so a view that released its subscription just stops
+// updating.
 func ListenOn[T any](ch <-chan T, wrap func(T) tea.Msg) tea.Cmd {
 	return func() tea.Msg {
 		if ch == nil {
@@ -44,9 +43,7 @@ func ListenOn[T any](ch <-chan T, wrap func(T) tea.Msg) tea.Cmd {
 	}
 }
 
-// globalActionRoutes maps the shortcut keys advertised in styles.GlobalActions to
-// the routes they open. esc and q are deliberately absent: they mean "back", and
-// each view decides what back means for it.
+// esc and q are absent: they mean "back", and each view decides what back means for it.
 var globalActionRoutes = map[string]string{
 	"n": router.RouteLobbyCreate,
 	"f": router.RouteLobbyJoin,
@@ -54,18 +51,14 @@ var globalActionRoutes = map[string]string{
 	"t": router.RouteLeaderboard,
 }
 
-// GlobalRoute returns the route a global shortcut key opens.
 func GlobalRoute(key string) (string, bool) {
 	route, ok := globalActionRoutes[key]
 	return route, ok
 }
 
 // NavigateOn resolves the navigation keys every full-screen view shares: the global
-// shortcuts, plus esc/q meaning "back to home". It reports whether it handled the
-// key, so callers can fall through to their own bindings.
-//
-// Views where esc means something else (the lobby, where it opens the leave
-// confirmation) handle GlobalRoute directly instead.
+// shortcuts, plus esc/q for "back to home". Views where esc means something else (the
+// lobby's leave confirmation) call GlobalRoute directly instead.
 func NavigateOn(key string) (tea.Cmd, bool) {
 	if route, ok := GlobalRoute(key); ok {
 		return func() tea.Msg { return router.ChangeViewMsg{ViewName: route} }, true
@@ -83,9 +76,8 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		global.Height = msg.Height
 		return true, nil
 	case tea.BackgroundColorMsg:
-		// The router updates its own copy for views built later; this updates the
-		// view that is on screen right now, so a mid-session theme switch takes
-		// effect without navigating away.
+		// The router updates its own copy for views built later; this one is on screen
+		// now, so a mid-session theme switch lands without navigating away.
 		global.Theme = styles.NewTheme(msg.IsDark())
 		return true, nil
 	case tea.KeyPressMsg:
@@ -97,23 +89,18 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 	return false, nil
 }
 
-// RenderScreen is the header/footer/frame ritual every full-screen view repeats: the
-// figlet title, the view's own action keys ahead of the global ones, and the framed
-// layout. content is called with the rows left for it once the title and footer have
-// taken theirs, which is what the tables size their row counts against.
+// RenderScreen is the header/footer/frame ritual every full-screen view repeats.
+// content receives the rows left once the title and footer have taken theirs.
 //
-// slices.Concat, never append: styles.GlobalActions is a package-level slice shared by
-// every session, and appending to it writes into the backing array every other session
-// is reading - one screen's footer keys turning up on another player's screen.
+// slices.Concat, never append: styles.GlobalActions is shared by every session, and
+// appending writes into the array the others are reading.
 func RenderScreen(g router.GlobalContext, title string, localActions []string, content func(height int) string) string {
 	header := g.Theme.Title.Render(styles.RenderFigureASCII(title, styles.InnerWidth(g.Width)))
 	footer := g.Theme.RenderActionFooter(slices.Concat(localActions, styles.GlobalActions))
 	return RenderCenteredLayout(g, header, content(styles.AvailableContentHeight(g.Height, header, footer)), footer)
 }
 
-// RenderCenteredLayout frames content for a full-screen view. It takes the whole
-// GlobalContext rather than loose dimensions because the frame needs the session's
-// theme as well as its size.
+// RenderCenteredLayout frames content for a full-screen view.
 func RenderCenteredLayout(g router.GlobalContext, header, content, footer string) string {
 	return styles.Place(
 		g.Width, g.Height,
