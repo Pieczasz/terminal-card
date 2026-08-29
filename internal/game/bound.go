@@ -3,7 +3,6 @@ package game
 import (
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -70,60 +69,18 @@ func (b *BoundEngine) Submit(action Action) error {
 	return b.engine.SubmitAction(b.playerID, action)
 }
 
-func (b *BoundEngine) Snapshot() StateSnapshot {
-	if b == nil {
-		return StateSnapshot{}
-	}
-	return b.engine.Snapshot()
-}
-
-func (b *BoundEngine) Hand() []deck.Card {
-	if b == nil {
-		return nil
-	}
-	var hand []deck.Card
-	b.engine.WithState(func(state *State) {
-		if i := slices.IndexFunc(state.Players, func(p *Player) bool {
-			return p != nil && p.ID == b.playerID
-		}); i != -1 {
-			hand = slices.Clone(state.Players[i].Cards)
-		}
-	})
-	return hand
-}
-
 // Frame is one consistent read of everything a view renders - the public snapshot,
 // this player's hand, and the turn clock - plus, through fn (which may be nil), the
-// per-game state under the WithHiddenState contract. One lock hold, so the pieces
-// cannot describe different moments the way separate reads can.
+// per-game slice of engine state. One lock hold, so the pieces cannot describe
+// different moments the way separate reads can.
+//
+// What fn is handed is State.Extra: unredacted table state - every other player's
+// hand included, where the rules keep one there - so a view that reaches in takes
+// on the redaction itself. It is also live and mutable: treat it as read-only and
+// copy anything kept past the callback.
 func (b *BoundEngine) Frame(fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
 	if b == nil {
 		return StateSnapshot{}, nil, 0
 	}
 	return b.engine.Frame(b.playerID, fn)
-}
-
-// WithHiddenState reads the per-game slice of engine state under the engine lock.
-// State.Extra is unredacted table state - every other player's hand included, where
-// the rules keep one there - so a view that reaches in takes on the redaction
-// itself. It is also live and mutable: treat it as read-only and copy anything kept
-// past the callback.
-func (b *BoundEngine) WithHiddenState(fn func(extra any)) {
-	if b == nil || fn == nil {
-		return
-	}
-	b.engine.WithState(func(state *State) {
-		fn(state.Extra)
-	})
-}
-
-func (b *BoundEngine) TurnRemaining() time.Duration {
-	if b == nil {
-		return 0
-	}
-	deadline := b.engine.TurnDeadline()
-	if deadline.IsZero() {
-		return 0
-	}
-	return max(time.Until(deadline), 0)
 }

@@ -82,7 +82,7 @@ It is a façade, not a capability: `BoundEngine.Engine()` still reaches whole-ta
 
 Every game view embeds `gameview.Session` (`internal/tui/views/game/session.go`). It owns the parts that are the same in all five games: binding to the engine, subscribing (`NewSession`), reading the feed and the whole `Update` loop (`HandleFrame`), losing a seat to the idle timer (`IdleRemoved`), the hand cursor (`MoveCursor` / `SelectDigit` / `SelectedCard`), leaving the table (`Leave`), and `Close` — which is what satisfies `router.Closer`. The shared layout frame (`gameview.RenderBands`, the compact breakpoints, the width-budgeted hand renderers) lives in `internal/tui/views/game`; a new game implements its own rules rendering and nothing else.
 
-Read per-game state through the `extra` callback of `Session.Sync` (unredacted table state the view has to filter itself; `WithHiddenState` is the standalone form) — and seat order, display names and stock size through `BaseState` (`Seats`, `SeatOrder()`, `SeatNames()`, `DeckSize`) rather than reaching back through `Engine().WithState` — `PlayerSnapshot.Username` already falls back to the player ID.
+Read per-game state through the `extra` callback of `Session.Sync` (unredacted table state the view has to filter itself; `BoundEngine.Frame` is the standalone form) — and seat order, display names and stock size through `BaseState` (`Seats`, `SeatOrder()`, `SeatNames()`, `DeckSize`) rather than reaching back through `Engine().WithState` — `PlayerSnapshot.Username` already falls back to the player ID.
 
 Anything a view keeps after releasing the engine lock must be copied, not aliased (`maps.Clone`, `HandResult.Clone`).
 
