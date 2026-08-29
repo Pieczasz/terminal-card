@@ -102,10 +102,10 @@ func colorLabel(t styles.Theme, s deck.Suit) (string, color.Color) {
 
 func (m *Model) renderPlayerSection() string {
 	statusView := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
-	colorRow := m.renderHandColorRow(gameview.HandWidth(m.Global.Width))
-	handWidth := gameview.HandWidth(m.Global.Width)
+	handWidth, handRows := gameview.HandWidth(m.Global.Width), gameview.HandRows(m.Global.Height)
+	colorRow := m.renderHandColorRow(handWidth, handRows)
 	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor,
-		handWidth, gameview.HandRows(m.Global.Height))
+		handWidth, handRows)
 
 	sections := []string{statusView}
 	if colorRow != "" {
@@ -119,16 +119,18 @@ func (m *Model) renderPlayerSection() string {
 }
 
 // renderHandColorRow paints a Uno color glyph above each card so four colors stay
-// distinct without changing shared suitStyle (which only has red/dark). It has to
-// measure the slots the same way the fan does, so it takes the same width budget: a
-// hand too wide for any fan has no card columns to sit over, and the row goes.
-func (m *Model) renderHandColorRow(maxWidth int) string {
+// distinct without changing shared suitStyle (which only has red/dark). The glyphs
+// sit at card-slot spacing, so the row exists only when the hand below it is a fan:
+// the strip the hand falls back to on a short or narrow terminal has no card columns
+// to sit over, and a row drawn anyway lines up with nothing. Height decides that as
+// much as width - 24-row terminals are the common case, not an edge one.
+func (m *Model) renderHandColorRow(maxWidth, maxRows int) string {
 	hand := m.Base.Hand
 	n := len(hand)
-	tuck := components.FanTuck(n, maxWidth)
-	if n == 0 || tuck == 0 {
+	if !gameview.FansHand(n, maxWidth, maxRows) {
 		return ""
 	}
+	tuck := components.FanTuck(n, maxWidth)
 	selected := m.Selected
 	if m.pickingColor {
 		selected = -1
