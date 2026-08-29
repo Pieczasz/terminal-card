@@ -244,7 +244,7 @@ func TestBuildSidePots_LayeredWithDeadMoney(t *testing.T) {
 	}
 	state.Extra = extra
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	require.Len(t, pots, 4)
 	// Layer 0-50: everyone in (incl. p4's dead money), eligible = live players.
@@ -279,7 +279,7 @@ func TestBuildSidePots_UncalledOvershoveReturned(t *testing.T) {
 	}
 	state.Extra = extra
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	require.Len(t, pots, 2)
 	// Contested layer up to the call amount.
@@ -598,7 +598,7 @@ func TestBuildSidePots_DeadMoneyCarriesIntoTheLastPot(t *testing.T) {
 	// b folded after over-committing; only a can win anything.
 	state, extra := sidePotState(t, map[string]uint{"a": 50, "b": 100}, "b")
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	require.Len(t, pots, 1, "only the level a reached can be contested")
 	assert.Equal(t, []string{"a"}, pots[0].Eligible)
@@ -613,7 +613,7 @@ func TestBuildSidePots_AllContributorsFoldedAwardsTheLoneSurvivor(t *testing.T) 
 	state, extra := sidePotState(t,
 		map[string]uint{"a": 100, "b": 100, "survivor": 0}, "a", "b")
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	assert.Empty(t, pots, "no contested layer can form")
 	assert.Equal(t, uint(200), extra.PlayerChips["survivor"], "orphaned chips go to the survivor")
@@ -626,7 +626,7 @@ func TestBuildSidePots_OrphanSplitsAcrossSurvivorsWithoutLosingTheOddChip(t *tes
 	state, extra := sidePotState(t,
 		map[string]uint{"folded": 100, "x": 0, "y": 0, "z": 0}, "folded")
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	assert.Empty(t, pots)
 	total := extra.PlayerChips["x"] + extra.PlayerChips["y"] + extra.PlayerChips["z"]
@@ -642,7 +642,7 @@ func TestBuildSidePots_DepartedContributorIsNotEligible(t *testing.T) {
 	// Drop "left" from the seats, exactly as Engine.RemovePlayer does.
 	state.Players = slices.DeleteFunc(state.Players, func(p *game.Player) bool { return p.ID == "left" })
 
-	pots := buildSidePots(state, extra, contenders(state, extra))
+	pots := buildSidePots(extra, contenders(state, extra))
 
 	require.Len(t, pots, 1)
 	assert.Equal(t, []string{"stayed"}, pots[0].Eligible, "a departed player cannot win")

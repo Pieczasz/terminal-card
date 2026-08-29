@@ -144,7 +144,7 @@ func runShowdown(state *game.State, extra *State) error {
 	extra.ReachedShowdown = true
 	live := contenders(state, extra)
 	scores := handScores(live, extra)
-	extra.Pots = buildSidePots(state, extra, live)
+	extra.Pots = buildSidePots(extra, live)
 	extra.HandComplete = true
 	extra.Winners = awardPots(extra, live, scores)
 	return nil
@@ -164,7 +164,7 @@ func contenders(state *game.State, extra *State) []*game.Player {
 	return out
 }
 
-func buildSidePots(_ *game.State, extra *State, live []*game.Player) []Pot {
+func buildSidePots(extra *State, live []*game.Player) []Pot {
 	eligibleIDs := make(map[string]bool, len(live))
 	for _, p := range live {
 		eligibleIDs[p.ID] = true
