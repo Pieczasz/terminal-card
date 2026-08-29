@@ -94,10 +94,12 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
-    # Longer than run's full sequential drain budget (30s SSH Shutdown + 5s stats
-    # API + 15s finalizers + 5s OTel flush = 55s), so a redeploy cannot SIGKILL the
-    # process while a ranked match is still being persisted or telemetry flushed.
-    stop_grace_period: 70s
+    # Longer than run's worst-case sequential drain (30s SSH Shutdown + 5s stats
+    # API + 15s finalizers + a second 15s finalizer window + 5s OTel flush = 70s),
+    # with headroom for the db close and final log writes, so a redeploy cannot
+    # SIGKILL the process while a ranked match is still being persisted or
+    # telemetry flushed.
+    stop_grace_period: 80s
     depends_on:
       db:
         condition: service_healthy
