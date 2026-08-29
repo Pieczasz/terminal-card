@@ -123,7 +123,8 @@ func containsCard(hand []deck.Card, card deck.Card) bool {
 
 func heroHand(t *testing.T, engine *game.Engine, playerID string) []deck.Card {
 	t.Helper()
-	return game.Bind(engine, playerID).Hand()
+	_, hand, _ := game.Bind(engine, playerID).Frame(nil)
+	return hand
 }
 
 func seatedView(t *testing.T, entry Entry, seats, width, height int) tea.Model {

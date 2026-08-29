@@ -118,7 +118,7 @@ func (e *Engine) snapshotLocked() StateSnapshot {
 // Frame reads everything a view renders in one lock hold, so the snapshot, the
 // hand, the clock and the per-game state cannot describe different moments. fn
 // (which may be nil) receives State.Extra under the same contract as
-// BoundEngine.WithHiddenState: unredacted, and never to be retained or mutated.
+// BoundEngine.Frame documents: unredacted, and never to be retained or mutated.
 func (e *Engine) Frame(playerID string, fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()

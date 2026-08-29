@@ -23,6 +23,12 @@ func (bindRules) ApplyAction(*State, Action) error    { return nil }
 func (bindRules) CheckWinCondition(*State) bool       { return false }
 func (bindRules) Standings(s *State) []*Player        { return s.Players }
 
+// boundHand is the hand slice of a Frame read, which is the one read path views use.
+func boundHand(b *BoundEngine) []deck.Card {
+	_, hand, _ := b.Frame(nil)
+	return hand
+}
+
 func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 	t.Parallel()
 
@@ -32,20 +38,20 @@ func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 	require.NoError(t, engine.Start())
 
 	bound := Bind(engine, "1")
-	hand := bound.Hand()
+	hand := boundHand(bound)
 	require.NotEmpty(t, hand)
 
 	orig := hand[0]
 	hand[0] = deck.Card{}
-	again := bound.Hand()
-	assert.Equal(t, orig, again[0], "mutating Hand copy must not alter engine state")
+	again := boundHand(bound)
+	assert.Equal(t, orig, again[0], "mutating the hand copy must not alter engine state")
 
-	other := Bind(engine, "2").Hand()
+	other := boundHand(Bind(engine, "2"))
 	assert.Len(t, other, len(hand))
 }
 
-// Hand is the redaction boundary: it is the only place a player's own cards are readable,
-// so it has to match the bound seat and no other.
+// The Frame hand is the redaction boundary: it is the only place a player's own
+// cards are readable, so it has to match the bound seat and no other.
 func TestBoundEngine_HandBelongsToTheBoundPlayerOnly(t *testing.T) {
 	t.Parallel()
 
@@ -62,9 +68,9 @@ func TestBoundEngine_HandBelongsToTheBoundPlayerOnly(t *testing.T) {
 	})
 	require.NotEqual(t, dealt1, dealt2, "a shuffled deck must not deal two identical hands")
 
-	assert.Equal(t, dealt1, Bind(engine, "1").Hand(), "each seat sees exactly its own cards")
-	assert.Equal(t, dealt2, Bind(engine, "2").Hand())
-	assert.Nil(t, Bind(engine, "not-seated").Hand(), "an ID with no seat holds no cards")
+	assert.Equal(t, dealt1, boundHand(Bind(engine, "1")), "each seat sees exactly its own cards")
+	assert.Equal(t, dealt2, boundHand(Bind(engine, "2")))
+	assert.Nil(t, boundHand(Bind(engine, "not-seated")), "an ID with no seat holds no cards")
 }
 
 type noopAction struct{}

@@ -90,7 +90,7 @@ func (m *Model) syncState() {
 	// One acquisition for the whole frame. Poker is the documented exception that
 	// reaches past BoundEngine into whole-table state, because rendering a table
 	// means rendering every seat - and since it holds that lock anyway, the betting
-	// scalars are read under it too. Splitting them across a WithHiddenState call
+	// scalars are read under it too. Splitting them across a Frame extra callback
 	// and this one let an opponent act in between, so the pot could render a bet
 	// short of the seat that had already posted it, and the action bar could offer
 	// a call the engine had already moved past.
