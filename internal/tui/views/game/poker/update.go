@@ -124,7 +124,7 @@ func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
 	if m.Bound == nil || !m.Base.MyTurn {
 		return m, nil
 	}
-	if err := m.Bound.Submit(action); err != nil {
+	if err := m.Submit(action); err != nil {
 		m.lastActionErr = err
 		return m, nil
 	}
