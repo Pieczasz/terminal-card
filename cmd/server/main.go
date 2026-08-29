@@ -29,11 +29,9 @@ import (
 	"golang.org/x/net/netutil"
 )
 
-// Shutdown spends these budgets sequentially, in this order: the ssh drain, the
-// stats api, the match finalizers, then the OTel flush. Worst case that is
-// 30+5+15+5 = 55s, plus a second finalizer window of the same 15s if the first one
-// lapses. compose's stop_grace_period must exceed the total or the runtime kills the
-// process in the middle of a match write.
+// Shutdown spends these sequentially: ssh drain, stats api, match finalizers, OTel
+// flush - 70s worst case counting the second finalizer window. compose's
+// stop_grace_period must exceed the total or the runtime kills a match write.
 const (
 	sshDrainTimeout      = 30 * time.Second
 	apiDrainTimeout      = 5 * time.Second
@@ -76,8 +74,7 @@ func healthcheck() int {
 
 func run() (err error) {
 	// First statement in the process: a config or OTel failure below has to reach the
-	// JSON handler rather than the default text one. The level starts at info and is
-	// raised or lowered once the config is readable.
+	// JSON handler, not the default text one. The level follows once config is readable.
 	logLevel := installLogging()
 
 	cfg, err := config.Load()
@@ -144,10 +141,9 @@ func run() (err error) {
 	})
 }
 
-// installLogging fans slog output to stderr and to the OTel logger provider, so a
-// line is both visible to the container runtime and exported. MultiHandler clones
-// the record per sink and joins their errors, so one broken sink never hides another.
-// The returned LevelVar is shared by both sinks and settable once config is loaded.
+// installLogging fans slog output to stderr and the OTel logger provider, so a line is
+// both visible to the container runtime and exported. MultiHandler clones the record per
+// sink, so one broken sink never hides another. The returned LevelVar drives both.
 func installLogging() *slog.LevelVar {
 	level := new(slog.LevelVar)
 	level.Set(slog.LevelInfo)
@@ -158,9 +154,8 @@ func installLogging() *slog.LevelVar {
 	return level
 }
 
-// levelGate applies a level to a handler that has none of its own. The otelslog
-// bridge exports whatever it is handed, so without this LOG_LEVEL would only quiet
-// stderr while still shipping every debug line to the collector.
+// levelGate applies a level to a handler with none of its own: the otelslog bridge
+// exports whatever it is handed, so LOG_LEVEL would otherwise only quiet stderr.
 type levelGate struct {
 	slog.Handler
 	level slog.Leveler
@@ -176,8 +171,7 @@ func (g levelGate) WithGroup(name string) slog.Handler {
 	return levelGate{Handler: g.Handler.WithGroup(name), level: g.level}
 }
 
-// setupOTel pairs export setup with the cleanup to defer, so the shutdown budget
-// cannot drift away from the one the drain comment accounts for.
+// setupOTel pairs export setup with its cleanup so the shutdown budget cannot drift.
 func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
 	shutdown, err := observability.SetupOTel(ctx, cfg)
 	if err != nil {
@@ -192,8 +186,7 @@ func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
 	}, nil
 }
 
-// newSSHServer wires the game registry and repositories into the ssh server. The
-// tracker comes back because the stats api shares it to count who is online.
+// The tracker comes back because the stats api shares it to count who is online.
 func newSSHServer(
 	cfg *config.Config,
 	userRepo db.UserRepository,
@@ -228,9 +221,8 @@ func buildRegistry() *game.Registry {
 	return registry
 }
 
-// startStatsAPI returns the shutdown hook and a channel carrying a serve failure. A
-// bind error used to be a log line nobody reads and a website whose numbers silently
-// stopped moving, so it reaches run's error path instead.
+// startStatsAPI returns the shutdown hook and a channel carrying a serve failure: a bind
+// error used to be a log line nobody reads and a website whose numbers stopped moving.
 func startStatsAPI(
 	cfg *config.Config,
 	tracker *ssh.SessionTracker,
@@ -272,8 +264,8 @@ func waitForFinalizers(lobbyManager *lobby.Manager) {
 	}
 	slog.Warn("match finalizers exceeded their deadline; giving them one more window",
 		"timeout", finalizeDrainTimeout)
-	// Capped rather than unbounded: a wedged write must not hold the process open
-	// past the runtime's kill timer, which would lose the log line explaining why.
+	// Capped, not unbounded: a wedged write held past the runtime's kill timer loses the
+	// log line explaining why.
 	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
 		slog.Error("abandoning match finalizers; a finished match may be missing from history",
 			"timeout", finalizeDrainTimeout)
@@ -290,8 +282,8 @@ type serveDeps struct {
 	config    *config.Config
 	sshServer sshServer
 	apiErr    <-chan error
-	// onShutdown runs the moment a signal arrives, before any session is drained: a
-	// match ending because of the deploy must not be rated.
+	// onShutdown runs before any session is drained: a match the deploy ended must not
+	// be rated.
 	onShutdown func()
 }
 
@@ -304,10 +296,9 @@ func serve(ctx context.Context, d serveDeps) error {
 		return fmt.Errorf("create tcp listener: %w", err)
 	}
 	limitListener := netutil.LimitListener(listener, 2*cfg.MaxConnections)
-	// The default proxyproto policy is REQUIRE: every connection must open with a
-	// PROXY header, which is right behind nginx (and is why 6969 must never be
-	// published - any peer's header is honored). PROXY_PROTOCOL=false is the local
-	// development escape hatch for bare ssh clients.
+	// proxyproto defaults to REQUIRE: every connection must open with a PROXY header,
+	// which is right behind nginx and is why 6969 must never be published - any peer's
+	// header is honored. PROXY_PROTOCOL=false is the local escape hatch for bare ssh.
 	acceptListener := limitListener
 	if cfg.ProxyProtocol {
 		acceptListener = &proxyproto.Listener{Listener: limitListener, ReadHeaderTimeout: 10 * time.Second}
