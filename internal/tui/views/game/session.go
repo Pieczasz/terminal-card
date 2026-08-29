@@ -15,34 +15,29 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// EventMsg carries an engine event into the bubbletea loop. Views match on it in
-// Update and call Session.Listen again to wait for the next one.
+// EventMsg carries an engine event into the bubbletea loop.
 type EventMsg game.Event
 
 // Session is the plumbing every game view repeats: the engine binding, the event
-// subscription, the cached base state, and the hand cursor. Views embed it so that
-// leaving a table, losing a seat to the idle timer, and moving the cursor behave the
-// same everywhere, and so each new game starts with only its own rules to render.
+// subscription, the cached base state and the hand cursor.
 //
-// Any view embedding a Session must call Close on navigation (router.Closer):
-// skipping it parks a listener goroutine and burns a subscriber slot on the engine.
+// An embedding view must call Close on navigation (router.Closer): skipping it parks a
+// listener goroutine and burns a subscriber slot on the engine.
 type Session struct {
 	Global router.GlobalContext
 	Bound  *game.BoundEngine
 	Events <-chan game.Event
-	// gameName labels the rejected-action metric. It is the display name the
-	// registry and db.Game.Name use, so the counter lines up with everything else
-	// recorded per game.
+	// gameName labels the rejected-action metric with the name db.Game.Name stores.
 	gameName string
 
 	Base BaseState
-	// Selected indexes Base.Hand and is clamped by SyncBase as the hand shrinks.
+	// Selected indexes Base.Hand and is clamped by Sync as the hand shrinks.
 	Selected int
 }
 
-// NewSession binds engine to the session player and subscribes to its events. The
-// returned error is for display, not a failure: a view without a subscription still
-// renders, it just will not update, so it tells the player to rejoin.
+// NewSession binds engine to the session player and subscribes to its events. The error
+// is for display, not a failure: an unsubscribed view still renders, it just never
+// updates, so it tells the player to rejoin.
 func NewSession(global router.GlobalContext, engine *game.Engine, gameName string) (Session, error) {
 	playerID := views.SessionPlayerID(global)
 
@@ -61,23 +56,19 @@ func NewSession(global router.GlobalContext, engine *game.Engine, gameName strin
 	return s, nil
 }
 
-// Listen waits for the next engine event.
 func (s *Session) Listen() tea.Cmd {
 	return views.ListenOn(s.Events, func(ev game.Event) tea.Msg { return EventMsg(ev) })
 }
 
-// IdleRemoved reports whether ev says this session's own player lost their seat for
-// idling. Everyone else's removal is just another state change.
+// IdleRemoved is this session's own player losing their seat; anyone else's removal is
+// just another state change.
 func (s *Session) IdleRemoved(ev game.Event) bool {
 	return ev.Type == game.EventPlayerIdle && s.Bound != nil && ev.PlayerID == s.Bound.PlayerID()
 }
 
-// Sync refreshes the cached engine state and keeps the cursor inside the hand.
-//
-// extra, when set, reads the per-game slice of engine state in the same lock hold, so
-// a view's own fields describe the same moment as its base state. What extra is handed
-// is not redacted for this player, so anything derived from it that reaches the screen
-// has to be filtered by the caller.
+// Sync refreshes the cached engine state and keeps the cursor inside the hand. extra
+// reads the per-game state in the same lock hold; it is not redacted for this player, so
+// anything derived from it that reaches the screen has to be filtered by the caller.
 func (s *Session) Sync(extra func(extra any)) {
 	s.Base = SyncBaseState(s.Bound, extra)
 	if s.Selected >= len(s.Base.Hand) {
@@ -86,10 +77,9 @@ func (s *Session) Sync(extra func(extra any)) {
 }
 
 // HandleFrame runs the part of Update that is the same at every table: the common
-// window, theme and quit keys, the engine's event feed, and the turn-clock tick. sync
-// is the view's own state refresh; onEvent, when set, runs before an event-driven
-// sync. It reports whether the message was consumed, so a view falls through to its
-// own key bindings.
+// window, theme and quit keys, the engine's event feed and the turn-clock tick. sync is
+// the view's own state refresh; onEvent runs before an event-driven sync. It reports
+// whether the message was consumed, so a view falls through to its own key bindings.
 func (s *Session) HandleFrame(msg tea.Msg, sync func(), onEvent func()) (tea.Cmd, bool) {
 	if handled, cmd := views.HandleCommonMsg(msg, &s.Global); handled {
 		return cmd, true
@@ -97,40 +87,49 @@ func (s *Session) HandleFrame(msg tea.Msg, sync func(), onEvent func()) (tea.Cmd
 
 	switch msg := msg.(type) {
 	case EventMsg:
-		if s.IdleRemoved(game.Event(msg)) {
-			// The engine took this seat for repeated missed turns. Quitting ends the
-			// bubbletea program, which is what tears the ssh session down and runs the
-			// ordinary leave path.
-			return tea.Quit, true
-		}
-		wasPlaying := s.Base.Phase == game.Playing
-		if onEvent != nil {
-			onEvent()
-		}
-		sync()
-		cmds := []tea.Cmd{s.Listen()}
-		// Re-arm the countdown when the table starts playing. A view built while the
-		// lobby was still waiting stops its own tick chain on the first tick - the
-		// clock would then never run for that player for the whole match.
-		if !wasPlaying && s.Base.Phase == game.Playing {
-			cmds = append(cmds, ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn))
-		}
-		return tea.Batch(cmds...), true
+		return s.handleEvent(game.Event(msg), sync, onEvent), true
 	case ClockTickMsg:
-		sync()
-		if s.Base.Phase != game.Playing {
-			return nil, true
-		}
-		return ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn), true
+		return s.handleClockTick(sync), true
 	}
 
 	return nil, false
 }
 
+func (s *Session) handleEvent(ev game.Event, sync func(), onEvent func()) tea.Cmd {
+	if s.IdleRemoved(ev) {
+		// Quitting ends the bubbletea program, which tears the ssh session down through
+		// the ordinary leave path.
+		return tea.Quit
+	}
+
+	wasPlaying := s.Base.Phase == game.Playing
+	if onEvent != nil {
+		onEvent()
+	}
+	sync()
+
+	cmds := []tea.Cmd{s.Listen()}
+	// A view built while the lobby was still waiting stops its tick chain on the first
+	// tick, so the clock has to be re-armed once the table starts playing or it never
+	// runs again for that player.
+	if !wasPlaying && s.Base.Phase == game.Playing {
+		cmds = append(cmds, ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (s *Session) handleClockTick(sync func()) tea.Cmd {
+	sync()
+	if s.Base.Phase != game.Playing {
+		return nil
+	}
+	return ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn)
+}
+
 var errNotSeated = errors.New("you are not seated at this table")
 
 // Submit sends action as this session's player. The error is rendered to the player
-// as-is, which is why it is passed through untouched.
+// as-is, hence no wrap.
 //
 //nolint:wrapcheck // engine errors are player-facing prose; a wrap adds call-site noise to the UI line.
 func (s *Session) Submit(action game.Action) error {
@@ -139,14 +138,13 @@ func (s *Session) Submit(action game.Action) error {
 	}
 	err := s.Bound.Submit(action)
 	if err != nil {
-		// Background, not the session context: a rejection is worth counting even
-		// when it is the disconnect itself that caused it.
+		// Background, not the session context: a rejection counts even when the
+		// disconnect itself caused it.
 		observability.ActionRejected(context.Background(), s.gameName)
 	}
 	return err
 }
 
-// SelectedCard is the card under the cursor.
 func (s *Session) SelectedCard() (deck.Card, bool) {
 	if s.Selected < 0 || s.Selected >= len(s.Base.Hand) {
 		return deck.Card{}, false
@@ -159,8 +157,8 @@ func (s *Session) MoveCursor(delta int) {
 	s.Selected = min(max(s.Selected+delta, 0), max(len(s.Base.Hand)-1, 0))
 }
 
-// SelectDigit moves the cursor to the card a number key names. Keys past the end of
-// the hand are ignored, which is why only the first ten cards are reachable this way.
+// SelectDigit moves the cursor to the card a number key names, so only the first ten
+// cards are reachable this way.
 func (s *Session) SelectDigit(key string) {
 	if len(key) != 1 || key[0] < '0' || key[0] > '9' {
 		return
