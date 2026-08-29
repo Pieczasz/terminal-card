@@ -215,8 +215,13 @@ func (r *run) client(i int, release <-chan struct{}) {
 	// goroutine then returns EOF and reports what it saw.
 	_ = sess.Close()
 	res := <-drained
+	// A transport error and a success are exclusive: counting both put the same
+	// session in the succeeded and the failed line, and folded its latency into the
+	// percentiles - reading best exactly when the server is dropping connections,
+	// which is the run this tool exists to measure.
 	if res.err != nil && !errors.Is(res.err, io.EOF) {
 		r.fail("read", res.err)
+		return
 	}
 	r.record(connectLatency, res.firstFrame, res.bytes)
 }
