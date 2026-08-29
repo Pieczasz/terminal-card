@@ -73,11 +73,37 @@ discovery.relabel "containers" {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
     target_label  = "compose_service"
   }
+
+  // Alloy and Loki are dropped: shipping Loki's own "received push" lines back
+  // into Loki makes every push generate the next one.
+  rule {
+    source_labels = ["compose_service"]
+    regex         = "alloy|loki"
+    action        = "drop"
+  }
 }
 
 loki.source.docker "containers" {
   host       = "unix:///var/run/docker.sock"
   targets    = discovery.relabel.containers.output
-  forward_to = [loki.write.default.receiver]
+  forward_to = [loki.process.containers.receiver]
   labels     = { source = "docker" }
+}
+
+loki.process "containers" {
+  forward_to = [loki.write.default.receiver]
+
+  // installLogging fans every slog record to stderr *and* the OTLP bridge, and the
+  // stderr copy is what Docker captures - so without this every backend log line is
+  // stored twice under two label sets, doubling retention and every LogQL rate over
+  // the backend. The OTLP copy is the one worth keeping (it carries the trace IDs),
+  // so the docker copy of a structured record goes.
+  //
+  // Only records the logger wrote match: a panic dump, a Go runtime crash and
+  // anything a library prints straight to stderr are not JSON, and those are the
+  // reason this scrape exists at all.
+  stage.drop {
+    expression          = "^\\{\"time\":\".*\",\"level\":"
+    drop_counter_reason = "duplicate_of_otlp_log"
+  }
 }
