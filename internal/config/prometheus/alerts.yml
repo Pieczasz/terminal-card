@@ -46,9 +46,20 @@ groups:
         annotations:
           summary: "slow subscribers are losing game events"
 
-      # A leak from a view that skipped Close() shows up here first.
+      # A leak from a view that skipped Close() shows up here first. Measured per
+      # session rather than as a flat count: a session costs several goroutines (the
+      # wish handler, bubbletea's loop, renderer, input reader and window watcher,
+      # the view's broadcaster listener), so at MAX_CONNECTIONS=1000 a healthy server
+      # sits in the thousands and any flat threshold near that pages on a good day
+      # until somebody silences it. A leak instead shows up as goroutines that do not
+      # fall when sessions do, which is what the ratio catches. The floor keeps a
+      # near-idle server, where a handful of goroutines per session is normal noise,
+      # from tripping it.
       - alert: GoroutineGrowth
-        expr: go_goroutine_count > 2000
+        expr: >-
+          go_goroutine_count > 500
+          and
+          go_goroutine_count > 12 * scalar(max(terminalcard_ssh_sessions_active))
         for: 15m
         labels:
           severity: warn
