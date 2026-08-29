@@ -75,14 +75,12 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 	err := e.submitTimedOutAction(playerID, action, seq)
 	switch {
 	case err == nil, errors.Is(err, errStaleTurn):
-		// A stale generation means the player acted for themselves in the window
-		// the locks were dropped; their own action settled the cursor and armed a
-		// fresh clock, so re-arming here would hand the next player a double turn.
+		// The player acted for themselves while the lock was dropped: their action
+		// armed a fresh clock, so re-arming would hand the next player a double turn.
 		return
 	default:
-		// TimeoutAction returned a move ValidateAction refuses: a rules bug, and
-		// per the contract the seat is taken on the next expiry instead. The
-		// generation is still current, so the re-arm targets the same seat.
+		// TimeoutAction returned a move ValidateAction refuses: a rules bug. The seat
+		// is taken on the next expiry instead.
 		slog.Warn("auto-play for an expired turn was refused",
 			"error", err, "player_id", playerID, "action", action.Name())
 		e.rearmTurnTimer()
@@ -107,14 +105,13 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		return current.ID, nil, true
 	}
 
-	// armTurnTimerLocked never arms without a TurnTimeoutHandler, and Rules is set
-	// once at construction, so the assertion cannot fail here.
+	// armTurnTimerLocked never arms without a TurnTimeoutHandler, and Rules is set once
+	// at construction, so this cannot fail.
 	safe := e.state.Rules.(TurnTimeoutHandler).TimeoutAction(e.state)
 	if safe == nil {
-		// The rules have no safe move here, so idling cannot be absorbed by playing
-		// on: the seat goes rather than the table waiting. Counting it as a full set
-		// of misses is what makes that decision re-checkable in removeIfStillIdle.
-		// A reachable nil in real play is a rules bug, so it is logged loudly.
+		// No safe move: the seat goes rather than the table waiting. A full set of
+		// misses is what makes that re-checkable in removeIfStillIdle. Reaching this in
+		// real play is a rules bug, hence the log.
 		slog.Warn("rules returned no safe timeout move; taking the seat",
 			"player_id", current.ID, "phase", e.state.Phase)
 		e.missedTurns[current.ID] = MaxMissedTurns
@@ -142,8 +139,8 @@ func (e *Engine) removeIfStillIdle(seq uint64, playerID string) {
 		e.armTurnTimerLocked()
 		return
 	}
-	// EventPlayerIdle ends the player's SSH session through the view, so this is
-	// the one server-side record that a seat was taken for idling.
+	// EventPlayerIdle ends the player's ssh session through the view, so this is the
+	// only server-side record that a seat was taken for idling.
 	slog.Info("removing idle player",
 		"player_id", playerID, "missed_turns", e.missedTurns[playerID])
 	e.broadcaster.Broadcast(Event{Type: EventPlayerIdle, PlayerID: playerID})
