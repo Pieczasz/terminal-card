@@ -131,3 +131,44 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 
 	m.Close()
 }
+
+// The colour glyphs sit at card-slot spacing, so they only make sense over a fan.
+// A default 80x24 terminal is too short for one, and the hand falls back to the
+// compact strip - a row drawn there lines up with nothing, which loses the one thing
+// colour conveys in Uno.
+func TestRenderHandColorRow_FollowsTheHandItSitsOver(t *testing.T) {
+	t.Parallel()
+
+	hand := make([]deck.Card, 7)
+	for i := range hand {
+		hand[i] = deck.Card{Rank: deck.Rank(logic.Zero + deck.Rank(i)), Suit: logic.ColorRed}
+	}
+
+	tests := []struct {
+		name          string
+		width, height int
+		wantRow       bool
+	}{
+		{name: "a terminal tall enough to fan", width: 100, height: 40, wantRow: true},
+		{name: "the default 80x24, which strips the hand", width: 80, height: 24, wantRow: false},
+		{name: "the shortest admitted height", width: 80, height: 20, wantRow: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := &Model{
+				Global: router.GlobalContext{Width: tt.width, Height: tt.height},
+				Base:   gameview.BaseState{Hand: hand},
+			}
+
+			handWidth := gameview.HandWidth(tt.width)
+			handRows := gameview.HandRows(tt.height)
+			row := m.renderHandColorRow(handWidth, handRows)
+
+			fanned := gameview.FansHand(len(hand), handWidth, handRows)
+			require.Equal(t, tt.wantRow, fanned, "test expectation must match the renderer's own choice")
+			assert.Equal(t, tt.wantRow, row != "", "the colour row appears exactly when the hand fans")
+		})
+	}
+}

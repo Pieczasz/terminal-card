@@ -24,6 +24,14 @@ func fanFits(maxRows int) bool {
 	return maxRows <= 0 || maxRows >= components.FanRows+1
 }
 
+// FansHand reports whether RenderHand will draw a fan rather than the compact strip.
+// A caller that decorates the fan's card slots (uno's colour row) has to ask the same
+// question the renderer does, or it paints slot-spaced decoration over a strip that
+// has no slots.
+func FansHand(handSize, maxWidth, maxRows int) bool {
+	return handSize > 0 && components.FanTuck(handSize, maxWidth) != 0 && fanFits(maxRows)
+}
+
 // RenderHand draws the hero's hand into at most maxWidth columns and maxRows rows,
 // with the index row under it. A hand that will not fit as a fan - too narrow even at
 // the tightest overlap, or too short for the card art - falls back to the compact
