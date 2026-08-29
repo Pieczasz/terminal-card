@@ -97,8 +97,7 @@ func (q *gormMatchRepository) RecordCasualMatch(
 		// A casual result carries no placements, so history records the finish order.
 		return q.recordMatchTx(tx, game.ID, orderedUserIDs, nil, nil, false)
 	}); err != nil {
-		err = fmt.Errorf("record casual match: %w", err)
-		return err
+		return fmt.Errorf("record casual match: %w", err)
 	}
 	return nil
 }
@@ -132,8 +131,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 		}
 		return q.recordMatchTx(tx, game.ID, orderedUserIDs, places, deltas, true)
 	}); err != nil {
-		err = fmt.Errorf("finalize ranked match: %w", err)
-		return err
+		return fmt.Errorf("finalize ranked match: %w", err)
 	}
 	return nil
 }

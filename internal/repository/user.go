@@ -66,11 +66,9 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 		First(&dbKey).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			err = nil
 			return nil, nil, nil
 		}
-		err = fmt.Errorf("load user by fingerprint: %w", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("load user by fingerprint: %w", err)
 	}
 
 	// The Preload applies deleted_at IS NULL while the public_keys row itself still
@@ -88,9 +86,8 @@ func (q *gormUserRepository) RegisterUserWithKey(
 	ctx, span := tracer.Start(ctx, "db.RegisterUserWithKey")
 	defer func() { endSpan(span, err) }()
 
-	if err = db.ValidateUsername(username); err != nil {
-		err = fmt.Errorf("%w: %w", ErrInvalidUsername, err)
-		return nil, nil, err
+	if err := db.ValidateUsername(username); err != nil {
+		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidUsername, err)
 	}
 
 	var currentUser db.User
@@ -141,8 +138,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 		return nil
 	})
 	if err != nil {
-		err = fmt.Errorf("register user transaction: %w", err)
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("register user transaction: %w", err)
 	}
 
 	return &currentUser, &dbKey, nil
@@ -194,8 +190,7 @@ func (q *gormUserRepository) BestPlayers(
 
 	var rankings []db.Ranking
 	if err = query.Find(&rankings).Error; err != nil {
-		err = fmt.Errorf("get best players: %w", err)
-		return nil, err
+		return nil, fmt.Errorf("get best players: %w", err)
 	}
 	span.SetAttributes(attribute.Int("rows", len(rankings)))
 
@@ -225,11 +220,9 @@ func (q *gormUserRepository) UserProfile(ctx context.Context, userID uint) (_ *d
 		First(&user, userID).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			err = ErrUserNotFound
-			return nil, err
+			return nil, ErrUserNotFound
 		}
-		err = fmt.Errorf("get user profile: %w", err)
-		return nil, err
+		return nil, fmt.Errorf("get user profile: %w", err)
 	}
 	return &user, nil
 }
@@ -243,12 +236,10 @@ func (q *gormUserRepository) UpdateUserActivity(
 	defer func() { endSpan(span, err) }()
 
 	if err = q.db.WithContext(ctx).Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
-		err = fmt.Errorf("update last seen: %w", err)
-		return err
+		return fmt.Errorf("update last seen: %w", err)
 	}
 	if err = q.db.WithContext(ctx).Model(key).Omit("User").Update("LastUsedAt", time.Now()).Error; err != nil {
-		err = fmt.Errorf("update key last used: %w", err)
-		return err
+		return fmt.Errorf("update key last used: %w", err)
 	}
 	return nil
 }
@@ -272,8 +263,7 @@ func (q *gormUserRepository) UserMatchHistory(
 		Limit(limit).
 		Find(&history).Error
 	if err != nil {
-		err = fmt.Errorf("get user match history: %w", err)
-		return nil, err
+		return nil, fmt.Errorf("get user match history: %w", err)
 	}
 	span.SetAttributes(attribute.Int("rows", len(history)))
 	return history, nil
