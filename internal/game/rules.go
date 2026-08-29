@@ -19,9 +19,9 @@ type Rules interface {
 
 	ValidateAction(state *State, action Action) error
 	AfterAction(state *State, action Action) error
-	// ApplyAction mutates the state for an action ValidateAction accepted. An error
-	// means the state may be half-applied, and the engine finishes the game rather
-	// than playing on - anything checkable up front belongs in ValidateAction.
+	// ApplyAction mutates state for an action ValidateAction accepted. An error means
+	// the state may be half-applied and the engine finishes the game, so anything
+	// checkable up front belongs in ValidateAction.
 	ApplyAction(state *State, action Action) error
 	CheckWinCondition(state *State) bool
 	Standings(state *State) []*Player
@@ -39,14 +39,13 @@ type PlayerLeaveHandler interface {
 	AfterPlayerRemoved(state *State, removedIndex int)
 }
 
-// StandingScorer reports the value Standings ordered a player by. Equal scores are
-// a genuine draw, and Engine.StandingsWithPlaces turns them into equal finishing
-// places so the rating calculation can settle them as one - without it a tie is
-// separated by slice position and the seat that happened to sort first takes rating
-// off the seat that did not.
+// StandingScorer reports the value Standings ordered a player by, so
+// Engine.StandingsWithPlaces can turn a tie into equal finishing places. Without it a
+// draw is split by slice position and the seat that sorted first takes rating off the
+// other.
 //
-// Only equality is read, so the sign and direction do not matter: return whatever
-// the sort compares. A rules set whose ordering is already total can skip this.
+// Only equality is read, so sign and direction do not matter. A rules set whose
+// ordering is already total can skip this.
 type StandingScorer interface {
 	StandingScore(state *State, p *Player) int
 }
@@ -60,10 +59,9 @@ func AnyScoreAtLeast(scores map[string]int, target int) bool {
 	return false
 }
 
-// StandingsByScore orders players by score ascending, ties broken stably by seat
-// order. It exists so a rules set's Standings and StandingScore cannot disagree:
-// both take the same score function, and disagreement is what silently splits a
-// draw by slice position (see StandingScorer). Sort descending by negating score.
+// StandingsByScore orders players by score ascending, ties stable by seat order, so a
+// rules set's Standings and StandingScore cannot disagree. Negate the score to sort
+// descending.
 func StandingsByScore(players []*Player, score func(*Player) int) []*Player {
 	standings := slices.Clone(players)
 	slices.SortStableFunc(standings, func(a, b *Player) int {
