@@ -336,7 +336,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state.Players = append(state.Players, &game.Player{ID: "c"})
 		extra.PlayerChips["c"] = 0
 
-		pots := buildSidePots(state, extra, contenders(state, extra))
+		pots := buildSidePots(extra, contenders(state, extra))
 
 		assert.Empty(t, pots, "no eligible contributor means no pot layer")
 		assert.Equal(t, uint(200), extra.PlayerChips["c"], "the dead money still gets awarded")
@@ -347,7 +347,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100}, "a", "b")
 
 		var pots []Pot
-		require.NotPanics(t, func() { pots = buildSidePots(state, extra, contenders(state, extra)) })
+		require.NotPanics(t, func() { pots = buildSidePots(extra, contenders(state, extra)) })
 
 		assert.Empty(t, pots)
 		assert.Zero(t, extra.PlayerChips["a"])
@@ -359,7 +359,7 @@ func TestBuildSidePots_DeadMoney(t *testing.T) {
 		state, extra := sidePotState(t, map[string]uint{"a": 101, "b": 0, "c": 0}, "a")
 		extra.PlayerChips["b"], extra.PlayerChips["c"] = 0, 0
 
-		require.NotPanics(t, func() { buildSidePots(state, extra, contenders(state, extra)) })
+		require.NotPanics(t, func() { buildSidePots(extra, contenders(state, extra)) })
 
 		assert.Equal(t, uint(101), extra.PlayerChips["b"]+extra.PlayerChips["c"],
 			"the odd chip is not allowed to vanish")
