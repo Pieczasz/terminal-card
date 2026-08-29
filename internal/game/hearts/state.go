@@ -38,8 +38,8 @@ var (
 	queenOfSpades = deck.Card{Rank: deck.Queen, Suit: deck.Spades}
 )
 
-// String names the direction for logs. The TUI renders its own labels; this exists
-// so a hand-end log line is readable without decoding an integer.
+// String names the direction for logs and the TUI's pass banner, so the two can
+// never disagree about what a direction is called.
 func (d PassDirection) String() string {
 	switch d {
 	case PassLeft:
