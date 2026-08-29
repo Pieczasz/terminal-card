@@ -222,7 +222,7 @@ func (e *Engine) standingsLocked() []*Player {
 // Start deals and opens the table. A failed OnGameStart hands the dealt cards back
 // and restores the stock, so a failed start leaves a lobby that can try again
 // rather than a table stuck mid-deal.
-func (e *Engine) Start() error {
+func (e *Engine) Start() (err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -236,7 +236,22 @@ func (e *Engine) Start() error {
 		return errors.New("cannot start game with no players")
 	}
 
+	// One rollback for every failure past this point. Restoring fields a given
+	// path never touched is a no-op, and a single full restore cannot leak dealt
+	// cards out of the stock the way per-path partial ones can.
 	undealt := e.state.Deck.Cards()
+	defer func() {
+		if err == nil {
+			return
+		}
+		for _, p := range e.state.Players {
+			p.Cards = nil
+		}
+		e.state.Deck = deck.New(undealt)
+		e.state.Discard = nil
+		e.state.CurrentTurn = 0
+		e.state.Phase = Waiting
+	}()
 
 	if err := e.state.Deck.Shuffle(); err != nil {
 		return fmt.Errorf("shuffle deck: %w", err)
@@ -246,7 +261,6 @@ func (e *Engine) Start() error {
 	for playerIdx := range e.state.Players {
 		cards, ok := e.state.Deck.DrawNCards(e.state.Rules.InitialDealCount())
 		if !ok {
-			e.state.Deck = deck.New(undealt)
 			return errors.New("insufficient number of cards to deal for all players")
 		}
 		hands[playerIdx] = cards
@@ -254,7 +268,6 @@ func (e *Engine) Start() error {
 
 	startIdx, err := cryptoIntN(len(e.state.Players))
 	if err != nil {
-		e.state.Deck = deck.New(undealt)
 		return fmt.Errorf("selecting first player: %w", err)
 	}
 
@@ -265,13 +278,6 @@ func (e *Engine) Start() error {
 	e.state.CurrentTurn = startIdx
 
 	if err := e.state.Rules.OnGameStart(e.state); err != nil {
-		for _, p := range e.state.Players {
-			p.Cards = nil
-		}
-		e.state.Deck = deck.New(undealt)
-		e.state.Discard = nil
-		e.state.CurrentTurn = 0
-		e.state.Phase = Waiting
 		return fmt.Errorf("failed to setup game: %w", err)
 	}
 	e.applyNextTurnLocked(false)
