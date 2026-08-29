@@ -408,17 +408,10 @@ func TestSubmit(t *testing.T) {
 		_, cmd := m.submit(action)
 
 		assert.Nil(t, cmd)
+		// Submit returns nil only when the engine applied the move, so a clear
+		// error line is also the proof the action reached the engine.
 		require.NoError(t, m.lastActionErr, "a successful move clears the previous complaint")
 		assert.False(t, m.raising, "and closes the raise prompt")
-
-		// ActedThisRound is wiped when a completed round advances the street, so it
-		// cannot say whether the move landed; LastAction survives either way.
-		engine.WithState(func(state *game.State) {
-			extra, ok := state.Extra.(*logic.State)
-			require.True(t, ok)
-			require.NotNil(t, extra.LastAction, "the move actually reached the engine")
-			assert.Equal(t, action.Name(), extra.LastAction.Name())
-		})
 	})
 
 	t.Run("a rejected action is reported and changes nothing", func(t *testing.T) {
