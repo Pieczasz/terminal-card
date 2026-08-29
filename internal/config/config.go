@@ -38,10 +38,9 @@ type Config struct {
 	RateLimitCount       int
 	RateLimitWindow      time.Duration
 	LogLevel             slog.Level
-	// ProxyProtocol keeps the PROXY-header requirement on the SSH listener. The
-	// default (true) matches the nginx deployment; local development against a
-	// bare `ssh` client needs PROXY_PROTOCOL=false, since a bare client never
-	// sends the header and the listener otherwise refuses the connection.
+	// ProxyProtocol keeps the PROXY-header requirement on the ssh listener. True matches
+	// the nginx deployment; a bare `ssh` client never sends the header, so local
+	// development needs PROXY_PROTOCOL=false.
 	ProxyProtocol bool
 }
 
@@ -114,13 +113,11 @@ func Load() (*Config, error) {
 		ServerPort:     serverPort,
 		APIPort:        apiPort,
 		APIAllowOrigin: getEnv("API_ALLOW_ORIGIN", "*"),
-		// The website polls this feed, so the budget is per network, not per visitor;
-		// tuning it must not need a rebuild.
+		// Per network, not per visitor, and tunable without a rebuild.
 		APIRequestsPerMinute: apiRequestsPerMinute,
-		// Defaults to off because trusting X-Forwarded-For on a directly reachable
-		// listener lets any caller forge an address and walk past the rate limit
-		// entirely. The compose deployment never publishes the API port, so nginx is
-		// the only possible source of the header there - and it opts in explicitly.
+		// Off by default: trusting X-Forwarded-For on a directly reachable listener lets
+		// any caller forge an address and walk past the rate limit. compose never
+		// publishes the API port, so nginx is the only source there, and it opts in.
 		APITrustProxy:        getEnv("API_TRUST_PROXY", "false") == "true",
 		ProxyProtocol:        getEnv("PROXY_PROTOCOL", "true") != "false",
 		MaxConnections:       maxConnections,
@@ -243,9 +240,9 @@ func getEnv(key string, fallback string) string {
 	return cmp.Or(os.Getenv(key), fallback)
 }
 
-// parseLogLevel accepts the names slog itself understands (DEBUG, INFO, WARN, ERROR
-// and their +N/-N forms). A typo must fail the boot rather than silently mean info,
-// which is how an operator ends up believing debug logging is on.
+// parseLogLevel takes the names slog understands (DEBUG, INFO, WARN, ERROR, +N/-N). A
+// typo fails the boot rather than silently meaning info, which is how an operator ends
+// up believing debug logging is on.
 func parseLogLevel(raw string) (slog.Level, error) {
 	if raw == "" {
 		return slog.LevelInfo, nil
