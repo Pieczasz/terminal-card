@@ -71,9 +71,9 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 		return nil, nil, fmt.Errorf("load user by fingerprint: %w", err)
 	}
 
-	// The Preload applies deleted_at IS NULL while the public_keys row itself still
-	// matches, so a soft-deleted account comes back as a zero-valued association
-	// rather than a miss. Handing that to the caller authenticates the key as user 0.
+	// The Preload applies deleted_at IS NULL while the public_keys row still matches, so
+	// a soft-deleted account arrives as a zero-valued association rather than a miss -
+	// handing that back authenticates the key as user 0.
 	if dbKey.User.ID == 0 {
 		return nil, nil, nil
 	}
@@ -144,8 +144,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 	return &currentUser, &dbKey, nil
 }
 
-// cachedBestPlayers returns the first limit rows of a fresh entry, under the read
-// lock only - the database query must never run while the mutex is held.
+// Read lock only: the database query must never run while the mutex is held.
 func (q *gormUserRepository) cachedBestPlayers(gameName string, limit int) ([]db.Ranking, bool) {
 	q.bestPlayersCacheMutex.RLock()
 	defer q.bestPlayersCacheMutex.RUnlock()
@@ -165,9 +164,8 @@ func (q *gormUserRepository) BestPlayers(
 
 	limit = max(limit, 0)
 
-	// An entry only ever holds bestPlayersCacheSize rows, so a larger ask cannot be
-	// answered from it and must not be stored into it either - doing so would serve
-	// every later caller a silently truncated board.
+	// An entry holds at most bestPlayersCacheSize rows, so a larger ask cannot be served
+	// from it and must not be stored into it: later callers would get a truncated board.
 	cacheable := limit <= bestPlayersCacheSize
 	if cacheable {
 		if out, fresh := q.cachedBestPlayers(gameName, limit); fresh {
@@ -194,9 +192,8 @@ func (q *gormUserRepository) BestPlayers(
 	}
 	span.SetAttributes(attribute.Int("rows", len(rankings)))
 
-	// Not caching an empty result is what bounds this map: gameName is
-	// attacker-controlled (any string the TUI or the stats API is asked for), and an
-	// unknown game returns no rows, so it never becomes a key.
+	// Not caching an empty result is what bounds this map: gameName is caller-controlled,
+	// and an unknown game returns no rows, so it never becomes a key.
 	if cacheable && len(rankings) > 0 {
 		at := time.Now()
 		q.bestPlayersCacheMutex.Lock()
@@ -227,8 +224,8 @@ func (q *gormUserRepository) UserProfile(ctx context.Context, userID uint) (_ *d
 	return &user, nil
 }
 
-// UpdateUserActivity stamps both last-seen fields. The error return is the single
-// handling channel - the caller decides whether a stale timestamp matters.
+// UpdateUserActivity stamps both last-seen fields; the caller decides whether a stale
+// timestamp matters.
 func (q *gormUserRepository) UpdateUserActivity(
 	ctx context.Context, user *db.User, key *db.PublicKey,
 ) (err error) {
@@ -251,8 +248,7 @@ func (q *gormUserRepository) UserMatchHistory(
 		trace.WithAttributes(attribute.Int64("user_id", int64(userID)), attribute.Int("limit", limit)))
 	defer func() { endSpan(span, err) }()
 
-	// GORM reads a negative Limit as "no limit", which would stream the whole
-	// history. BestPlayers clamps the same way.
+	// GORM reads a negative Limit as "no limit", which would stream the whole history.
 	limit = max(limit, 0)
 
 	var history []db.MatchParticipant

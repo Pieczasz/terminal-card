@@ -21,9 +21,8 @@ import (
 
 var tracer = otel.Tracer("terminal-card/repository")
 
-// endSpan closes a span, marking it failed when the operation returned an error.
-// Recording the error without setting the status leaves a trace in which the one
-// span that failed still reads as successful.
+// endSpan closes a span, marking it failed on error: recording the error without the
+// status leaves the one failed span reading as successful.
 func endSpan(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
@@ -32,9 +31,8 @@ func endSpan(span trace.Span, err error) {
 	span.End()
 }
 
-// checkDistinctPlayers rejects a repeated seat. A duplicate would move that
-// player's rating twice and then collide on the match_participants primary key,
-// rolling back the whole match after the Elo work was already done.
+// A duplicate seat would move that player's rating twice, then collide on the
+// match_participants primary key and roll the whole match back.
 func checkDistinctPlayers(userIDs []uint) error {
 	seen := make(map[uint]struct{}, len(userIDs))
 	for _, id := range userIDs {
@@ -54,10 +52,10 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 	return &gormMatchRepository{db: db}
 }
 
-// getOrCreateGame takes the handle rather than reaching for q.db, because callers
-// inside a transaction must reuse its connection. Going back to the pool there holds
-// one connection while waiting for a second, so DBMaxOpenConnections concurrent
-// finalizes deadlock until they time out, and the game row would outlive a rollback.
+// getOrCreateGame takes the handle rather than q.db so a caller inside a transaction
+// reuses its connection: going back to the pool holds one while waiting for a second, so
+// DBMaxOpenConnections concurrent finalizes deadlock until they time out - and the game
+// row would outlive a rollback.
 func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
 	game := db.Game{Name: name}
 	if err := tx.Clauses(clause.OnConflict{
@@ -136,13 +134,11 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 	return nil
 }
 
-// seedRankingRows gives fetchRankings something to lock. A first-time
-// (user_id, game_id) has no row, so FOR UPDATE locks nothing and two concurrent
-// finalizes both insert: one hits 23505, its transaction rolls back and the match is
-// lost. Seeding at the default rating first turns that into an ordinary row lock.
-// Sorted by user_id because an insert that does conflict still waits on the
-// inserting transaction; the lock ordering that actually matters is fetchRankings',
-// since ON CONFLICT DO NOTHING takes no lock at all on a row that already exists.
+// seedRankingRows gives fetchRankings something to lock. A first-time (user_id, game_id)
+// has no row, so FOR UPDATE locks nothing and two concurrent finalizes both insert: one
+// hits 23505, rolls back and loses the match. Sorted by user_id because a conflicting
+// insert still waits on the inserting transaction, though the ordering that matters is
+// fetchRankings' - ON CONFLICT DO NOTHING takes no lock on an existing row.
 func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
 	seeds := make([]db.Ranking, 0, len(userIDs))
 	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
@@ -198,14 +194,12 @@ func (q *gormMatchRepository) updateRankingsTx(
 
 	deltas := make(map[uint]int, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
-		// Every seat was just seeded, so a miss means a soft-deleted ranking row the
-		// seed skipped and the select filtered out - not a fresh player.
+		// Every seat was just seeded, so a miss is a soft-deleted row, not a new player.
 		r, ok := rankingMap[userID]
 		if !ok {
 			return nil, fmt.Errorf("no ranking row for user %d in game %d", userID, gameID)
 		}
-		// A key mismatch between the Elo result and the standings used to fall through
-		// to the zero value and silently store rating 100 (the elo floor).
+		// A key mismatch used to fall through to the zero value and store the elo floor.
 		newRating, ok := newRatings[strconv.FormatUint(uint64(userID), 10)]
 		if !ok {
 			return nil, fmt.Errorf("no elo result for user %d", userID)
@@ -231,7 +225,6 @@ func (q *gormMatchRepository) updateRankingsTx(
 	return deltas, nil
 }
 
-// anyProvisional reports whether any seat is still inside its provisional window.
 func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool {
 	for _, userID := range orderedUserIDs {
 		if r, ok := rankingMap[userID]; ok && r.MatchesPlayed < provisionalMatches {
@@ -298,8 +291,7 @@ func (q *gormMatchRepository) recordMatchTx(
 			EloDelta:  eloDeltas[userID],
 		}
 	}
-	// One multi-row insert: a table is at most a handful of seats, but a round trip
-	// each was a round trip each.
+	// One multi-row insert rather than a round trip per seat.
 	if err := tx.Create(&participants).Error; err != nil {
 		return fmt.Errorf("create match participants: %w", err)
 	}
