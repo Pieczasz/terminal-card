@@ -13,7 +13,11 @@ const (
 	MaxRating     float64 = 4000.0
 
 	// KFactor determines how much ratings can change in a single match. 32 is the
-	// standard chess default; a tiered K (higher for new accounts, lower once
+	// standard chess default. We use a single K for all accounts (no provisional
+	// tier), which means total Elo in the system is not conserved across a mix of
+	// matched players — expected score sums to 1 between any pair, but the K-scaled
+	// deltas between three or more opponents do not cancel exactly. This is an
+	// accepted trade-off: a tiered K (higher for new accounts, lower once
 	// established) is the upgrade path if rating volatility becomes a problem.
 	KFactor float64 = 32.0
 )

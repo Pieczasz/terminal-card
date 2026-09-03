@@ -438,8 +438,13 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 }
 
 // autoDiscard picks the move TimeoutAction plays for an absent player: the priciest
-// deadwood card, skipping the one they may not discard back. It must return something
-// ValidateAction accepts, or the engine re-arms and takes the seat on the next expiry.
+// deadwood card, skipping the one they may not discard back (the upcard they just drew
+// may not be immediately returned per standard Gin Rummy rules). Skipping the forbidden
+// card is intentional: if the returned card were the upcard, ValidateAction would reject
+// it, the engine would re-arm the timer, and the seat would only be taken on the next
+// expiry — losing the auto-play. The fallback breaks a meld instead.
+// It must return something ValidateAction accepts, or the engine re-arms and takes the
+// seat on the next expiry.
 func autoDiscard(hand []deck.Card, forbidden *deck.Card) (deck.Card, bool) {
 	allowed := func(c deck.Card) bool { return forbidden == nil || c != *forbidden }
 

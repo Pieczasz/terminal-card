@@ -241,6 +241,10 @@ func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool
 // the caller's transaction: locking history rows would buy nothing, since a
 // concurrent finalize that started a millisecond earlier is not in them yet either.
 func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
+	if len(userIDs) < 2 {
+		// A single player cannot have a same-pairing to throttle.
+		return 0, nil
+	}
 	var matchIDs []uint
 	if err := tx.Model(&db.MatchParticipant{}).
 		Joins("JOIN matches ON matches.id = match_participants.match_id").

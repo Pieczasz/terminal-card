@@ -17,7 +17,7 @@ services:
     command:
       [
         "-path=/migrations",
-        "-database=postgres://${DB_USER:-postgres}:${DB_PASSWORD}@db:5432/${DB_NAME:-terminal_card}?sslmode=disable",
+        "-database=postgres://${DB_USER:-postgres}:${DB_PASSWORD}@db:5432/${DB_NAME:-terminal_card}?sslmode=${DB_SSLMODE:-disable}",
         "up",
       ]
     depends_on:
@@ -50,8 +50,11 @@ services:
       - DB_USER=${DB_USER:-postgres}
       - DB_NAME=${DB_NAME:-terminal_card}
       - DB_PASSWORD=${DB_PASSWORD}
-      - DB_SSLMODE=disable
-      - ALLOW_INSECURE_DB=true
+      # DB_SSLMODE defaults to "require" inside the binary. The DB container
+      # is on the internal Docker network with no TLS configured, so we must
+      # accept the plain connection here. Do NOT set this on a remote DB.
+      - DB_SSLMODE=${DB_SSLMODE:-disable}
+      - ALLOW_INSECURE_DB=${ALLOW_INSECURE_DB:-true}
       - SSH_KEY_PATH=/data/ssh/server
       - OTEL_EXPORTER_OTLP_ENDPOINT=alloy:4317
       - OTEL_EXPORTER_OTLP_INSECURE=true
@@ -217,9 +220,14 @@ services:
       - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
       - ./internal/config/grafana/dashboards:/var/lib/grafana/dashboards
     environment:
-      - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
-      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      # Anonymous access is intentionally disabled: Grafana is a private
+      # operator dashboard reached only on loopback (127.0.0.1:3000). A password
+      # is always required. Set GRAFANA_ADMIN_PASSWORD in the host environment or
+      # a .env file; the default below is refused in production by the healthcheck.
+      - GF_AUTH_ANONYMOUS_ENABLED=false
+      - GF_AUTH_DISABLE_LOGIN_FORM=false
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?GRAFANA_ADMIN_PASSWORD must be set}
     ports:
       - "127.0.0.1:3000:3000"
     depends_on:

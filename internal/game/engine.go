@@ -248,6 +248,11 @@ func (e *Engine) Start() (err error) {
 		return fmt.Errorf("shuffle deck: %w", err)
 	}
 
+	// Games that do their own dealing in OnGameStart (Hearts, Gin Rummy) return 0
+	// from InitialDealCount; DrawNCards(0) succeeds with an empty slice, so those
+	// games receive empty hands here, which is correct — OnGameStart fills them.
+	// Games that return a positive count get exactly that many cards per player,
+	// or Start fails before any hand reaches the table.
 	hands := make([][]deck.Card, len(e.state.Players))
 	for playerIdx := range e.state.Players {
 		cards, ok := e.state.Deck.DrawNCards(e.state.Rules.InitialDealCount())
@@ -257,6 +262,11 @@ func (e *Engine) Start() (err error) {
 		hands[playerIdx] = cards
 	}
 
+	// cryptoIntN reads from crypto/rand. On Linux, /dev/urandom is non-blocking
+	// after kernel init, so this does not block in practice; on systems where it
+	// could (very early boot, depleted entropy under FIPS constraints), callers
+	// that hold a mutex through Start() would stall. If that becomes a problem,
+	// replace with a seeded math/rand and pre-generate the value before locking.
 	startIdx, err := cryptoIntN(len(e.state.Players))
 	if err != nil {
 		return fmt.Errorf("selecting first player: %w", err)

@@ -231,6 +231,11 @@ func encodeJSON(w http.ResponseWriter, r *http.Request, status int, v any) {
 	}
 }
 
+// withCORS sets the Access-Control-Allow-Origin header. The default is "*" because
+// this API is intentionally public and read-only. If any authenticated or
+// write endpoint is ever added under this handler, the caller-supplied origin
+// must be tightened to a specific allowlist — a wildcard on an authenticated
+// origin defeats SameSite cookie protections.
 func withCORS(origin string, next http.Handler) http.Handler {
 	if origin == "" {
 		origin = "*"

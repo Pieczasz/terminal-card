@@ -157,6 +157,10 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 		extra.Passes = 0
 
 	case ActionDrawCard:
+		// The engine holds its mutex for the full ApplyAction call, so the
+		// reshuffle and the subsequent draw are atomic from the perspective of
+		// other goroutines — including a concurrent timeout auto-draw. No
+		// additional guard is needed here.
 		if state.Deck.IsEmpty() {
 			if err := game.ReshuffleDiscardIntoStock(state); err != nil {
 				// A shuffle failure is a crypto/rand failure: unrecoverable, and

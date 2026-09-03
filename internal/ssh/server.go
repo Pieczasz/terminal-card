@@ -175,6 +175,11 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 		// order. Connect/disconnect logging is sessionLifecycle's job rather than
 		// wish's logging middleware: that one writes through the charm logger, which
 		// bypasses slog and so never reaches the OTLP handler.
+		//
+		// wish.WithMiddleware wraps in reverse order (last argument = outermost),
+		// so sessionLifecycle is the outermost middleware and runs first on connect
+		// and last on disconnect. This is required: it sets up per-session state
+		// that the inner middlewares depend on, and cleans it up after they exit.
 		wish.WithMiddleware(
 			bm.MiddlewareWithProgramHandler(sessionProgram(deps, tracker)),
 			activeterm.Middleware(),

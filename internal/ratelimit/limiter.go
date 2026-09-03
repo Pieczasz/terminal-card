@@ -87,6 +87,12 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 	}
 }
 
+// evictLeastRecentLocked removes the key whose most-recent request is oldest.
+// This is a best-effort defence against the maxKeys cap being reached under a
+// distributed attack: an adversary with many IPs can rotate old entries out,
+// effectively resetting their per-IP counters. The cap still bounds memory
+// usage, which is its primary purpose. If the attack surface widens, raise
+// maxKeys or switch to a shared store (Redis) that is not per-process.
 func (s *SlidingWindowLimiter) evictLeastRecentLocked() {
 	var victim string
 	var oldest time.Time

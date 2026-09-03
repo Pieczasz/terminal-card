@@ -303,6 +303,44 @@ func BenchmarkBroadcast(b *testing.B) {
 	}
 }
 
+// TestBroadcaster_SlowReaderReceivesFinalMessage verifies that a subscriber with a
+// full buffer still receives the final message broadcast before Close. The
+// "latest wins" drop policy must not discard the terminal event (e.g. EventGameEnded)
+// that a subscriber goroutine waits on to clean up — if it does, the subscriber
+// parks forever. This test exercises the case where the channel fills with
+// intermediate events and the close signal is the last one broadcast.
+func TestBroadcaster_SlowReaderReceivesFinalMessage(t *testing.T) {
+	t.Parallel()
+
+	const chanSize = 4
+	b := New[int](chanSize)
+
+	ch := mustSubscribe(t, b)
+
+	// Fill the subscriber channel without reading, causing oldest events to drop.
+	for i := range chanSize * 3 {
+		b.Broadcast(i)
+	}
+
+	// The sentinel final event — analogous to EventGameEnded.
+	const sentinel = -1
+	b.Broadcast(sentinel)
+
+	// Drain until sentinel or timeout.
+	deadline := time.After(time.Second)
+	found := false
+	for !found {
+		select {
+		case v := <-ch:
+			if v == sentinel {
+				found = true
+			}
+		case <-deadline:
+			t.Fatal("slow reader never received the final sentinel event")
+		}
+	}
+}
+
 func mustSubscribe[T any](t *testing.T, b *Broadcaster[T]) <-chan T {
 	t.Helper()
 	ch, err := b.Subscribe()

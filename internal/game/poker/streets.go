@@ -172,6 +172,10 @@ func buildSidePots(extra *State, live []*game.Player) []Pot {
 
 	// Distinct non-zero contribution levels, ascending: each one closes a pot
 	// layer. Contributions come from every player who put chips in, seated or not.
+	// Sorting by contribution amount (not by seat order) is what makes simultaneous
+	// all-ins correct: two players who push all-in in the same round at different
+	// stack sizes produce two distinct levels and therefore two pot layers, regardless
+	// of the order their actions were processed.
 	levels := slices.Sorted(maps.Values(extra.TotalContributed))
 	levels = slices.Compact(levels)
 	levels = slices.DeleteFunc(levels, func(c uint) bool { return c == 0 })

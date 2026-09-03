@@ -12,12 +12,20 @@ import (
 func TestValidateUsername_Valid(t *testing.T) {
 	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
-		gen := rapid.StringMatching(`^[A-Za-z0-9_]{1,16}$`)
+		gen := rapid.StringMatching(`^[A-Za-z0-9_]{3,16}$`)
 		username := gen.Draw(t, "username")
 
 		err := ValidateUsername(username)
 		assert.NoError(t, err)
 	})
+}
+
+func TestValidateUsername_TooShort(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"", "a", "ab"} {
+		err := ValidateUsername(name)
+		assert.ErrorContains(t, err, "at least 3 characters", "username %q should be rejected", name)
+	}
 }
 
 func TestValidateUsername_InvalidLength(t *testing.T) {
@@ -35,7 +43,7 @@ func TestValidateUsername_InvalidCharacters(t *testing.T) {
 	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
 		gen := rapid.StringMatching(`^.*[^A-Za-z0-9_].*$`).Filter(func(s string) bool {
-			return len(s) > 0 && len(s) <= 16
+			return len(s) >= UsernameMinLen && len(s) <= UsernameMaxLen
 		})
 		username := gen.Draw(t, "username")
 
@@ -62,8 +70,8 @@ func FuzzValidateUsername(f *testing.F) {
 		if ValidateUsername(name) != nil {
 			return // rejected: nothing more to prove
 		}
-		assert.NotEmpty(t, name, "an accepted username must not be empty")
-		assert.LessOrEqual(t, len(name), 16, "an accepted username must fit varchar(16)")
+		assert.GreaterOrEqual(t, len(name), UsernameMinLen, "an accepted username must be at least %d characters", UsernameMinLen)
+		assert.LessOrEqual(t, len(name), UsernameMaxLen, "an accepted username must fit varchar(16)")
 		assert.True(t, utf8.ValidString(name), "an accepted username must be valid UTF-8")
 		for _, r := range name {
 			isAllowed := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||

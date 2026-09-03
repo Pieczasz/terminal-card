@@ -17,6 +17,11 @@ func findTwoOfClubs(state *game.State) int {
 	return 0
 }
 
+// passRecipient returns the seat index that receives cards from seat from.
+// PassAcross uses +2 % n, which is only well-defined for the exact 4-player
+// game Hearts requires. OnGameStart enforces n == playerCount (4) before any
+// hand begins, and OnPlayerLeave ends the match immediately, so n < 4 is
+// never reached in practice.
 func passRecipient(from int, dir PassDirection, n int) int {
 	switch dir {
 	case PassLeft:

@@ -74,6 +74,9 @@ type Manager struct {
 // turn clock auto-plays for the absent player the whole time, and its idle removal
 // (3 missed turns) is the harder backstop, so this mostly decides how long a lobby
 // keeps a seat for someone who never comes back between hands.
+// The value is intentionally not configurable: it is tightly coupled to
+// DefaultTurnTimeout (30s) × MaxMissedTurns (3) = 90s in game.turnclock. If either
+// of those constants changes, revisit this value.
 const DisconnectGrace = 90 * time.Second
 
 func NewManager(ctx context.Context, matchRepo db.MatchRepository) *Manager {
@@ -209,6 +212,12 @@ func (m *Manager) JoinLobbyByCode(code string, p *game.Player) error {
 	return nil
 }
 
+// FindLobbyByPlayer returns the lobby the player is in, or nil. It performs a
+// TOCTOU-safe stale-entry cleanup: the RLock → RUnlock → HasPlayer → Lock
+// sequence means another goroutine could remove the player between the RUnlock
+// and HasPlayer. HasPlayer returning false is therefore the authoritative signal;
+// the subsequent Lock guards only the stale-entry delete, which is idempotent
+// and harmless if the entry was already updated by the concurrent remover.
 func (m *Manager) FindLobbyByPlayer(p *game.Player) *Lobby {
 	m.mu.RLock()
 	lobby, exists := m.playerLobby[p.ID]
@@ -506,6 +515,11 @@ func (m *Manager) Kick(host, target *game.Player) error {
 	return nil
 }
 
+// RemoveLobby removes the lobby from the manager and closes its engine.
+// Lock ordering: m.mu is acquired first, then l.mu. engine.Close() is called
+// after both are released to avoid a lock-order inversion: Close() acquires the
+// engine's own mutex, and the engine may broadcast events that try to read the
+// manager — holding m.mu through Close() would deadlock.
 func (m *Manager) RemoveLobby(code string) {
 	m.mu.Lock()
 	l, exists := m.lobbies[code]

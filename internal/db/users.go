@@ -44,8 +44,16 @@ type Ranking struct {
 	DeletedAt gorm.DeletedAt `gorm:"index"`
 }
 
+const (
+	UsernameMinLen = 3
+	UsernameMaxLen = 16
+)
+
 func ValidateUsername(username string) error {
-	if len(username) > 16 {
+	if len(username) < UsernameMinLen {
+		return errors.New("username must be at least 3 characters")
+	}
+	if len(username) > UsernameMaxLen {
 		return errors.New("username cannot exceed 16 characters")
 	}
 	if !usernamePattern.MatchString(username) {

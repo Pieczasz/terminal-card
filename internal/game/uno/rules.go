@@ -243,6 +243,8 @@ func drawCardsInto(state *game.State, playerIdx, n int) bool {
 	}
 	p := state.Players[playerIdx]
 	drew := 0
+	// The engine mutex is held for the full ApplyAction call, so the
+	// reshuffle-draw loop is atomic — no concurrent draw can race with this one.
 	for range n {
 		if state.Deck.IsEmpty() {
 			if err := game.ReshuffleDiscardIntoStock(state); err != nil {
