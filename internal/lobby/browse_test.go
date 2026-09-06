@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
 
 	"github.com/stretchr/testify/assert"
@@ -18,7 +17,7 @@ func openTable(t *testing.T, m *Manager, id string, dbID uint, gameName string, 
 	if rating > 0 {
 		leader.Ratings = map[string]uint32{gameName: rating}
 	}
-	opts = append([]Option{WithPrivate(false), WithCardGame(&db.Game{Name: gameName})}, opts...)
+	opts = append([]Option{WithPrivate(false), WithCardGame(gameName)}, opts...)
 	l, err := m.New(leader, opts...)
 	require.NoError(t, err)
 	return l
@@ -192,7 +191,7 @@ func TestManager_GameNames(t *testing.T) {
 	openTable(t, m, "c", 3, "Poker", 1500)
 
 	private := mockPlayer("private", 4)
-	_, err := m.New(private, WithPrivate(true), WithCardGame(&db.Game{Name: "Hidden"}))
+	_, err := m.New(private, WithPrivate(true), WithCardGame("Hidden"))
 	require.NoError(t, err)
 
 	assert.Equal(t, []string{"CrazyEights", "Poker"}, m.GameNames(),

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
@@ -61,7 +60,7 @@ func TestConcurrent_JoinUpToCapacity(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
-	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame(&db.Game{Name: "TestGame"}))
+	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	guests := make([]*guestRef, joiners)
@@ -135,7 +134,7 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
-	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame(&db.Game{Name: "TestGame"}))
+	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	all := []*game.Player{leader}
@@ -193,7 +192,7 @@ func TestConcurrent_JoinRacingLastLeave(t *testing.T) {
 			unlimitedJoins(m)
 
 			leader := mockPlayer(fmt.Sprintf("leader-%d", i), uint(2*i+1))
-			l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "TestGame"}))
+			l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 			require.NoError(t, err)
 			code := l.Code()
 
@@ -254,7 +253,7 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	unlimitedJoins(m)
 	leader := mockPlayer("leader", 1)
-	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame(&db.Game{Name: "NeverStarts"}))
+	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame("NeverStarts"))
 	require.NoError(t, err)
 
 	roster := []*game.Player{leader}

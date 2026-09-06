@@ -39,7 +39,7 @@ func leaderView(t *testing.T) (*model, *lobby.Lobby) {
 	leader := lobby.NewPlayer(leaderUser)
 
 	l, err := manager.New(leader,
-		lobby.WithCardGame(&db.Game{Name: testGameName}),
+		lobby.WithCardGame(testGameName),
 		lobby.WithMaxPlayers(4),
 		lobby.WithPrivate(false),
 	)

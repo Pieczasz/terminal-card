@@ -22,8 +22,7 @@ type ModelDependencies struct {
 	SessionCtx   context.Context
 	User         db.User
 	UserRepo     db.UserRepository
-	MatchRepo    db.MatchRepository
-	LobbyManager *internallobby.Manager
+	LobbyManager internallobby.SessionAPI
 	GameRegistry *game.Registry
 }
 

@@ -64,10 +64,8 @@ type Manager struct {
 	// finalizersStopped: a match ending during the drain must still be recorded, just
 	// not rated. See persistFinishedMatch.
 	shuttingDown atomic.Bool
-	// pendingLeaves holds the grace timers of players whose session dropped
-	// mid-game: the seat is kept for DisconnectGrace so a wifi blip does not
-	// forfeit a live match. Guarded by mu.
-	pendingLeaves map[string]*time.Timer
+	// grace holds mid-game seats after a dropped session (see disconnect.go).
+	grace disconnectGrace
 }
 
 // DisconnectGrace is how long a mid-game seat survives its session. The engine's
@@ -81,12 +79,12 @@ func NewManager(ctx context.Context, matchRepo db.MatchRepository) *Manager {
 		ctx = context.Background()
 	}
 	return &Manager{
-		lobbies:       make(map[string]*Lobby),
-		playerLobby:   make(map[string]*Lobby),
-		pendingLeaves: make(map[string]*time.Timer),
-		matchRepo:     matchRepo,
-		appCtx:        ctx,
-		joinLimiter:   ratelimit.NewSlidingWindowLimiter(joinRateLimitCount, joinRateLimitWindow),
+		lobbies:     make(map[string]*Lobby),
+		playerLobby: make(map[string]*Lobby),
+		grace:       newDisconnectGrace(),
+		matchRepo:   matchRepo,
+		appCtx:      ctx,
+		joinLimiter: ratelimit.NewSlidingWindowLimiter(joinRateLimitCount, joinRateLimitWindow),
 	}
 }
 
@@ -137,7 +135,7 @@ func (m *Manager) New(leader *game.Player, opts ...Option) (*Lobby, error) {
 		opt(options)
 	}
 
-	if options.cardGame == nil || options.cardGame.Name == "" {
+	if options.cardGame == "" {
 		return nil, errors.New("card game is required")
 	}
 	if options.maxPlayers < 2 {
@@ -279,10 +277,7 @@ func (m *Manager) DisconnectPlayer(p *game.Player) {
 		m.LeaveLobby(p)
 		return
 	}
-	if t, ok := m.pendingLeaves[p.ID]; ok {
-		t.Stop()
-	}
-	m.pendingLeaves[p.ID] = time.AfterFunc(DisconnectGrace, func() { m.expireLeave(p) })
+	m.grace.arm(p.ID, DisconnectGrace, func() { m.expireLeave(p) })
 	m.mu.Unlock()
 	slog.Info("session dropped mid-game, holding the seat",
 		"player_id", p.ID, "grace", DisconnectGrace.String())
@@ -292,7 +287,10 @@ func (m *Manager) DisconnectPlayer(p *game.Player) {
 // without waiting out the window.
 func (m *Manager) expireLeave(p *game.Player) {
 	m.mu.Lock()
-	delete(m.pendingLeaves, p.ID)
+	if !m.grace.beginExpire(p.ID) {
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Unlock()
 	slog.Info("disconnect grace expired, giving up the seat", "player_id", p.ID)
 	m.LeaveLobby(p)
@@ -301,15 +299,18 @@ func (m *Manager) expireLeave(p *game.Player) {
 // ResumePlayer cancels a pending disconnect leave and returns the lobby the player
 // still occupies, or nil. A reconnecting session calls it before routing, so the
 // player lands back at their table instead of a fresh home screen.
+//
+// A takeover (second SSH session while the first is half-open) finds the seat still
+// mapped with no pending leave: return that lobby so unclean disconnects can resume.
 func (m *Manager) ResumePlayer(p *game.Player) *Lobby {
 	if p == nil {
 		return nil
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if t, ok := m.pendingLeaves[p.ID]; ok {
-		t.Stop()
-		delete(m.pendingLeaves, p.ID)
+	if cancelled, blocked := m.grace.tryCancel(p.ID); blocked {
+		return nil
+	} else if cancelled {
 		slog.Info("player reconnected inside the grace window", "player_id", p.ID)
 	}
 	return m.playerLobby[p.ID]
@@ -321,10 +322,7 @@ func (m *Manager) LeaveLobby(p *game.Player) {
 	}
 
 	m.mu.Lock()
-	if t, ok := m.pendingLeaves[p.ID]; ok {
-		t.Stop()
-		delete(m.pendingLeaves, p.ID)
-	}
+	m.grace.clear(p.ID)
 	l, ok := m.playerLobby[p.ID]
 	if !ok || l == nil {
 		m.mu.Unlock()

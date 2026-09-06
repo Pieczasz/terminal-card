@@ -6,7 +6,6 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
@@ -55,7 +54,7 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 	t.Helper()
 	leader := benchPlayer(idx, 0)
 	l, err := manager.New(leader,
-		lobby.WithCardGame(&db.Game{Name: "Poker"}),
+		lobby.WithCardGame("Poker"),
 		lobby.WithMaxPlayers(9),
 		lobby.WithPrivate(false),
 	)

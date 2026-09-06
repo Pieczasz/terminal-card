@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -14,7 +12,7 @@ func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
-	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(&db.Game{Name: "Uno"}))
+	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("Uno"))
 	require.NoError(t, err)
 
 	require.NoError(t, l.SetMaxPlayers(leader, 10, 2, 10))

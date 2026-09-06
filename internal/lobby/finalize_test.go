@@ -26,7 +26,7 @@ func newFinishedGameLobby(t *testing.T, repo db.MatchRepository) (*Manager, *Lob
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
-	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(&db.Game{Name: "MockGame"}), WithRanked(true))
+	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("MockGame"), WithRanked(true))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
@@ -207,7 +207,7 @@ func TestToggleReady_FailedStartStillBroadcasts(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
-	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(&db.Game{Name: "Unregistered"}))
+	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("Unregistered"))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
@@ -274,6 +274,28 @@ func TestFinalize_InterruptedRankedMatchIsRecordedWithoutElo(t *testing.T) {
 		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+// A rules bug that ends the hand must not move the ladder: half-applied state is not a result.
+func TestFinalize_RulesErrorIsRecordedWithoutElo(t *testing.T) {
+	t.Parallel()
+
+	repo := new(MockMatchRepo)
+	recorded := make(chan struct{}, 1)
+	repo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
+		Run(func(mock.Arguments) { recorded <- struct{}{} }).
+		Return(nil)
+
+	_, _, engine := newFinishedGameLobby(t, repo)
+	engine.Broadcaster().Broadcast(game.Event{Type: game.EventGameEnded, Reason: game.EndReasonRulesError})
+
+	select {
+	case <-recorded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the rules-error match was never recorded")
+	}
+	repo.AssertNotCalled(t, "FinalizeRankedMatch",
+		mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 // A dropped session must not forfeit a live match: the seat survives for the grace
 // window and a reconnect cancels the pending leave.
 func TestDisconnectPlayer_MidGameSeatSurvivesTheGraceWindow(t *testing.T) {
@@ -295,7 +317,7 @@ func TestDisconnectPlayer_MidGameSeatSurvivesTheGraceWindow(t *testing.T) {
 	resumed := m.ResumePlayer(guest)
 	require.Equal(t, l, resumed, "a reconnect lands back at the same lobby")
 	m.mu.Lock()
-	_, pending := m.pendingLeaves[guest.ID]
+	_, pending := m.grace.pending[guest.ID]
 	m.mu.Unlock()
 	assert.False(t, pending, "the pending leave is cancelled by the resume")
 }
@@ -316,6 +338,45 @@ func TestDisconnectPlayer_GraceExpiryForfeitsTheSeat(t *testing.T) {
 	assert.False(t, l.HasPlayer(guest), "the expired seat is given up")
 	assert.Nil(t, m.FindLobbyByPlayer(guest))
 	assert.Nil(t, m.ResumePlayer(guest), "nothing to resume after expiry")
+}
+
+// expireLeave deletes the pending entry before LeaveLobby; ResumePlayer must not
+// treat a missing entry as "still seated" or it routes into a seat about to vanish.
+func TestResumePlayer_AfterExpireClaimReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+
+	m.DisconnectPlayer(guest)
+	m.mu.Lock()
+	delete(m.grace.pending, guest.ID) // what expireLeave does before LeaveLobby
+	m.grace.expiring[guest.ID] = struct{}{}
+	stillSeated := m.playerLobby[guest.ID] != nil
+	m.mu.Unlock()
+	require.True(t, stillSeated)
+
+	assert.Nil(t, m.ResumePlayer(guest), "grace already claimed: do not resume")
+	assert.True(t, l.HasPlayer(guest), "LeaveLobby has not run yet")
+}
+
+// A second SSH session can take over a mid-game seat while the first is still
+// half-open (no pending leave yet).
+func TestResumePlayer_TakeoverWithoutPendingLeave(t *testing.T) {
+	t.Parallel()
+
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+
+	assert.Equal(t, l, m.ResumePlayer(guest), "zombie session still holds the seat")
 }
 
 func TestDisconnectPlayer_WaitingLobbyLeavesImmediately(t *testing.T) {

@@ -36,7 +36,7 @@ func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 	leader := players[0]
 
 	l, err := manager.New(leader,
-		lobby.WithCardGame(&db.Game{Name: pokerGame}),
+		lobby.WithCardGame(pokerGame),
 		lobby.WithMaxPlayers(3),
 		lobby.WithRanked(true),
 	)
@@ -104,7 +104,7 @@ func TestSystemCasualGameRecordsHistoryWithoutElo(t *testing.T) {
 	}
 
 	l, err := manager.New(players[0],
-		lobby.WithCardGame(&db.Game{Name: pokerGame}),
+		lobby.WithCardGame(pokerGame),
 		lobby.WithMaxPlayers(2),
 		lobby.WithRanked(false),
 	)

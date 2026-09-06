@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/components"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
@@ -130,7 +129,7 @@ func (m *createModel) createLobby() (tea.Model, tea.Cmd) {
 	}
 
 	l, err := m.global.LobbyManager.New(views.SessionPlayer(m.global),
-		lobby.WithCardGame(&db.Game{Name: name}),
+		lobby.WithCardGame(name),
 		lobby.WithMaxPlayers(m.maxPlayers),
 		lobby.WithPrivate(m.isPrivate),
 		lobby.WithRanked(m.isRanked),
