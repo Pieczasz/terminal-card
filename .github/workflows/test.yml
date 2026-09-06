@@ -53,9 +53,12 @@ jobs:
         cache: false
 
     - name: golangci-lint
+      # Prebuilt binaries lag the module's Go version (v2.12.x is go1.26 and
+      # refuses go 1.27.0). goinstall builds with the setup-go toolchain.
       uses: golangci/golangci-lint-action@v7
       with:
-        version: v2.12.2
+        version: v2.13.2
+        install-mode: goinstall
 
   vulncheck:
     runs-on: ubuntu-latest
