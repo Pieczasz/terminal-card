@@ -112,8 +112,8 @@ func (e *Engine) snapshotLocked() StateSnapshot {
 }
 
 // Frame reads everything a view renders in one lock hold. fn may be nil; it receives
-// State.Extra under the contract BoundEngine.Frame documents.
-func (e *Engine) Frame(playerID string, fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
+// the live *State under the contract BoundEngine.Frame documents.
+func (e *Engine) Frame(playerID string, fn func(*State)) (StateSnapshot, []deck.Card, time.Duration) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -130,7 +130,7 @@ func (e *Engine) Frame(playerID string, fn func(extra any)) (StateSnapshot, []de
 		remaining = max(time.Until(e.turnDeadline), 0)
 	}
 	if fn != nil {
-		fn(e.state.Extra)
+		fn(e.state)
 	}
 	return snap, hand, remaining
 }
@@ -459,6 +459,13 @@ func (e *Engine) removePlayerLocked(playerID string) {
 	}
 
 	if len(e.state.Players) == 1 {
+		// A leave handler may keep the hand open (poker all-in leavers still
+		// contest the pot). OverrideNextTurn means the last seat still has work.
+		if e.state.OverrideNextTurn != nil {
+			e.applyNextTurnLocked(false)
+			e.broadcaster.Broadcast(Event{Type: EventTurnAdvanced})
+			return
+		}
 		e.state.Phase = Finished
 		e.stopTurnTimerLocked()
 		e.state.Winner = e.state.Players[0]
