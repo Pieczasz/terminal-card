@@ -628,4 +628,3 @@ func (l *Lobby) releaseFinishedGame() {
 		bc.Broadcast(Event{Type: EventPlayersUpdated})
 	}
 }
-
