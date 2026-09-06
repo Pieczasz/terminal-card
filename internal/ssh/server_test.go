@@ -132,7 +132,7 @@ func TestServer_NewUserConnection(t *testing.T) {
 	require.Equal(t, "testuser_new", user.Username)
 }
 
-func TestServer_UserAlreadyConnected(t *testing.T) {
+func TestServer_SecondSessionDisplaces(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping SSH integration test in short mode")
 	}
@@ -172,10 +172,8 @@ func TestServer_UserAlreadyConnected(t *testing.T) {
 	defer session2.Close()
 
 	_ = session2.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
-	_ = session2.Shell()
-
-	err = session2.Wait()
-	assert.Error(t, err, "expected error because user is already connected")
+	err = session2.Shell()
+	require.NoError(t, err, "a second session displaces the first instead of being refused")
 }
 
 func TestServer_ExistingUserConnection(t *testing.T) {

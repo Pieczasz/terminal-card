@@ -65,6 +65,7 @@ type sessionState struct {
 	user     *db.User
 	model    interface{ Close() }
 	owns     bool
+	gen      uint64
 	panicked bool
 }
 
@@ -80,17 +81,13 @@ func lookupSessionState(s ssh.Session) (*sessionState, bool) {
 	return st.(*sessionState), true
 }
 
-// ErrAlreadyConnected and ErrServerFull are Connect's refusals; the caller turns
-// each into a different message, because "come back later" and "you are already
-// here" call for different player action.
-var (
-	ErrAlreadyConnected = errors.New("account is already connected")
-	ErrServerFull       = errors.New("server is at capacity")
-)
+// ErrServerFull is Connect's capacity refusal.
+var ErrServerFull = errors.New("server is at capacity")
 
 type SessionTracker struct {
 	mu     sync.Mutex
-	active map[uint]bool
+	active map[uint]uint64 // userID → session generation
+	next   uint64
 	// maxSessions is the player-visible capacity: Connect refuses beyond it with a
 	// message, unlike the TCP-level LimitListener, which silently stops accepting.
 	// Zero means unlimited.
@@ -99,23 +96,29 @@ type SessionTracker struct {
 
 func NewSessionTracker(maxSessions int) *SessionTracker {
 	return &SessionTracker{
-		active:      make(map[uint]bool),
+		active:      make(map[uint]uint64),
 		maxSessions: maxSessions,
 	}
 }
 
-func (t *SessionTracker) Connect(userID uint) error {
+// Connect registers userID and returns a generation. A second Connect for the same
+// account displaces the first: half-open TCP otherwise blocks reconnect for the whole
+// mid-game grace window. Release with a stale generation is a no-op.
+func (t *SessionTracker) Connect(userID uint) (uint64, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.active[userID] {
-		return ErrAlreadyConnected
+	t.next++
+	gen := t.next
+	if _, exists := t.active[userID]; exists {
+		t.active[userID] = gen
+		return gen, nil
 	}
 	if t.maxSessions > 0 && len(t.active) >= t.maxSessions {
-		return ErrServerFull
+		return 0, ErrServerFull
 	}
-	t.active[userID] = true
+	t.active[userID] = gen
 	observability.SSHSessionsActive.Add(1)
-	return nil
+	return gen, nil
 }
 
 func (t *SessionTracker) Count() int {
@@ -124,6 +127,28 @@ func (t *SessionTracker) Count() int {
 	return len(t.active)
 }
 
+// Release frees the slot only when gen is still the live generation. A displaced
+// session's teardown must not drop the replacement or start a disconnect grace.
+func (t *SessionTracker) Release(userID uint, gen uint64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.active[userID] != gen {
+		return false
+	}
+	delete(t.active, userID)
+	observability.SSHSessionsActive.Add(-1)
+	return true
+}
+
+// Owns reports whether gen is still the live generation for userID.
+func (t *SessionTracker) Owns(userID uint, gen uint64) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.active[userID] == gen
+}
+
+// Disconnect is Release without a generation check — tests and paths that never
+// displaced. Prefer Release from session teardown.
 func (t *SessionTracker) Disconnect(userID uint) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -252,11 +277,8 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 			failSessionf(s, "auth_failed", err, "%v\n", err)
 			return nil, nil
 		}
-		switch err := tracker.Connect(user.ID); {
-		case errors.Is(err, ErrAlreadyConnected):
-			failSessionf(s, "rejected_duplicate", err,
-				"Account '%s' is already connected from another session.\n", user.Username)
-			return nil, nil
+		gen, err := tracker.Connect(user.ID)
+		switch {
 		case errors.Is(err, ErrServerFull):
 			failSessionf(s, "rejected_full", err,
 				"The server is full right now - please try again in a few minutes.\n")
@@ -271,7 +293,6 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 			SessionCtx:   traceCtx,
 			User:         *user,
 			UserRepo:     deps.UserRepository,
-			MatchRepo:    deps.MatchRepository,
 			LobbyManager: deps.LobbyManager,
 			GameRegistry: deps.GameRegistry,
 		})
@@ -279,6 +300,7 @@ func sessionModel(deps ServerDependencies, tracker *SessionTracker) func(ssh.Ses
 		if st, ok := lookupSessionState(s); ok {
 			st.owns = true
 			st.user = user
+			st.gen = gen
 			st.model = model
 		}
 
@@ -493,14 +515,18 @@ func closeSessionModel(s ssh.Session) {
 
 // releaseSession gives up the seat before the tracker slot. The other order lets a
 // fast reconnect take the slot and then have its lobby seat torn down by the old
-// session's LeaveLobby.
+// session's LeaveLobby. A displaced session (stale generation) must touch neither:
+// the replacement still occupies the seat.
 func releaseSession(s ssh.Session, deps ServerDependencies, tracker *SessionTracker) {
 	st, ok := lookupSessionState(s)
 	if !ok || !st.owns || st.user == nil {
 		return
 	}
+	if !tracker.Owns(st.user.ID, st.gen) {
+		return
+	}
 	// DisconnectPlayer, not LeaveLobby: a dropped session keeps its mid-game seat
 	// for the grace window, so a reconnect resumes the match instead of forfeiting.
 	deps.LobbyManager.DisconnectPlayer(lobby.NewPlayer(st.user))
-	tracker.Disconnect(st.user.ID)
+	tracker.Release(st.user.ID, st.gen)
 }

@@ -2,7 +2,6 @@ package ssh
 
 import (
 	"context"
-	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -41,7 +40,8 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 
 	tracker := NewSessionTracker(0)
 	user := &db.User{ID: 11, Username: "shared"}
-	require.NoError(t, tracker.Connect(user.ID))
+	gen, err := tracker.Connect(user.ID)
+	require.NoError(t, err)
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 
 	// Both channels of one connection, so they would share an ssh.Context.
@@ -52,6 +52,7 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	sessionStates.Store(accepted, &sessionState{
 		owns:  true,
 		user:  user,
+		gen:   gen,
 		model: recordingCloser{closed: &modelClosed},
 	})
 	sessionStates.Store(rejected, &sessionState{})
@@ -67,10 +68,9 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	assert.Equal(t, 1, tracker.Count(), "and freed the accepted channel's session slot")
 }
 
-// releaseSession must give up the lobby seat before the tracker slot. The other way
-// round leaves a window in which a player who reconnects the instant they drop is
-// admitted, takes a seat, and then has that brand-new seat torn down by the session
-// that already left.
+// releaseSession must give up the lobby seat before the tracker slot when the
+// session still owns its generation. A displaced reconnect must not tear down the
+// seat the replacement is about to resume.
 func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	t.Parallel()
 
@@ -79,25 +79,29 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	guest := &db.User{ID: 2, Username: "guest"}
 	guestPlayer := lobby.NewPlayer(guest)
 
-	table, err := manager.New(lobby.NewPlayer(host), lobby.WithCardGame(&db.Game{Name: "Mock"}))
+	table, err := manager.New(lobby.NewPlayer(host), lobby.WithCardGame("Mock"))
 	require.NoError(t, err)
 	require.NoError(t, manager.JoinLobbyByCode(table.Code(), guestPlayer))
 
 	tracker := NewSessionTracker(0)
-	require.NoError(t, tracker.Connect(guest.ID))
+	oldGen, err := tracker.Connect(guest.ID)
+	require.NoError(t, err)
 	deps := ServerDependencies{LobbyManager: manager}
 
-	// The reconnect claims the slot the moment it is free and immediately sits back
-	// down. With the seat released first there is no window in which it can be
-	// admitted while the old session still has a LeaveLobby left to run.
+	// The reconnect displaces the zombie session before teardown runs, so
+	// releaseSession sees a stale generation and leaves the seat alone.
 	reconnected := make(chan struct{})
+	displaced := make(chan struct{})
 	reconnect := func() {
 		defer close(reconnected)
-		for tracker.Connect(guest.ID) != nil {
-			runtime.Gosched()
+		_, err := tracker.Connect(guest.ID)
+		if err != nil {
+			t.Errorf("displace reconnect failed: %v", err)
+			return
 		}
-		if err := manager.JoinLobbyByCode(table.Code(), guestPlayer); err != nil {
-			t.Errorf("the reconnecting player could not sit back down: %v", err)
+		close(displaced)
+		if resumed := manager.ResumePlayer(guestPlayer); resumed != table {
+			t.Errorf("takeover did not resume the waiting seat: got %v", resumed)
 		}
 	}
 
@@ -107,7 +111,9 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 			require.True(t, ok)
 			st.owns = true
 			st.user = guest
+			st.gen = oldGen
 			go reconnect()
+			<-displaced
 		}),
 	}
 	_, _ = testsession.New(t, srv, nil).Output("")
@@ -167,14 +173,27 @@ func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
 func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(2)
-	require.NoError(t, tracker.Connect(1))
-	require.NoError(t, tracker.Connect(2))
-	require.ErrorIs(t, tracker.Connect(3), ErrServerFull)
-	// A duplicate is reported as a duplicate even on a full server: the player
-	// action differs ("you are already here" vs "come back later").
-	require.ErrorIs(t, tracker.Connect(1), ErrAlreadyConnected)
+	_, err := tracker.Connect(1)
+	require.NoError(t, err)
+	_, err = tracker.Connect(2)
+	require.NoError(t, err)
+	_, err = tracker.Connect(3)
+	require.ErrorIs(t, err, ErrServerFull)
+
+	// A second session for an already-connected account displaces rather than
+	// failing: half-open TCP otherwise blocks the mid-game reconnect grace.
+	gen1, err := tracker.Connect(1)
+	require.NoError(t, err)
+	gen2, err := tracker.Connect(1)
+	require.NoError(t, err)
+	assert.NotEqual(t, gen1, gen2)
+	assert.False(t, tracker.Release(1, gen1), "stale generation must not free the slot")
+	assert.Equal(t, 2, tracker.Count())
+	assert.True(t, tracker.Release(1, gen2))
+
 	tracker.Disconnect(2)
-	require.NoError(t, tracker.Connect(3), "capacity frees with the seat")
+	_, err = tracker.Connect(3)
+	require.NoError(t, err, "capacity frees with the seat")
 }
 
 // panicModel panics from whichever method the test asks for.
