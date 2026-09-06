@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
-	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
 	charmssh "charm.land/ssh"
@@ -103,9 +102,9 @@ func TestLoadOrRegisterUser_PassesThroughActionableSentinels(t *testing.T) {
 	t.Parallel()
 
 	sentinels := []error{
-		repository.ErrUsernameTaken,
-		repository.ErrInvalidUsername,
-		repository.ErrKeyAlreadyRegistered,
+		db.ErrUsernameTaken,
+		db.ErrInvalidUsername,
+		db.ErrKeyAlreadyRegistered,
 	}
 
 	for _, sentinel := range sentinels {
@@ -125,11 +124,11 @@ func TestLoadOrRegisterUser_PassesThroughActionableSentinels(t *testing.T) {
 func TestLoadOrRegisterUser_PreservesWrappedCause(t *testing.T) {
 	t.Parallel()
 	repo := new(MockUserRepository)
-	cause := fmt.Errorf("%w: must be 3-16 characters", repository.ErrInvalidUsername)
+	cause := fmt.Errorf("%w: must be 3-16 characters", db.ErrInvalidUsername)
 	repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(nil, nil, nil)
 	repo.On("RegisterUserWithKey", mock.Anything, "bad", "fp").Return(nil, nil, cause)
 
 	_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "bad", "fp")
-	require.ErrorIs(t, err, repository.ErrInvalidUsername)
+	require.ErrorIs(t, err, db.ErrInvalidUsername)
 	assert.ErrorContains(t, err, "must be 3-16 characters")
 }

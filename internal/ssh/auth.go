@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
-	"github.com/Pieczasz/terminal-card/internal/repository"
 
 	"charm.land/ssh"
 	cryptossh "golang.org/x/crypto/ssh"
@@ -51,9 +50,9 @@ func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUser
 
 func mapRegisterError(err error) error {
 	switch {
-	case errors.Is(err, repository.ErrUsernameTaken),
-		errors.Is(err, repository.ErrInvalidUsername),
-		errors.Is(err, repository.ErrKeyAlreadyRegistered):
+	case errors.Is(err, db.ErrUsernameTaken),
+		errors.Is(err, db.ErrInvalidUsername),
+		errors.Is(err, db.ErrKeyAlreadyRegistered):
 		return err
 	default:
 		return ErrRegistrationFailed
