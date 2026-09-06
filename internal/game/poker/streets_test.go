@@ -757,6 +757,33 @@ func TestLeave_AllInPlayerStaysInThePot(t *testing.T) {
 		"the all-in leaver still contests the pot they paid for")
 }
 
+// Heads-up all-in leave used to hit engine len(Players)==1 forfeit before the
+// remaining seat could call, leaving MainPool uncleared.
+func TestLeave_HeadsUpAllInDoesNotForfeit(t *testing.T) {
+	t.Parallel()
+	engine := startHeadsUp(t)
+	t.Cleanup(engine.Close)
+
+	shover := engine.CurrentPlayerID()
+	engine.WithState(func(s *game.State) {
+		extra, ok := s.Extra.(*State)
+		require.True(t, ok)
+		extra.PlayerChips[shover] = 100
+		extra.handStartChips = chipsInPlay(extra)
+	})
+	require.NoError(t, engine.SubmitAction(shover, ActionAllIn{}))
+	engine.RemovePlayer(shover)
+
+	require.False(t, engine.IsFinished(), "the last seat still decides call/fold")
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), ActionCall{}))
+
+	extra := extraOf(t, engine)
+	require.True(t, extra.HandComplete)
+	require.NotEmpty(t, extra.Pots)
+	assert.Contains(t, extra.Pots[0].Eligible, shover)
+	assert.Zero(t, extra.MainPool, "every chip left the pool")
+}
+
 // runOutBoard is entered from whichever street the last player able to bet finished
 // on, not only from preflop.
 func TestRunOutBoard_FillsTheBoardFromAnyStreet(t *testing.T) {

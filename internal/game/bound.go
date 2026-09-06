@@ -68,12 +68,12 @@ func (b *BoundEngine) Submit(action Action) error {
 }
 
 // Frame reads the snapshot, this player's hand, the turn clock and (through fn, which
-// may be nil) State.Extra in one lock hold, so the pieces cannot describe different
+// may be nil) the live *State in one lock hold, so the pieces cannot describe different
 // moments.
 //
-// State.Extra is unredacted and live: treat it as read-only, copy anything kept past
+// The *State is unredacted and live: treat it as read-only, copy anything kept past
 // the callback, and filter anything reaching the screen.
-func (b *BoundEngine) Frame(fn func(extra any)) (StateSnapshot, []deck.Card, time.Duration) {
+func (b *BoundEngine) Frame(fn func(*State)) (StateSnapshot, []deck.Card, time.Duration) {
 	if b == nil {
 		return StateSnapshot{}, nil, 0
 	}
