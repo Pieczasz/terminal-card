@@ -66,11 +66,11 @@ func (s *Session) IdleRemoved(ev game.Event) bool {
 	return ev.Type == game.EventPlayerIdle && s.Bound != nil && ev.PlayerID == s.Bound.PlayerID()
 }
 
-// Sync refreshes the cached engine state and keeps the cursor inside the hand. extra
-// reads the per-game state in the same lock hold; it is not redacted for this player, so
+// Sync refreshes the cached engine state and keeps the cursor inside the hand. fn
+// reads the live *State in the same lock hold; it is not redacted for this player, so
 // anything derived from it that reaches the screen has to be filtered by the caller.
-func (s *Session) Sync(extra func(extra any)) {
-	s.Base = SyncBaseState(s.Bound, extra)
+func (s *Session) Sync(fn func(*game.State)) {
+	s.Base = SyncBaseState(s.Bound, fn)
 	if s.Selected >= len(s.Base.Hand) {
 		s.Selected = max(len(s.Base.Hand)-1, 0)
 	}

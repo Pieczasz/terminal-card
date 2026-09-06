@@ -65,7 +65,6 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func (m *Model) syncState() {
-	m.Sync(nil)
 	m.seats = nil
 	m.board = nil
 	m.pot = 0
@@ -76,30 +75,26 @@ func (m *Model) syncState() {
 	m.minRaise = 0
 	m.myChips = 0
 	m.handComplete = false
-	m.matchComplete = m.Base.Phase == game.Finished
+	m.matchComplete = false
 	m.handNumber = 0
 	m.handsTotal = 0
-	m.winnerName = m.Base.Winner
+	m.winnerName = ""
 
-	if m.Bound == nil || m.Bound.Engine() == nil {
-		return
+	heroID := ""
+	if m.Bound != nil {
+		heroID = m.Bound.PlayerID()
 	}
 
-	heroID := m.Bound.PlayerID()
+	// Poker needs State.Players for hole cards at showdown, so the Frame callback
+	// takes the live *State (not only Extra) and fills betting scalars in the same
+	// hold as Base.MyTurn — a split Sync+WithState let an opponent act between them.
+	m.Sync(func(state *game.State) {
+		m.matchComplete = state.Phase == game.Finished
+		m.handComplete = state.Phase == game.Finished
+		if state.Winner != nil {
+			m.winnerName = state.Winner.DisplayName()
+		}
 
-	// One acquisition for the whole frame. Poker is the documented exception that
-	// reaches past BoundEngine into whole-table state, because rendering a table
-	// means rendering every seat - and since it holds that lock anyway, the betting
-	// scalars are read under it too. Splitting them across a Frame extra callback
-	// and this one let an opponent act in between, so the pot could render a bet
-	// short of the seat that had already posted it, and the action bar could offer
-	// a call the engine had already moved past.
-	//
-	// This is why the base state above is synced with a nil extra rather than
-	// folded into one Frame hold: Frame only hands out State.Extra, and buildSeats
-	// needs the players themselves - a snapshot carries no opponent hole cards, so
-	// there would be nothing to reveal at showdown.
-	m.Bound.Engine().WithState(func(state *game.State) {
 		e, ok := state.Extra.(*logic.State)
 		if !ok || e == nil {
 			return
@@ -111,8 +106,8 @@ func (m *Model) syncState() {
 		m.minRaise = e.MinRaise
 		m.toCall = logic.ToCall(e, heroID)
 		m.myChips = e.PlayerChips[heroID]
-		m.handComplete = e.HandComplete || m.Base.Phase == game.Finished
-		m.matchComplete = e.MatchComplete || m.Base.Phase == game.Finished
+		m.handComplete = e.HandComplete || state.Phase == game.Finished
+		m.matchComplete = e.MatchComplete || state.Phase == game.Finished
 		m.handNumber = e.HandNumber
 		m.handsTotal = e.HandsTotal
 		// Winners holds whoever took the last pot; the match itself is won by the
@@ -121,8 +116,7 @@ func (m *Model) syncState() {
 			m.winnerName = e.Winners[0].DisplayName()
 		}
 
-		m.board = append(m.board, e.Table...)
-
+		m.board = append(m.board[:0], e.Table...)
 		m.seats = buildSeats(state, e, heroID)
 	})
 

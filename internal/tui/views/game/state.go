@@ -28,15 +28,15 @@ type BaseState struct {
 }
 
 // SyncBaseState builds a redacted view via BoundEngine (own hand only), handing the
-// per-game state to extra in the same lock hold. Identity comes from bound.PlayerID,
+// live *State to fn in the same lock hold. Identity comes from bound.PlayerID,
 // the authenticated session's player, never from a display name.
-func SyncBaseState(bound *game.BoundEngine, extra func(any)) BaseState {
+func SyncBaseState(bound *game.BoundEngine, fn func(*game.State)) BaseState {
 	var base BaseState
 	if bound == nil {
 		return base
 	}
 
-	snap, hand, remaining := bound.Frame(extra)
+	snap, hand, remaining := bound.Frame(fn)
 	base.Phase = snap.Phase
 	base.TopDiscard = snap.TopDiscard
 	base.CurrentPlayer = snap.CurrentPlayer

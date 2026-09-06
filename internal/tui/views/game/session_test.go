@@ -250,11 +250,11 @@ func TestSyncBaseState_ReadsTheGameStateInTheSameHold(t *testing.T) {
 	var extraSeen bool
 	// Nothing in here may reach back into the engine: the callback runs under the
 	// engine lock, which is the whole point of it being one hold.
-	s.Sync(func(extra any) {
-		var state *crazyeight.State
-		state, extraSeen = extra.(*crazyeight.State)
+	s.Sync(func(state *game.State) {
+		var extra *crazyeight.State
+		extra, extraSeen = state.Extra.(*crazyeight.State)
 		if extraSeen {
-			extraSuit = state.CurrentSuit
+			extraSuit = extra.CurrentSuit
 		}
 	})
 
