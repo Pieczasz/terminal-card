@@ -96,7 +96,8 @@ func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.
 	t.Parallel()
 	tracker := NewSessionTracker(0)
 	user := &db.User{ID: 7}
-	require.NoError(t, tracker.Connect(user.ID))
+	gen, err := tracker.Connect(user.ID)
+	require.NoError(t, err)
 
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 	srv := &ssh.Server{
@@ -105,6 +106,7 @@ func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.
 			require.True(t, ok)
 			st.owns = true
 			st.user = user
+			st.gen = gen
 			st.model = panickyModel{}
 		}),
 	}
