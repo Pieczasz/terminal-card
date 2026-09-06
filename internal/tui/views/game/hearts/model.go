@@ -55,8 +55,8 @@ func New(global router.GlobalContext, engine *game.Engine) tea.Model {
 }
 
 func (m *Model) syncState() {
-	m.Sync(func(extra any) {
-		if s, ok := extra.(*logic.State); ok {
+	m.Sync(func(state *game.State) {
+		if s, ok := state.Extra.(*logic.State); ok {
 			m.stage = s.Stage
 			m.heartsBroken = s.HeartsBroken
 			m.trickCards = maps.Clone(s.TrickCards)
