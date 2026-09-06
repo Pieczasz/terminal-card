@@ -17,10 +17,7 @@ import (
 )
 
 var (
-	ErrUsernameTaken        = errors.New("username already taken, please choose another via ssh config")
-	ErrKeyAlreadyRegistered = errors.New("public key already registered")
-	ErrInvalidUsername      = errors.New("invalid username")
-	ErrUserNotFound         = errors.New("user not found")
+	ErrUserNotFound = errors.New("user not found")
 )
 
 const (
@@ -87,7 +84,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 	defer func() { endSpan(span, err) }()
 
 	if err := db.ValidateUsername(username); err != nil {
-		return nil, nil, fmt.Errorf("%w: %w", ErrInvalidUsername, err)
+		return nil, nil, fmt.Errorf("%w: %w", db.ErrInvalidUsername, err)
 	}
 
 	var currentUser db.User
@@ -97,7 +94,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 		var existingUser db.User
 		err := tx.Where("username = ?", username).First(&existingUser).Error
 		if err == nil {
-			return ErrUsernameTaken
+			return db.ErrUsernameTaken
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("check username: %w", err)
@@ -106,7 +103,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 		var existingKey db.PublicKey
 		err = tx.Where("fingerprint = ?", fingerprint).First(&existingKey).Error
 		if err == nil {
-			return ErrKeyAlreadyRegistered
+			return db.ErrKeyAlreadyRegistered
 		}
 		if !errors.Is(err, gorm.ErrRecordNotFound) {
 			return fmt.Errorf("check fingerprint: %w", err)
@@ -118,7 +115,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 		}
 		if err := tx.Create(&currentUser).Error; err != nil {
 			if isUniqueViolation(err) { // lost a concurrent registration race
-				return ErrUsernameTaken
+				return db.ErrUsernameTaken
 			}
 			return fmt.Errorf("create user: %w", err)
 		}
@@ -131,7 +128,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 		}
 		if err := tx.Create(&dbKey).Error; err != nil {
 			if isUniqueViolation(err) {
-				return ErrKeyAlreadyRegistered
+				return db.ErrKeyAlreadyRegistered
 			}
 			return fmt.Errorf("create public key: %w", err)
 		}
