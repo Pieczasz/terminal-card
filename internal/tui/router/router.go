@@ -37,7 +37,7 @@ type ChangeViewMsg struct {
 type GlobalContext struct {
 	User           *db.User
 	UserRepository db.UserRepository
-	LobbyManager   *lobby.Manager
+	LobbyManager   lobby.SessionAPI
 	GameRegistry   *game.Registry
 	// SessionCtx is canceled when the SSH session ends.
 	SessionCtx context.Context

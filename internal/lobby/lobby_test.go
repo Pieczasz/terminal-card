@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
@@ -78,7 +77,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 
-	cardGame := &db.Game{Name: "MockGame"}
+	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
@@ -113,7 +112,7 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 
-	cardGame := &db.Game{Name: "CrazyEights"}
+	cardGame := "CrazyEights"
 	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithRanked(true))
 	require.NoError(t, err)
 
@@ -130,7 +129,7 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 	require.NoError(t, l.SetMaxPlayers(leader, 5, 2, 6))
 	assert.Equal(t, 5, l.MaxPlayers())
 
-	newGame := &db.Game{Name: "Poker"}
+	newGame := "Poker"
 	require.NoError(t, l.SetCardGame(leader, newGame))
 	assert.Equal(t, newGame, l.options.cardGame)
 }
@@ -139,7 +138,7 @@ func TestLobby_DefaultCasual(t *testing.T) {
 	t.Parallel()
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
-	l, err := m.New(leader, WithCardGame(&db.Game{Name: "TestGame"}))
+	l, err := m.New(leader, WithCardGame("TestGame"))
 	require.NoError(t, err)
 	assert.False(t, l.IsRanked(), "new lobbies default to casual to limit Elo farming under open registration")
 }
@@ -149,11 +148,11 @@ func TestLobby_BasicGetters(t *testing.T) {
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("leader", 1)
 
-	cardGame := &db.Game{Name: "CrazyEights"}
+	cardGame := "CrazyEights"
 	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithMaxPlayers(4))
 	require.NoError(t, err)
 
-	assert.Equal(t, cardGame.Name, l.GameName())
+	assert.Equal(t, cardGame, l.GameName())
 	assert.Len(t, l.Code(), 8)
 	assert.NotNil(t, l.Broadcaster())
 	assert.Empty(t, l.Guests())
@@ -171,7 +170,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
-	cardGame := &db.Game{Name: "MockGame"}
+	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(true))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
@@ -235,7 +234,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
-	cardGame := &db.Game{Name: "MockGame"}
+	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(false))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
@@ -280,7 +279,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	guest := mockPlayer("p2", 2)
 	guest3 := mockPlayer("p3", 3)
 
-	l, err := m.New(leader, WithMaxPlayers(3), WithCardGame(&db.Game{Name: "Mock"}))
+	l, err := m.New(leader, WithMaxPlayers(3), WithCardGame("Mock"))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest3))
@@ -300,7 +299,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 
 	// Missing game in registry
 	leader2 := mockPlayer("p4", 4)
-	l2, err := m.New(leader2, WithCardGame(&db.Game{Name: "Missing"}))
+	l2, err := m.New(leader2, WithCardGame("Missing"))
 	require.NoError(t, err)
 	err = l2.ToggleReady(leader2, registry) // Should fail on create game rules
 	require.ErrorContains(t, err, "failed to create game rules")
@@ -315,7 +314,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	registerGame(registry, "Mock2", mockRules2)
 
 	leader3 := mockPlayer("p5", 5)
-	l3, err := m.New(leader3, WithCardGame(&db.Game{Name: "Mock2"}))
+	l3, err := m.New(leader3, WithCardGame("Mock2"))
 	require.NoError(t, err)
 	_ = m.JoinLobbyByCode(l3.Code(), guest) // guest is already in lobby l, so this join is expected to fail.
 	guest4 := mockPlayer("p6", 6)
@@ -343,7 +342,7 @@ func newTestLobby(t *testing.T, maxPlayers int) (*Manager, *Lobby, *game.Registr
 	m := NewManager(context.Background(), nil)
 	leader := mockPlayer("p1", 1)
 
-	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame(&db.Game{Name: "Mock"}))
+	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("Mock"))
 	require.NoError(t, err)
 
 	registry := game.NewRegistry()
@@ -638,10 +637,8 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			repo := new(MockMatchRepo)
 			tt.setup(repo)
 			m := NewManager(context.Background(), repo)
-			l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(tt.ranked))
-			require.NoError(t, err)
 
-			err = l.recordFinishedMatch(context.Background(), "Mock", []uint{1}, nil, tt.ranked)
+			err := m.recordFinishedMatch(context.Background(), "Mock", []uint{1}, nil, tt.ranked)
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
@@ -688,13 +685,13 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	repo := new(MockMatchRepo)
 	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
 	m := NewManager(context.Background(), repo)
-	l, err := m.New(mockPlayer("p1", 1), WithCardGame(&db.Game{Name: "Mock"}), WithRanked(true))
+	l, err := m.New(mockPlayer("p1", 1), WithCardGame("Mock"), WithRanked(true))
 	require.NoError(t, err)
 
 	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
 	t.Cleanup(engine.Close)
 
-	l.finalizeFinishedGame(engine, game.EndReasonWin)
+	l.requestFinalize(engine, game.EndReasonWin)
 
 	assert.Contains(t, logged.String(), "failed to record finished match",
 		"a lost match result has to be shouted about")

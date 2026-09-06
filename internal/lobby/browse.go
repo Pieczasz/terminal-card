@@ -109,8 +109,8 @@ func (l *Lobby) browseEntry() BrowseEntry {
 	defer l.mu.RUnlock()
 
 	gameName := ""
-	if l.options.cardGame != nil {
-		gameName = l.options.cardGame.Name
+	if l.options.cardGame != "" {
+		gameName = l.options.cardGame
 	}
 	return BrowseEntry{
 		Code:       l.code,

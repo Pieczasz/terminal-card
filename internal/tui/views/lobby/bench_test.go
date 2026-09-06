@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
@@ -28,7 +27,7 @@ func BenchmarkJoinView_Render(b *testing.B) {
 	m := lobby.NewManager(context.Background(), nil)
 	for i := range 20 {
 		leader := &game.Player{ID: fmt.Sprintf("h%d", i), UserID: uint(i + 1), Name: fmt.Sprintf("h%d", i)}
-		_, err := m.New(leader, lobby.WithPrivate(false), lobby.WithCardGame(&db.Game{Name: testGameName}))
+		_, err := m.New(leader, lobby.WithPrivate(false), lobby.WithCardGame(testGameName))
 		require.NoError(b, err)
 	}
 	view, ok := NewJoin(benchGlobal(m)).(*joinModel)
@@ -45,7 +44,7 @@ func BenchmarkLobbyView_Render(b *testing.B) {
 	manager := lobby.NewManager(context.Background(), nil)
 	leader := &game.Player{ID: "1", UserID: 1, Name: "alice"}
 	l, err := manager.New(leader, lobby.WithMaxPlayers(4), lobby.WithPrivate(false),
-		lobby.WithCardGame(&db.Game{Name: testGameName}))
+		lobby.WithCardGame(testGameName))
 	require.NoError(b, err)
 	for i := 2; i <= 4; i++ {
 		g := &game.Player{ID: fmt.Sprint(i), UserID: uint(i), Name: fmt.Sprintf("p%d", i)}

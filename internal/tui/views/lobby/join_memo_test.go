@@ -30,7 +30,10 @@ func TestJoinView_MemoizesUnchangedFrames(t *testing.T) {
 
 func TestJoinRenderKey_CoversTheListContents(t *testing.T) {
 	t.Parallel()
-	g := router.GlobalContext{Width: 100, Height: 30}
+	g := router.GlobalContext{
+		Width: 100, Height: 30,
+		LobbyManager: lobby.NewManager(t.Context(), nil),
+	}
 	m := NewJoin(g).(*joinModel)
 	m.entries = []lobby.BrowseEntry{{Code: "AAAA", GameName: "Poker", Players: 2, MaxPlayers: 4}}
 	k1 := m.renderKey()

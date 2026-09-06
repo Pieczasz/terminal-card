@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/observability"
@@ -58,15 +57,15 @@ const (
 type Option func(*options)
 
 type options struct {
-	cardGame   *db.Game
+	cardGame   string
 	maxPlayers int
 	isPrivate  bool
 	isRanked   bool
 }
 
-func WithCardGame(g *db.Game) Option {
+func WithCardGame(name string) Option {
 	return func(o *options) {
-		o.cardGame = g
+		o.cardGame = name
 	}
 }
 
@@ -142,9 +141,9 @@ func (l *Lobby) SetMaxPlayers(actor *game.Player, limit int, rulesMin, rulesMax 
 }
 
 // SetCardGame updates the selected game. Only the leader may change it while waiting.
-func (l *Lobby) SetCardGame(actor *game.Player, g *db.Game) error {
+func (l *Lobby) SetCardGame(actor *game.Player, name string) error {
 	return l.withLeaderSettings(actor, func() error {
-		l.options.cardGame = g
+		l.options.cardGame = name
 		return nil
 	})
 }
@@ -330,10 +329,7 @@ func (l *Lobby) Broadcaster() *broadcaster.Broadcaster[Event] {
 func (l *Lobby) GameName() string {
 	l.mu.RLock()
 	defer l.mu.RUnlock()
-	if l.options.cardGame == nil {
-		return ""
-	}
-	return l.options.cardGame.Name
+	return l.options.cardGame
 }
 
 func (l *Lobby) MaxPlayers() int {
@@ -485,11 +481,11 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	if !l.allReadyLocked() {
 		return nil, errors.New("not all players are ready")
 	}
-	if l.options.cardGame == nil {
+	if l.options.cardGame == "" {
 		return nil, errors.New("no card game selected")
 	}
 
-	rules, err := registry.Create(l.options.cardGame.Name)
+	rules, err := registry.Create(l.options.cardGame)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create game rules: %w", err)
 	}
@@ -516,9 +512,9 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 	l.startedAt = time.Now()
 	clear(l.ready)
 
-	observability.GameStarted(context.Background(), l.options.cardGame.Name, l.options.isRanked)
+	observability.GameStarted(context.Background(), l.options.cardGame, l.options.isRanked)
 	if !l.createdAt.IsZero() {
-		observability.LobbyStarted(context.Background(), l.options.cardGame.Name, time.Since(l.createdAt))
+		observability.LobbyStarted(context.Background(), l.options.cardGame, time.Since(l.createdAt))
 	}
 
 	l.broadcastLocked(Event{
@@ -542,7 +538,7 @@ func (l *Lobby) watchGameLocked(engine *game.Engine) {
 		observability.SubscribeFailure(l.manager.shutdownCtx(), "game")
 		slog.ErrorContext(l.manager.shutdownCtx(),
 			"cannot watch game for completion; result will not be persisted",
-			"error", err, "lobby", l.code, "game", l.options.cardGame.Name)
+			"error", err, "lobby", l.code, "game", l.options.cardGame)
 		return
 	}
 	go func() {
@@ -571,7 +567,7 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			// back to ID, so a zero-UserID stub still matches.
 			l.manager.LeaveLobby(&game.Player{ID: event.PlayerID})
 		case game.EventGameEnded:
-			l.finalizeFinishedGame(engine, event.Reason)
+			l.requestFinalize(engine, event.Reason)
 			// Reopen now, not on the next ready press: until it does the lobby is still
 			// InGame and an inherited leader can change no setting on the screen.
 			l.releaseFinishedGame()
@@ -583,8 +579,24 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 	// latest-wins and can drop EventGameEnded, and RemoveLobby closes the feed from
 	// under this goroutine.
 	if engine.IsFinished() {
-		l.finalizeFinishedGame(engine, game.EndReasonUnknown)
+		l.requestFinalize(engine, game.EndReasonUnknown)
 	}
+}
+
+// requestFinalize hands the finished table to Manager for persistence.
+func (l *Lobby) requestFinalize(engine *game.Engine, reason game.EndReason) {
+	if l.manager == nil {
+		return
+	}
+	l.mu.RLock()
+	req := finalizeRequest{
+		lobbyCode: l.code,
+		gameName:  l.options.cardGame,
+		isRanked:  l.options.isRanked,
+		startedAt: l.startedAt,
+	}
+	l.mu.RUnlock()
+	l.manager.finalizeFinishedGame(req, engine, reason)
 }
 
 // releaseFinishedGameLocked returns a finished lobby to Waiting and hands back the
@@ -617,120 +629,3 @@ func (l *Lobby) releaseFinishedGame() {
 	}
 }
 
-// finalizeFinishedGame persists the result of a game that just ended. registerFinalizer
-// runs before anything else: every statement between observing the end and that call is
-// a window for shutdown to begin, and a refusal then drops a finished match with
-// nothing left for WaitForFinalizers to wait on.
-func (l *Lobby) finalizeFinishedGame(engine *game.Engine, reason game.EndReason) {
-	// Guarded before any use of l.manager below, not after.
-	if l.manager == nil || l.manager.matchRepo == nil {
-		return
-	}
-	registered := l.manager.registerFinalizer()
-	parentCtx := l.manager.shutdownCtx()
-
-	l.mu.RLock()
-	isRanked := l.options.isRanked
-	startedAt := l.startedAt
-	gameName := ""
-	if l.options.cardGame != nil {
-		gameName = l.options.cardGame.Name
-	}
-	l.mu.RUnlock()
-
-	if !registered {
-		slog.ErrorContext(parentCtx, "finished match dropped; shutdown stopped new finalizers",
-			"lobby", l.code, "game", gameName, "ranked", isRanked)
-		observability.MatchFinalize(parentCtx, "dropped", isRanked)
-		return
-	}
-	defer l.manager.finalizing.Done()
-
-	if !startedAt.IsZero() {
-		observability.GameFinished(parentCtx, gameName, isRanked, endReasonLabel(reason), time.Since(startedAt))
-	}
-	if gameName == "" {
-		return
-	}
-
-	ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
-	defer cancel()
-	l.persistFinishedMatch(ctx, engine, reason, gameName, isRanked)
-}
-
-// endReasonLabel keeps the metric attribute a small closed set.
-func endReasonLabel(reason game.EndReason) string {
-	switch reason {
-	case game.EndReasonWin:
-		return "win"
-	case game.EndReasonRulesError:
-		return "rules_error"
-	case game.EndReasonForfeit:
-		return "forfeit"
-	case game.EndReasonAbandoned:
-		return "abandoned"
-	case game.EndReasonUnknown:
-		return "unknown"
-	default:
-		return "unknown"
-	}
-}
-
-// persistFinishedMatch writes the standings of a finished game. Both bail-outs log the
-// lobby: a match that never reaches the database is invisible except through this line.
-func (l *Lobby) persistFinishedMatch(
-	ctx context.Context, engine *game.Engine, reason game.EndReason, gameName string, isRanked bool,
-) {
-	standings, places := engine.StandingsWithPlaces()
-	// A table every seat walked out of has no result worth a row.
-	if reason == game.EndReasonAbandoned && len(standings) == 0 {
-		return
-	}
-
-	userIDs := make([]uint, 0, len(standings))
-	for i, p := range standings {
-		if p == nil || p.UserID == 0 {
-			slog.ErrorContext(ctx, "standing player has no database user; match not recorded",
-				"lobby", l.code, "game", gameName, "ranked", isRanked, "player_index", i)
-			observability.MatchFinalize(ctx, "dropped", isRanked)
-			return
-		}
-		userIDs = append(userIDs, p.UserID)
-	}
-
-	// A match the deploy interrupted has no honest winner: SSH teardown order, not
-	// play, decided who was left holding cards. The history row is still wanted, the
-	// Elo write is not.
-	rated := isRanked && !l.manager.isShuttingDown()
-	if isRanked && !rated {
-		slog.WarnContext(ctx, "server is shutting down; recording the ranked match without Elo",
-			"lobby", l.code, "game", gameName)
-	}
-
-	if err := l.recordFinishedMatch(ctx, gameName, userIDs, places, rated); err != nil {
-		slog.ErrorContext(ctx, "failed to record finished match",
-			"error", err, "lobby", l.code, "game", gameName, "ranked", rated)
-		observability.MatchFinalize(ctx, "error", isRanked)
-		return
-	}
-	observability.MatchFinalize(ctx, "ok", isRanked)
-}
-
-// recordFinishedMatch writes match history for every finished game. Only a ranked
-// lobby also moves Elo; a casual one still belongs in the players' history.
-func (l *Lobby) recordFinishedMatch(
-	ctx context.Context, gameName string, userIDs []uint, places []int, isRanked bool,
-) error {
-	repo := l.manager.matchRepo
-	if isRanked {
-		if err := repo.FinalizeRankedMatch(ctx, gameName, userIDs, places); err != nil {
-			return fmt.Errorf("finalize ranked match: %w", err)
-		}
-		return nil
-	}
-	// A casual result is history only, it must not move ratings.
-	if err := repo.RecordCasualMatch(ctx, gameName, userIDs); err != nil {
-		return fmt.Errorf("record casual match: %w", err)
-	}
-	return nil
-}

@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
@@ -31,7 +30,7 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	guests := []*game.Player{newPlayer(2, "bob"), newPlayer(3, "carol"), newPlayer(4, "dave")}
 
 	l, err := manager.New(leader,
-		lobby.WithCardGame(&db.Game{Name: pokerGame}),
+		lobby.WithCardGame(pokerGame),
 		lobby.WithMaxPlayers(2),
 		lobby.WithPrivate(true),
 	)
@@ -104,7 +103,7 @@ func TestSystemLobbyRespectsGameBounds(t *testing.T) {
 
 	leader := newPlayer(1, "alice")
 	l, err := manager.New(leader,
-		lobby.WithCardGame(&db.Game{Name: pokerGame}),
+		lobby.WithCardGame(pokerGame),
 		lobby.WithMaxPlayers(2),
 	)
 	require.NoError(t, err)
@@ -126,7 +125,7 @@ func TestSystemLeaderLeavingPromotesGuest(t *testing.T) {
 	leader := newPlayer(1, "alice")
 	guest := newPlayer(2, "bob")
 
-	l, err := manager.New(leader, lobby.WithCardGame(&db.Game{Name: pokerGame}), lobby.WithMaxPlayers(4))
+	l, err := manager.New(leader, lobby.WithCardGame(pokerGame), lobby.WithMaxPlayers(4))
 	require.NoError(t, err)
 	require.NoError(t, manager.JoinLobbyByCode(l.Code(), guest))
 

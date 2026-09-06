@@ -5,7 +5,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
@@ -18,7 +17,7 @@ import (
 func openPublicTable(t *testing.T, m *lobby.Manager, id string, dbID uint, gameName string, opts ...lobby.Option) *lobby.Lobby {
 	t.Helper()
 	leader := &game.Player{ID: id, UserID: dbID, Name: id}
-	opts = append([]lobby.Option{lobby.WithPrivate(false), lobby.WithCardGame(&db.Game{Name: gameName})}, opts...)
+	opts = append([]lobby.Option{lobby.WithPrivate(false), lobby.WithCardGame(gameName)}, opts...)
 	l, err := m.New(leader, opts...)
 	require.NoError(t, err)
 	return l
