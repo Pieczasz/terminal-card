@@ -397,3 +397,20 @@ func TestFinalizeRankedMatchCountsMatchesPlayed(t *testing.T) {
 		assert.NotEqual(t, uint32(elo.DefaultRating), r.Elo)
 	}
 }
+
+// Soft-deleted rankings used to make seed's ON CONFLICT DO NOTHING leave fetch
+// empty, aborting the whole table's Elo write.
+func TestFinalizeRankedMatchRevivesSoftDeletedRanking(t *testing.T) {
+	gormDB := testutil.SetupTestDB(t)
+	gameID, userIDs := antiFarmTable(t, gormDB, "Poker", seat{1600, 3}, seat{1400, 3})
+
+	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userIDs[0], gameID).
+		Delete(&db.Ranking{}).Error)
+
+	repo := repository.NewMatchRepository(gormDB)
+	require.NoError(t, repo.FinalizeRankedMatch(context.Background(), "Poker", userIDs, nil))
+
+	r := rankingOf(t, gormDB, userIDs[0], gameID)
+	assert.False(t, r.DeletedAt.Valid, "the soft-deleted row is revived")
+	assert.Equal(t, uint64(4), r.MatchesPlayed)
+}

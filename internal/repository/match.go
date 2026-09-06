@@ -2,7 +2,9 @@ package repository
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"slices"
 	"strconv"
@@ -139,7 +141,15 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 // hits 23505, rolls back and loses the match. Sorted by user_id because a conflicting
 // insert still waits on the inserting transaction, though the ordering that matters is
 // fetchRankings' - ON CONFLICT DO NOTHING takes no lock on an existing row.
+//
+// Soft-deleted rankings are revived first: DO NOTHING leaves them invisible to the
+// default scope, and a missing row used to abort the whole table's finalize.
 func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
+	if err := tx.Unscoped().Model(&db.Ranking{}).
+		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", userIDs, gameID).
+		Update("deleted_at", nil).Error; err != nil {
+		return fmt.Errorf("revive rankings: %w", err)
+	}
 	seeds := make([]db.Ranking, 0, len(userIDs))
 	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
 		seeds = append(seeds, db.Ranking{UserID: userID, GameID: gameID, Elo: elo.ToUint32(elo.DefaultRating)})
@@ -170,6 +180,13 @@ const (
 func (q *gormMatchRepository) updateRankingsTx(
 	ctx context.Context, tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
 ) (map[uint]int, error) {
+	// Serialize same-pairing finalizes across every game: ranking row locks are
+	// per (user, game), so A–B farming Poker and Hearts concurrently would both
+	// see an undamped count without this.
+	if err := lockPairing(tx, orderedUserIDs); err != nil {
+		return nil, err
+	}
+
 	if err := seedRankingRows(tx, gameID, orderedUserIDs); err != nil {
 		return nil, err
 	}
@@ -237,9 +254,8 @@ func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool
 // samePairingCountLast24h counts recent ranked matches whose participant set is
 // exactly userIDs, across every game - a pair farming each other does not become
 // legitimate by switching table. One participant's recent matches bound the scan and
-// the sets are compared in Go, which is cheap at these volumes. Plain reads inside
-// the caller's transaction: locking history rows would buy nothing, since a
-// concurrent finalize that started a millisecond earlier is not in them yet either.
+// the sets are compared in Go, which is cheap at these volumes. Callers must hold
+// lockPairing so concurrent finalizes of the same set cannot both underrun the cap.
 func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
 	var matchIDs []uint
 	if err := tx.Model(&db.MatchParticipant{}).
@@ -272,6 +288,24 @@ func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
 		}
 	}
 	return count, nil
+}
+
+func lockPairing(tx *gorm.DB, userIDs []uint) error {
+	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", pairingAdvisoryKey(userIDs)).Error; err != nil {
+		return fmt.Errorf("lock pairing: %w", err)
+	}
+	return nil
+}
+
+func pairingAdvisoryKey(userIDs []uint) int64 {
+	h := fnv.New64a()
+	for _, id := range slices.Sorted(slices.Values(userIDs)) {
+		var buf [8]byte
+		binary.LittleEndian.PutUint64(buf[:], uint64(id))
+		_, _ = h.Write(buf[:])
+	}
+	// Advisory keys are opaque coordination tokens, not secrets.
+	return int64(h.Sum64()) //nolint:gosec // G115: lock key space is intentionally 64-bit wrap
 }
 
 func (q *gormMatchRepository) recordMatchTx(
