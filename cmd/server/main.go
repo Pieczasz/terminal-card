@@ -330,6 +330,7 @@ func serve(ctx context.Context, d serveDeps) error {
 
 	select {
 	case err := <-serveErr:
+		drainServer(d.onShutdown, server)
 		if err != nil {
 			return fmt.Errorf("ssh accept loop failed: %w", err)
 		}
@@ -337,19 +338,20 @@ func serve(ctx context.Context, d serveDeps) error {
 	case err := <-d.apiErr:
 		// This teardown ends live matches the same way a deploy does, so they
 		// must not be rated either.
-		if d.onShutdown != nil {
-			d.onShutdown()
-		}
-		stopServer(server)
+		drainServer(d.onShutdown, server)
 		return err
 	case <-done:
 	}
 
-	if d.onShutdown != nil {
-		d.onShutdown()
+	drainServer(d.onShutdown, server)
+	return nil
+}
+
+func drainServer(onShutdown func(), server sshServer) {
+	if onShutdown != nil {
+		onShutdown()
 	}
 	stopServer(server)
-	return nil
 }
 
 // stopServer drains in-flight sessions, then closes whatever is left.
