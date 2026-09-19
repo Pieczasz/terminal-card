@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/observability"
 )
@@ -14,7 +15,7 @@ import (
 // Lobby gathers it under its lock; Manager owns the write.
 type finalizeRequest struct {
 	lobbyCode string
-	gameName  string
+	game      db.GameRef
 	isRanked  bool
 	startedAt time.Time
 }
@@ -32,22 +33,41 @@ func (m *Manager) finalizeFinishedGame(req finalizeRequest, engine *game.Engine,
 
 	if !registered {
 		slog.ErrorContext(parentCtx, "finished match dropped; shutdown stopped new finalizers",
-			"lobby", req.lobbyCode, "game", req.gameName, "ranked", req.isRanked)
+			"lobby", req.lobbyCode, "game", req.game.Slug, "ranked", req.isRanked)
 		observability.MatchFinalize(parentCtx, "dropped", req.isRanked)
 		return
 	}
 	defer m.finalizing.Done()
 
 	if !req.startedAt.IsZero() {
-		observability.GameFinished(parentCtx, req.gameName, req.isRanked, endReasonLabel(reason), time.Since(req.startedAt))
+		observability.GameFinished(parentCtx, req.game.Name, req.isRanked, endReasonLabel(reason), time.Since(req.startedAt))
 	}
-	if req.gameName == "" {
+	if req.game.Slug == "" {
+		// Every other bail-out says so; this one used to drop a finished match in
+		// silence. A lobby cannot start a game the registry does not hold, so an empty
+		// slug means the snapshot and the registry disagree.
+		slog.ErrorContext(parentCtx, "finished match dropped; the lobby recorded no game",
+			"lobby", req.lobbyCode, "ranked", req.isRanked)
+		observability.MatchFinalize(parentCtx, "dropped", req.isRanked)
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(parentCtx, rankedFinalizeTimeout)
 	defer cancel()
 	m.persistFinishedMatch(ctx, engine, reason, req)
+}
+
+// unratedReason says why a ranked match is being recorded without moving Elo. Only the
+// three reasons persistFinishedMatch strips the rating for reach it.
+func unratedReason(reason game.EndReason) string {
+	switch reason {
+	case game.EndReasonRulesError:
+		return "rules error ended the match; recording without Elo"
+	case game.EndReasonAbandoned:
+		return "every seat left the match; recording without Elo"
+	case game.EndReasonWin, game.EndReasonForfeit, game.EndReasonUnknown:
+	}
+	return "server is shutting down; recording the ranked match without Elo"
 }
 
 func endReasonLabel(reason game.EndReason) string {
@@ -72,6 +92,11 @@ func (m *Manager) persistFinishedMatch(
 ) {
 	standings, places := engine.StandingsWithPlaces()
 	if reason == game.EndReasonAbandoned && len(standings) == 0 {
+		// Nobody was left to record, so there is no history to write - but it is still
+		// a finished match that produced no row, which is what the counter tracks.
+		slog.WarnContext(ctx, "abandoned match had no standings; nothing recorded",
+			"lobby", req.lobbyCode, "game", req.game.Slug, "ranked", req.isRanked)
+		observability.MatchFinalize(ctx, "dropped", req.isRanked)
 		return
 	}
 
@@ -79,7 +104,7 @@ func (m *Manager) persistFinishedMatch(
 	for i, p := range standings {
 		if p == nil || p.UserID == 0 {
 			slog.ErrorContext(ctx, "standing player has no database user; match not recorded",
-				"lobby", req.lobbyCode, "game", req.gameName, "ranked", req.isRanked, "player_index", i)
+				"lobby", req.lobbyCode, "game", req.game.Slug, "ranked", req.isRanked, "player_index", i)
 			observability.MatchFinalize(ctx, "dropped", req.isRanked)
 			return
 		}
@@ -93,22 +118,12 @@ func (m *Manager) persistFinishedMatch(
 	rated := req.isRanked && !m.isShuttingDown() &&
 		reason != game.EndReasonRulesError && reason != game.EndReasonAbandoned
 	if req.isRanked && !rated {
-		switch {
-		case reason == game.EndReasonRulesError:
-			slog.WarnContext(ctx, "rules error ended the match; recording without Elo",
-				"lobby", req.lobbyCode, "game", req.gameName)
-		case reason == game.EndReasonAbandoned:
-			slog.WarnContext(ctx, "every seat left the match; recording without Elo",
-				"lobby", req.lobbyCode, "game", req.gameName)
-		default:
-			slog.WarnContext(ctx, "server is shutting down; recording the ranked match without Elo",
-				"lobby", req.lobbyCode, "game", req.gameName)
-		}
+		slog.WarnContext(ctx, unratedReason(reason), "lobby", req.lobbyCode, "game", req.game.Slug)
 	}
 
-	if err := m.recordFinishedMatch(ctx, req.gameName, userIDs, places, rated); err != nil {
+	if err := m.recordFinishedMatch(ctx, req.game, userIDs, places, rated); err != nil {
 		slog.ErrorContext(ctx, "failed to record finished match",
-			"error", err, "lobby", req.lobbyCode, "game", req.gameName, "ranked", rated)
+			"error", err, "lobby", req.lobbyCode, "game", req.game.Slug, "ranked", rated)
 		observability.MatchFinalize(ctx, "error", req.isRanked)
 		return
 	}
@@ -116,15 +131,15 @@ func (m *Manager) persistFinishedMatch(
 }
 
 func (m *Manager) recordFinishedMatch(
-	ctx context.Context, gameName string, userIDs []uint, places []int, isRanked bool,
+	ctx context.Context, ref db.GameRef, userIDs []uint, places []int, isRanked bool,
 ) error {
 	if isRanked {
-		if err := m.matchRepo.FinalizeRankedMatch(ctx, gameName, userIDs, places); err != nil {
+		if err := m.matchRepo.FinalizeRankedMatch(ctx, ref, userIDs, places); err != nil {
 			return fmt.Errorf("finalize ranked match: %w", err)
 		}
 		return nil
 	}
-	if err := m.matchRepo.RecordCasualMatch(ctx, gameName, userIDs); err != nil {
+	if err := m.matchRepo.RecordCasualMatch(ctx, ref, userIDs); err != nil {
 		return fmt.Errorf("record casual match: %w", err)
 	}
 	return nil

@@ -5,10 +5,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
@@ -56,15 +59,40 @@ type MockMatchRepo struct {
 }
 
 func (m *MockMatchRepo) RecordCasualMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uint,
 ) error {
-	return m.Called(ctx, gameName, orderedUserIDs).Error(0)
+	return m.Called(ctx, ref, orderedUserIDs).Error(0)
 }
 
 func (m *MockMatchRepo) FinalizeRankedMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uint, places []int,
 ) error {
-	return m.Called(ctx, gameName, orderedUserIDs, places).Error(0)
+	return m.Called(ctx, ref, orderedUserIDs, places).Error(0)
+}
+
+// gameRef mirrors what registerGame put in the registry: the persisted key is the
+// slug, so an expectation written against the display name would pass while the row
+// was being written under a different identity.
+func gameRef(name string) db.GameRef {
+	return db.GameRef{Slug: strings.ToLower(name), Name: name}
+}
+
+// newTestManager is NewManager with teardown. A started game parks a watcher
+// goroutine on the engine feed, and closing the engine - which only RemoveLobby does -
+// is what ends it. Production always gets there; a test that drops the manager on the
+// floor would strand the goroutine and trip goleak.
+func newTestManager(t *testing.T, repo db.MatchRepository) *Manager {
+	t.Helper()
+	m := NewManager(context.Background(), repo)
+	t.Cleanup(func() {
+		m.mu.RLock()
+		codes := slices.Collect(maps.Keys(m.lobbies))
+		m.mu.RUnlock()
+		for _, code := range codes {
+			m.RemoveLobby(code)
+		}
+	})
+	return m
 }
 
 func mockPlayer(id string, dbID uint) *game.Player {
@@ -73,7 +101,7 @@ func mockPlayer(id string, dbID uint) *game.Player {
 
 func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 
@@ -109,7 +137,7 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 func TestLobby_SettersAndGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("p1", 1)
 
 	cardGame := "CrazyEights"
@@ -136,7 +164,7 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 func TestLobby_DefaultCasual(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithCardGame("TestGame"))
 	require.NoError(t, err)
@@ -145,7 +173,7 @@ func TestLobby_DefaultCasual(t *testing.T) {
 
 func TestLobby_BasicGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("leader", 1)
 
 	cardGame := "CrazyEights"
@@ -166,7 +194,7 @@ func TestLobby_BasicGetters(t *testing.T) {
 func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
-	m := NewManager(context.Background(), mockRepo)
+	m := newTestManager(t, mockRepo)
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
@@ -189,7 +217,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}, mock.Anything).
+	mockRepo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}, mock.Anything).
 		Run(func(mock.Arguments) {
 			close(done)
 		}).
@@ -230,7 +258,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
-	m := NewManager(context.Background(), mockRepo)
+	m := newTestManager(t, mockRepo)
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
@@ -251,7 +279,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
+	mockRepo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}).
 		Run(func(mock.Arguments) { close(done) }).
 		Return(nil)
 
@@ -274,7 +302,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 
 func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 	guest3 := mockPlayer("p3", 3)
@@ -339,7 +367,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 // maxPlayers, for tests that care about lobby bookkeeping rather than the game.
 func newTestLobby(t *testing.T, maxPlayers int) (*Manager, *Lobby, *game.Registry) {
 	t.Helper()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("p1", 1)
 
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("Mock"))
@@ -605,27 +633,27 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			name:   "ranked success",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(nil)
+				r.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uint{1}, mock.Anything).Return(nil)
 			},
 		},
 		{
 			name:   "ranked failure is reported",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
+				r.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uint{1}, mock.Anything).Return(assert.AnError)
 			},
 			wantErr: "finalize ranked match",
 		},
 		{
 			name: "casual success",
 			setup: func(r *MockMatchRepo) {
-				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(nil)
+				r.On("RecordCasualMatch", mock.Anything, gameRef("Mock"), []uint{1}).Return(nil)
 			},
 		},
 		{
 			name: "casual failure is reported",
 			setup: func(r *MockMatchRepo) {
-				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+				r.On("RecordCasualMatch", mock.Anything, gameRef("Mock"), []uint{1}).Return(assert.AnError)
 			},
 			wantErr: "record casual match",
 		},
@@ -636,9 +664,9 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			t.Parallel()
 			repo := new(MockMatchRepo)
 			tt.setup(repo)
-			m := NewManager(context.Background(), repo)
+			m := newTestManager(t, repo)
 
-			err := m.recordFinishedMatch(context.Background(), "Mock", []uint{1}, nil, tt.ranked)
+			err := m.recordFinishedMatch(context.Background(), gameRef("Mock"), []uint{1}, nil, tt.ranked)
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
@@ -683,8 +711,8 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(original) })
 
 	repo := new(MockMatchRepo)
-	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
-	m := NewManager(context.Background(), repo)
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uint{1}, mock.Anything).Return(assert.AnError)
+	m := newTestManager(t, repo)
 	l, err := m.New(mockPlayer("p1", 1), WithCardGame("Mock"), WithRanked(true))
 	require.NoError(t, err)
 
@@ -693,7 +721,7 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 
 	l.requestFinalize(engine, game.EndReasonWin, finalizeRequest{
 		lobbyCode: l.code,
-		gameName:  "Mock",
+		game:      gameRef("Mock"),
 		isRanked:  true,
 		startedAt: time.Now(),
 	})
@@ -807,10 +835,10 @@ func TestLobby_FinalizeUsesTheSettingsTheGameStartedWith(t *testing.T) {
 	t.Parallel()
 	repo := new(MockMatchRepo)
 	done := make(chan struct{})
-	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uint{1}, mock.Anything).
 		Return(nil).Run(func(mock.Arguments) { close(done) })
 
-	m := NewManager(context.Background(), repo)
+	m := newTestManager(t, repo)
 	leader := mockPlayer("p1", 1)
 	l, err := m.New(leader, WithCardGame("Mock"), WithRanked(true))
 	require.NoError(t, err)

@@ -2,7 +2,6 @@ package lobby
 
 import (
 	"bytes"
-	"context"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -22,7 +21,7 @@ import (
 // players are ready, with the watcher goroutine running.
 func newFinishedGameLobby(t *testing.T, repo db.MatchRepository) (*Manager, *Lobby, *game.Engine) {
 	t.Helper()
-	m := NewManager(context.Background(), repo)
+	m := newTestManager(t, repo)
 	leader := mockPlayer("leader", 1)
 	guest := mockPlayer("guest", 2)
 
@@ -58,7 +57,7 @@ func TestConcurrent_FinalizeRacesRemoveLobby(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 4)
-	repo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}, mock.Anything).
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}, mock.Anything).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -88,7 +87,7 @@ func TestFinalize_IsNotAppliedTwice(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	calls := make(chan struct{}, 4)
-	repo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}, mock.Anything).
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}, mock.Anything).
 		Run(func(mock.Arguments) { calls <- struct{}{} }).
 		Return(nil)
 
@@ -166,6 +165,12 @@ func (b *syncBuffer) Reset() {
 	b.buf.Reset()
 }
 
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 func (b *syncBuffer) contains(want string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -204,7 +209,7 @@ func TestKick_IsRejectedWhileInGame(t *testing.T) {
 func TestToggleReady_FailedStartStillBroadcasts(t *testing.T) {
 	t.Parallel()
 
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("p1", 1)
 	guest := mockPlayer("p2", 2)
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("Unregistered"))
@@ -228,7 +233,7 @@ func TestToggleReady_FailedStartStillBroadcasts(t *testing.T) {
 func TestWaitForFinalizers_TimeoutDoesNotLeakItsWaiter(t *testing.T) {
 	t.Parallel()
 
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	require.True(t, m.registerFinalizer())
 
 	assert.False(t, m.WaitForFinalizers(10*time.Millisecond), "an in-flight write blocks the drain")
@@ -255,7 +260,7 @@ func TestFinalize_InterruptedRankedMatchIsRecordedWithoutElo(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 1)
-	repo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
+	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -280,7 +285,7 @@ func TestFinalize_RulesErrorIsRecordedWithoutElo(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 1)
-	repo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
+	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -392,3 +397,148 @@ func TestDisconnectPlayer_WaitingLobbyLeavesImmediately(t *testing.T) {
 	assert.False(t, l.HasPlayer(guest), "nothing is lost by leaving a waiting lobby")
 	assert.Nil(t, m.FindLobbyByPlayer(guest))
 }
+
+// startedGame is a two-seat lobby with a running game - the only state in which a
+// dropped session keeps its seat instead of leaving at once.
+func startedGame(t *testing.T) (*Manager, *Lobby, *game.Player, *game.Player) {
+	t.Helper()
+	m, l, registry := newTestLobby(t, 2)
+	leader := l.Leader()
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+	require.NoError(t, l.ToggleReady(leader, registry))
+	require.NoError(t, l.ToggleReady(guest, registry))
+	require.NotNil(t, l.ActiveGame(), "the game did not start")
+	return m, l, leader, guest
+}
+
+func pendingGrace(m *Manager, id string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.grace.pending[id]
+	return ok
+}
+
+// The watcher goroutine is the only consumer of EventPlayerIdle, and it used to be
+// skipped entirely when no match repository was configured. The engine then dropped
+// the seat while the lobby roster kept it, and the table could never reach all-ready
+// again.
+func TestLobby_IdleRemovalLeavesTheRosterWithoutAMatchRepository(t *testing.T) {
+	t.Parallel()
+	m, l, _, guest := startedGame(t)
+
+	l.ActiveGame().Broadcaster().Broadcast(game.Event{Type: game.EventPlayerIdle, PlayerID: guest.ID})
+
+	require.Eventually(t, func() bool { return !l.HasPlayer(guest) }, 2*time.Second, 10*time.Millisecond,
+		"the engine took the seat but the lobby roster kept it")
+	assert.Nil(t, m.FindLobbyByPlayer(guest))
+}
+
+// A seat is held for a reconnect because the hand is still running. Once the game is
+// over the lobby is Waiting, where DisconnectPlayer gives a seat up immediately - so a
+// hold that outlives the hand locks the player out of every table for up to 90s.
+func TestDisconnectPlayer_HeldSeatIsGivenUpWhenTheGameEnds(t *testing.T) {
+	t.Parallel()
+	m, l, leader, guest := startedGame(t)
+
+	m.DisconnectPlayer(guest)
+	require.True(t, l.HasPlayer(guest), "a mid-game seat is held, not dropped")
+	require.True(t, pendingGrace(m, guest.ID))
+
+	// The last player leaving finishes the engine, which is what the watcher turns
+	// into a finalize and a reopened table.
+	m.LeaveLobby(leader)
+
+	require.Eventually(t, func() bool { return m.FindLobbyByPlayer(guest) == nil },
+		2*time.Second, 10*time.Millisecond,
+		"the finished table kept holding a seat for a session that is gone")
+	assert.False(t, pendingGrace(m, guest.ID), "the grace timer outlived the game")
+}
+
+// A timer armed for a reconnect fires long after the drain is over: nothing would
+// then remove the lobby or close its engine, and the player is not coming back to a
+// process that is exiting.
+func TestBeginShutdown_GivesUpSeatsHeldForAReconnect(t *testing.T) {
+	t.Parallel()
+	m, l, _, guest := startedGame(t)
+
+	m.DisconnectPlayer(guest)
+	require.True(t, pendingGrace(m, guest.ID))
+
+	m.BeginShutdown()
+
+	assert.False(t, pendingGrace(m, guest.ID), "a grace timer survived shutdown")
+	assert.False(t, l.HasPlayer(guest), "the seat was still held when the process went away")
+	assert.Nil(t, m.FindLobbyByPlayer(guest))
+}
+
+// ResumePlayer's two siblings re-validate the index against the roster; it did not,
+// so a stale entry routed the reconnect into a lobby that no longer held them.
+func TestResumePlayer_DropsAStaleIndexEntry(t *testing.T) {
+	t.Parallel()
+	m, l, _ := newTestLobby(t, 3)
+	guest := mockPlayer("p2", 2)
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
+
+	l.mu.Lock()
+	l.guests = nil
+	l.mu.Unlock()
+
+	assert.Nil(t, m.ResumePlayer(guest), "resumed into a lobby whose roster has no such player")
+	m.mu.RLock()
+	_, stale := m.playerLobby[guest.ID]
+	m.mu.RUnlock()
+	assert.False(t, stale, "the stale index entry survived the lookup")
+}
+
+// A finished match that produces no row still has to show up as one: these two paths
+// were the only bail-outs that dropped a result with no log and no counter.
+//
+//nolint:paralleltest // slog.SetDefault is process-wide, so this cannot share the process
+func TestFinalize_SilentDropsAreCountedAndLogged(t *testing.T) {
+	tests := []struct {
+		name    string
+		req     finalizeRequest
+		reason  game.EndReason
+		wantLog string
+	}{
+		{
+			name:    "no game on the snapshot",
+			req:     finalizeRequest{lobbyCode: "AAAAAAAA", isRanked: true, startedAt: time.Now()},
+			reason:  game.EndReasonWin,
+			wantLog: "the lobby recorded no game",
+		},
+		{
+			name:    "abandoned with nobody left standing",
+			req:     finalizeRequest{lobbyCode: "BBBBBBBB", game: gameRef("Mock"), startedAt: time.Now()},
+			reason:  game.EndReasonAbandoned,
+			wantLog: "abandoned match had no standings",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logged syncBuffer
+			original := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelWarn})))
+			t.Cleanup(func() { slog.SetDefault(original) })
+
+			repo := new(MockMatchRepo)
+			m := newTestManager(t, repo)
+			engine := game.NewEngine(&noStandingsRules{}, nil, deck.StandardDeck())
+			t.Cleanup(engine.Close)
+
+			m.finalizeFinishedGame(tt.req, engine, tt.reason)
+
+			assert.True(t, logged.contains(tt.wantLog), "the drop was silent: %s", logged.String())
+			repo.AssertNotCalled(t, "FinalizeRankedMatch", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+			repo.AssertNotCalled(t, "RecordCasualMatch", mock.Anything, mock.Anything, mock.Anything)
+		})
+	}
+}
+
+// noStandingsRules is stubRules with an empty standings list, which is the shape an
+// abandoned table leaves behind.
+type noStandingsRules struct{ stubRules }
+
+func (noStandingsRules) Standings(*game.State) []*game.Player { return nil }

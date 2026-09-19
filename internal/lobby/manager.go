@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math/big"
 	"regexp"
 	"slices"
@@ -240,11 +241,6 @@ func (m *Manager) FindLobbyByCode(code string) (*Lobby, error) {
 	return lobby, nil
 }
 
-// LeaveLobby drops a player from their lobby. The roster mutation and the
-// playerLobby index update happen under one hold of m.mu (taking l.mu inside it, per
-// the documented manager-then-lobby order), so the two can never disagree about
-// where a player is. The engine and broadcast calls run with both locks dropped, the
-// way Kick does it.
 // DisconnectPlayer is what a dropped session calls instead of LeaveLobby: a seat
 // in a running game is kept for DisconnectGrace so the player can reconnect, while
 // a seat in a waiting lobby is given up immediately (nothing is lost by leaving).
@@ -253,12 +249,17 @@ func (m *Manager) DisconnectPlayer(p *game.Player) {
 	if p == nil {
 		return
 	}
+
+	m.mu.Lock()
+	// Read under m.mu, not before it: BeginShutdown sets the flag and then takes this
+	// lock to drain the pending graces, so a disconnect that saw "not shutting down"
+	// outside the lock could arm its timer after the drain had already walked the map
+	// - a seat held for a reconnect to a process that is exiting.
 	if m.shuttingDown.Load() {
+		m.mu.Unlock()
 		m.LeaveLobby(p)
 		return
 	}
-
-	m.mu.Lock()
 	l, ok := m.playerLobby[p.ID]
 	if !ok || l == nil {
 		m.mu.Unlock()
@@ -313,9 +314,19 @@ func (m *Manager) ResumePlayer(p *game.Player) *Lobby {
 	} else if cancelled {
 		slog.Info("player reconnected inside the grace window", "player_id", p.ID)
 	}
+	// Same re-validation FindLobbyByPlayer and New do: a stale index entry would
+	// route the reconnect into a lobby whose roster no longer holds them.
+	if !m.playerInLobbyLocked(p) {
+		return nil
+	}
 	return m.playerLobby[p.ID]
 }
 
+// LeaveLobby drops a player from their lobby. The roster mutation and the
+// playerLobby index update happen under one hold of m.mu (taking l.mu inside it, per
+// the documented manager-then-lobby order), so the two can never disagree about
+// where a player is. The engine and broadcast calls run with both locks dropped, the
+// way Kick does it.
 func (m *Manager) LeaveLobby(p *game.Player) {
 	if p == nil {
 		return
@@ -369,9 +380,48 @@ func (m *Manager) registerFinalizer() bool {
 // BeginShutdown marks the process as going away without stopping finished-match
 // writes: a hand that ends while sessions are torn down still belongs in the
 // players' history, it just must not move anyone's rating.
+//
+// Seats still held for a reconnect are given up here. Their timers would fire long
+// after the drain, so the lobby would never be removed and its engine never closed -
+// the player is not coming back to a process that is exiting.
 func (m *Manager) BeginShutdown() {
-	if m != nil {
-		m.shuttingDown.Store(true)
+	if m == nil {
+		return
+	}
+	m.shuttingDown.Store(true)
+	m.mu.Lock()
+	held := make([]*game.Player, 0, len(m.grace.pending))
+	for id := range m.grace.pending {
+		held = append(held, &game.Player{ID: id})
+	}
+	m.mu.Unlock()
+	// LeaveLobby stops the timer under m.mu before touching the roster.
+	for _, p := range held {
+		m.LeaveLobby(p)
+	}
+}
+
+// releaseHeldSeats gives up every seat this table is holding for a dropped session.
+// The hold only makes sense mid-hand: once the game is over the lobby is Waiting, and
+// DisconnectPlayer gives a Waiting seat up at once. Leaving it armed keeps the player
+// out of every other table - and this one unable to reach all-ready - until the timer
+// fires, up to DisconnectGrace later.
+func (m *Manager) releaseHeldSeats(l *Lobby) {
+	if m == nil || l == nil {
+		return
+	}
+	m.mu.Lock()
+	held := make([]*game.Player, 0, len(m.grace.pending))
+	for id := range m.grace.pending {
+		if m.playerLobby[id] == l {
+			held = append(held, &game.Player{ID: id})
+		}
+	}
+	m.mu.Unlock()
+	// expireLeave, not LeaveLobby: it claims the grace the way the timer would, so a
+	// ResumePlayer racing it is refused rather than resuming a seat already gone.
+	for _, p := range held {
+		m.expireLeave(p)
 	}
 }
 
@@ -428,10 +478,7 @@ func (m *Manager) Stats() (inGame, waiting int) {
 		return 0, 0
 	}
 	m.mu.RLock()
-	lobbies := make([]*Lobby, 0, len(m.lobbies))
-	for _, l := range m.lobbies {
-		lobbies = append(lobbies, l)
-	}
+	lobbies := slices.Collect(maps.Values(m.lobbies))
 	m.mu.RUnlock()
 
 	for _, l := range lobbies {
@@ -572,13 +619,16 @@ func (m *Manager) getCachedPublicLobbies() []*Lobby {
 		m.mu.RUnlock()
 		return lobbies
 	}
-	all := make([]*Lobby, 0, len(m.lobbies))
-	for _, l := range m.lobbies {
-		all = append(all, l)
-	}
+	// Cleared inside the same lock hold that snapshots the lobby set, and before it.
+	// New and RemoveLobby set the flag while holding m.mu exclusively, so an
+	// invalidation either happened before this point - and its lobby is in the
+	// snapshot - or lands after, and survives into the next browse. Clearing it after
+	// the snapshot instead left a window where a table set the flag, this cleared it,
+	// and the snapshot had never seen the table: hidden for the whole TTL.
+	m.cacheDirty.Store(false)
+	all := slices.Collect(maps.Values(m.lobbies))
 	m.mu.RUnlock()
 
-	m.cacheDirty.Store(false)
 	publicLobbies := make([]*Lobby, 0, len(all))
 	for _, l := range all {
 		l.mu.RLock()

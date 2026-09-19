@@ -1,7 +1,6 @@
 package lobby
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -33,7 +32,7 @@ func codesOf(entries []BrowseEntry) []string {
 
 func TestBrowseLobbies_CapsToTheClosestTables(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 
 	for i := range 30 {
 		rating := uint32(1000 + i*50)
@@ -56,7 +55,7 @@ func TestBrowseLobbies_CapsToTheClosestTables(t *testing.T) {
 
 func TestBrowseLobbies_LimitIsConfigurable(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	for i := range 5 {
 		openTable(t, m, fmt.Sprintf("p%d", i), uint(i+1), "Poker", 1500)
 	}
@@ -67,7 +66,7 @@ func TestBrowseLobbies_LimitIsConfigurable(t *testing.T) {
 
 func TestBrowseLobbies_LimitIsHardCapped(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	for i := range MaxBrowseLimit + 10 {
 		openTable(t, m, fmt.Sprintf("p%d", i), uint(i+1), "Poker", 1500)
 	}
@@ -78,7 +77,7 @@ func TestBrowseLobbies_LimitIsHardCapped(t *testing.T) {
 
 func TestBrowseLobbies_Filters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 
 	poker := openTable(t, m, "poker", 1, "Poker", 1500, WithRanked(true))
 	eights := openTable(t, m, "eights", 2, "CrazyEights", 1500)
@@ -132,7 +131,7 @@ func TestBrowseLobbies_Filters(t *testing.T) {
 
 func TestBrowseLobbies_RowCarriesWhatTheListShows(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	l := openTable(t, m, "leader", 1, "Poker", 1800, WithRanked(true), WithMaxPlayers(4))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("guest", 2)))
 
@@ -158,7 +157,7 @@ func TestBrowseEntry_HasRoom(t *testing.T) {
 
 func TestBrowseLobbies_UnratedPlayerIsMatchedAtTheStartingRating(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	near := openTable(t, m, "near", 1, "Poker", elo.ToUint32(elo.DefaultRating))
 	openTable(t, m, "far", 2, "Poker", 3000)
 
@@ -171,7 +170,7 @@ func TestBrowseLobbies_UnratedPlayerIsMatchedAtTheStartingRating(t *testing.T) {
 
 func TestBrowseLobbies_EqualRatingsKeepAStableOrder(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	for i := range 6 {
 		openTable(t, m, fmt.Sprintf("p%d", i), uint(i+1), "Poker", 1500)
 	}
@@ -185,7 +184,7 @@ func TestBrowseLobbies_EqualRatingsKeepAStableOrder(t *testing.T) {
 
 func TestManager_GameNames(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	openTable(t, m, "a", 1, "Poker", 1500)
 	openTable(t, m, "b", 2, "CrazyEights", 1500)
 	openTable(t, m, "c", 3, "Poker", 1500)
@@ -200,7 +199,7 @@ func TestManager_GameNames(t *testing.T) {
 
 func TestBrowseLobbies_VisibilityChangeShowsUpImmediately(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	l := openTable(t, m, "leader", 1, "Poker", 1500)
 	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1, "the list is now cached")
 

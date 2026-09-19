@@ -73,7 +73,8 @@ func (m *Manager) BrowseLobbies(p *game.Player, f BrowseFilter) []BrowseEntry {
 		if !f.matches(entry) {
 			continue
 		}
-		entry.EloDelta = abs(int(entry.AvgElo) - int(ratingFor(ratings, entry.GameName)))
+		delta := int(entry.AvgElo) - int(ratingFor(ratings, entry.GameName))
+		entry.EloDelta = max(delta, -delta)
 		entries = append(entries, entry)
 	}
 

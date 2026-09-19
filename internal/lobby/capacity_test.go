@@ -1,7 +1,6 @@
 package lobby
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -10,7 +9,7 @@ import (
 
 func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	leader := mockPlayer("leader", 1)
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("Uno"))
 	require.NoError(t, err)
