@@ -106,12 +106,11 @@ func (b *Broadcaster[T]) Broadcast(msg T) {
 			case <-sub.ch:
 			default:
 			}
-			select {
-			case sub.ch <- msg:
-			default:
-				b.dropped.Add(1)
-				sub.dropped++
-			}
+			// This send cannot block. Broadcast is the only sender and it holds the
+			// lock, so nothing refills the slot the receive above freed - and if that
+			// receive found nothing, the subscriber had just drained the buffer
+			// itself, which leaves even more room.
+			sub.ch <- msg
 		}
 	}
 }

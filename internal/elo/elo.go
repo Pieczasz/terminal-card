@@ -57,6 +57,13 @@ func expectedScore(ratingA, ratingB float64) float64 {
 // entry and the last one wins, so one of the two rating changes is lost. The return
 // shape has nowhere to report that, so it is logged loudly instead; the caller builds
 // the slice from a set of accounts and a repeat is a bug there.
+//
+// The float64 result conserves rating exactly, but the stored value does not: ToUint32
+// rounds each player independently, so a three-or-more-seat table can end up a point
+// heavier or lighter than it started. Rounding the table as a whole would mean
+// deciding whose rating absorbs the remainder, which is a worse answer than a point of
+// drift on a 1500-point scale. A pair that includes a provisional account breaks
+// conservation deliberately and by much more - see unpaidAgainstProvisional.
 func Calculate(players []Player) map[string]float64 {
 	n := len(players)
 	newRatings := make(map[string]float64, n)

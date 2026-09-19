@@ -177,6 +177,8 @@ func TestBroadcaster_LatestWins(t *testing.T) {
 	}
 }
 
+// Every one of these operations has to run against a live broadcaster: closing it a
+// millisecond in turns the rest into no-ops and the race detector sees nothing.
 func TestBroadcaster_ConcurrentStress(t *testing.T) {
 	t.Parallel()
 	b := New[int](32)
@@ -213,11 +215,6 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 		})
 	}
 
-	go func() {
-		time.Sleep(time.Millisecond)
-		b.Close()
-	}()
-
 	done := make(chan struct{})
 	go func() {
 		wg.Wait()
@@ -226,11 +223,101 @@ func TestBroadcaster_ConcurrentStress(t *testing.T) {
 
 	select {
 	case <-done:
-	case <-time.After(10 * time.Second):
+	case <-time.After(30 * time.Second):
 		t.Fatal("concurrent stress test deadlocked")
 	}
 
+	b.Close()
 	assert.Equal(t, 0, b.Len(), "all subscribers should be gone after Close")
+}
+
+// Close racing live traffic is its own case: Subscribe must report the closure rather
+// than hand back a channel nothing will ever send on, Broadcast must not send on a
+// channel Close is closing, and Unsubscribe must not double-close one.
+func TestBroadcaster_CloseRacesSubscribeAndBroadcast(t *testing.T) {
+	t.Parallel()
+	b := New[int](32)
+
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+
+	for range 8 {
+		wg.Go(func() {
+			<-start
+			for i := range 500 {
+				b.Broadcast(i)
+			}
+		})
+		wg.Go(func() {
+			<-start
+			for range 500 {
+				ch, err := b.Subscribe()
+				if err != nil {
+					require.ErrorIs(t, err, ErrClosed, "the only reason to refuse here")
+					continue
+				}
+				b.Unsubscribe(ch)
+			}
+		})
+	}
+	wg.Go(func() {
+		<-start
+		b.Close()
+	})
+
+	close(start)
+	wg.Wait()
+
+	assert.Zero(t, b.Len())
+	_, err := b.Subscribe()
+	assert.ErrorIs(t, err, ErrClosed)
+}
+
+// Dropped is the metric the lobby logs when a view stops keeping up, so it has to
+// count exactly the messages that were discarded and not move otherwise.
+func TestBroadcaster_DroppedCountsDiscardedMessages(t *testing.T) {
+	t.Parallel()
+	b := New[int](4)
+	t.Cleanup(b.Close)
+
+	ch := mustSubscribe(t, b)
+
+	for i := range subscriberBuffer {
+		b.Broadcast(i)
+	}
+	require.Zero(t, b.Dropped(), "a buffer that exactly fills has dropped nothing")
+
+	const overflow = 7
+	for range overflow {
+		b.Broadcast(0)
+	}
+	assert.EqualValues(t, overflow, b.Dropped(), "one drop per message past the buffer")
+	assert.Len(t, ch, subscriberBuffer, "and the buffer stays full rather than growing")
+}
+
+// A subscriber that has gone away entirely must not stall the table: the warning is
+// logged once and the feed keeps moving for everybody else.
+func TestBroadcaster_ASlowSubscriberDoesNotBlockTheOthers(t *testing.T) {
+	t.Parallel()
+	b := New[int](4)
+	t.Cleanup(b.Close)
+
+	stalled := mustSubscribe(t, b)
+	keeping := mustSubscribe(t, b)
+
+	for i := range subscriberBuffer + 10 {
+		b.Broadcast(i)
+		if i < subscriberBuffer {
+			continue
+		}
+		// The attentive subscriber drains as it goes, so only the stalled one is
+		// ever full.
+		<-keeping
+	}
+
+	assert.Positive(t, b.Dropped())
+	assert.Len(t, stalled, subscriberBuffer)
+	assert.NotEmpty(t, keeping, "the attentive subscriber is still being served")
 }
 
 func TestBroadcaster_MaxSubscribers(t *testing.T) {
