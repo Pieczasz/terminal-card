@@ -691,7 +691,12 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
 	t.Cleanup(engine.Close)
 
-	l.requestFinalize(engine, game.EndReasonWin)
+	l.requestFinalize(engine, game.EndReasonWin, finalizeRequest{
+		lobbyCode: l.code,
+		gameName:  "Mock",
+		isRanked:  true,
+		startedAt: time.Now(),
+	})
 
 	assert.Contains(t, logged.String(), "failed to record finished match",
 		"a lost match result has to be shouted about")
@@ -792,4 +797,49 @@ func TestLobby_ReleaseFinishedGameIsANoOpOtherwise(t *testing.T) {
 	l.releaseFinishedGame()
 	require.NotPanics(t, l.releaseFinishedGame)
 	assert.True(t, l.IsWaiting())
+}
+
+// The watcher runs after the game ends, by which point the lobby may have reopened
+// and been reconfigured. The finished match must still be recorded as the game that
+// was actually played: snapshotting at finalize time wrote a ranked result to the
+// casual path, or onto another game's ladder entirely.
+func TestLobby_FinalizeUsesTheSettingsTheGameStartedWith(t *testing.T) {
+	t.Parallel()
+	repo := new(MockMatchRepo)
+	done := make(chan struct{})
+	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).
+		Return(nil).Run(func(mock.Arguments) { close(done) })
+
+	m := NewManager(context.Background(), repo)
+	leader := mockPlayer("p1", 1)
+	l, err := m.New(leader, WithCardGame("Mock"), WithRanked(true))
+	require.NoError(t, err)
+
+	registry := game.NewRegistry()
+	registerGame(registry, "Mock", stubRules{})
+	require.NoError(t, l.ToggleReady(leader, registry))
+
+	l.mu.RLock()
+	engine := l.activeEngine
+	l.mu.RUnlock()
+	require.NotNil(t, engine)
+	t.Cleanup(engine.Close)
+
+	// The table reopens and is reconfigured while the finished game is still on its
+	// way to the watcher.
+	l.mu.Lock()
+	l.options.isRanked = false
+	l.options.cardGame = "Something Else"
+	l.mu.Unlock()
+
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+	engine.Broadcaster().Broadcast(game.Event{Type: game.EventGameEnded, Reason: game.EndReasonWin})
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the match was never finalized as the ranked Mock game it was")
+	}
+	repo.AssertExpectations(t)
+	repo.AssertNotCalled(t, "RecordCasualMatch", mock.Anything, mock.Anything, mock.Anything)
 }

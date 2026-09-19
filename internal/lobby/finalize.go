@@ -87,14 +87,20 @@ func (m *Manager) persistFinishedMatch(
 	}
 
 	// A match the deploy interrupted has no honest winner: SSH teardown order, not
-	// play, decided who was left holding cards. Rules errors are the same class —
-	// half-applied state must not move the ladder.
-	rated := req.isRanked && !m.isShuttingDown() && reason != game.EndReasonRulesError
+	// play, decided who was left holding cards. Rules errors are the same class -
+	// half-applied state must not move the ladder. So is a table every seat left:
+	// standings are then reverse leave order, so rating it pays the last to quit.
+	rated := req.isRanked && !m.isShuttingDown() &&
+		reason != game.EndReasonRulesError && reason != game.EndReasonAbandoned
 	if req.isRanked && !rated {
-		if reason == game.EndReasonRulesError {
+		switch {
+		case reason == game.EndReasonRulesError:
 			slog.WarnContext(ctx, "rules error ended the match; recording without Elo",
 				"lobby", req.lobbyCode, "game", req.gameName)
-		} else {
+		case reason == game.EndReasonAbandoned:
+			slog.WarnContext(ctx, "every seat left the match; recording without Elo",
+				"lobby", req.lobbyCode, "game", req.gameName)
+		default:
 			slog.WarnContext(ctx, "server is shutting down; recording the ranked match without Elo",
 				"lobby", req.lobbyCode, "game", req.gameName)
 		}
