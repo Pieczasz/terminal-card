@@ -144,3 +144,19 @@ func FuzzPile_DrawNCards(f *testing.F) {
 		assert.Equal(t, size-want, p.Size(), "the pile shrinks by exactly what was drawn")
 	})
 }
+
+// DrawNCards copies rather than reslicing, and the truncated pile keeps its capacity -
+// so an aliased hand would be rewritten by the next AddCard. Both shedding games add
+// the set-aside cards back after dealing, which is that exact sequence.
+func TestPile_DrawNCards_DoesNotAliasThePile(t *testing.T) {
+	t.Parallel()
+	p := New(StandardDeck())
+
+	hand, ok := p.DrawNCards(5)
+	require.True(t, ok)
+	dealt := slices.Clone(hand)
+
+	p.AddCard(Card{Rank: Ace, Suit: Spades}, Card{Rank: King, Suit: Hearts})
+
+	assert.Equal(t, dealt, hand, "AddCard rewrote a hand that was already dealt")
+}
