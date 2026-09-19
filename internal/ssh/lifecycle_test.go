@@ -2,7 +2,9 @@ package ssh
 
 import (
 	"context"
+	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,7 +42,7 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 
 	tracker := NewSessionTracker(0)
 	user := &db.User{ID: 11, Username: "shared"}
-	gen, err := tracker.Connect(user.ID)
+	gen, err := tracker.Connect(user.ID, nil)
 	require.NoError(t, err)
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
 
@@ -84,7 +86,7 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	require.NoError(t, manager.JoinLobbyByCode(table.Code(), guestPlayer))
 
 	tracker := NewSessionTracker(0)
-	oldGen, err := tracker.Connect(guest.ID)
+	oldGen, err := tracker.Connect(guest.ID, nil)
 	require.NoError(t, err)
 	deps := ServerDependencies{LobbyManager: manager}
 
@@ -94,7 +96,7 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	displaced := make(chan struct{})
 	reconnect := func() {
 		defer close(reconnected)
-		_, err := tracker.Connect(guest.ID)
+		_, err := tracker.Connect(guest.ID, nil)
 		if err != nil {
 			t.Errorf("displace reconnect failed: %v", err)
 			return
@@ -173,18 +175,18 @@ func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
 func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(2)
-	_, err := tracker.Connect(1)
+	_, err := tracker.Connect(1, nil)
 	require.NoError(t, err)
-	_, err = tracker.Connect(2)
+	_, err = tracker.Connect(2, nil)
 	require.NoError(t, err)
-	_, err = tracker.Connect(3)
+	_, err = tracker.Connect(3, nil)
 	require.ErrorIs(t, err, ErrServerFull)
 
 	// A second session for an already-connected account displaces rather than
 	// failing: half-open TCP otherwise blocks the mid-game reconnect grace.
-	gen1, err := tracker.Connect(1)
+	gen1, err := tracker.Connect(1, nil)
 	require.NoError(t, err)
-	gen2, err := tracker.Connect(1)
+	gen2, err := tracker.Connect(1, nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, gen1, gen2)
 	assert.False(t, tracker.Release(1, gen1), "stale generation must not free the slot")
@@ -192,7 +194,7 @@ func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	assert.True(t, tracker.Release(1, gen2))
 
 	tracker.Disconnect(2)
-	_, err = tracker.Connect(3)
+	_, err = tracker.Connect(3, nil)
 	require.NoError(t, err, "capacity frees with the seat")
 }
 
@@ -266,4 +268,44 @@ func TestReportingModel_PassesThroughWhenNothingPanics(t *testing.T) {
 	got, cmd := m.Update(nil)
 	assert.Nil(t, cmd)
 	assert.IsType(t, reportingModel{}, got, "the wrapper survives an update")
+}
+
+// countingCloser stands in for the displaced session's channel.
+type countingCloser struct {
+	closed atomic.Int32
+	err    error
+}
+
+func (c *countingCloser) Close() error {
+	c.closed.Add(1)
+	return c.err
+}
+
+// "Displaces" has to mean the old session is hung up on, not merely forgotten. A
+// tracker that only reassigns the generation leaves the zombie running its TUI and
+// holding a lobby subscription until its TCP dies, so one keypair can hold as many
+// live sessions as it opens while Count reports one.
+func TestSessionTracker_ConnectClosesTheDisplacedSession(t *testing.T) {
+	t.Parallel()
+	tracker := NewSessionTracker(1)
+	first := &countingCloser{}
+
+	gen1, err := tracker.Connect(7, first)
+	require.NoError(t, err)
+	assert.Zero(t, first.closed.Load(), "nothing is displaced yet")
+
+	second := &countingCloser{err: errors.New("already gone")}
+	gen2, err := tracker.Connect(7, second)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, gen1, gen2)
+	assert.Equal(t, int32(1), first.closed.Load(), "the displaced session is closed exactly once")
+	assert.Zero(t, second.closed.Load(), "the live session is left alone")
+	assert.Equal(t, 1, tracker.Count(), "displacement does not grow the count")
+
+	// A Close error is the peer already being gone, which is the common case here and
+	// must not stop the new session from being tracked.
+	assert.True(t, tracker.Owns(7, gen2))
+	assert.False(t, tracker.Release(7, gen1), "the displaced generation frees nothing")
+	assert.True(t, tracker.Release(7, gen2))
 }

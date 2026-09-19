@@ -15,6 +15,8 @@ var (
 	ErrNoPublicKey        = errors.New("SSH key authentication is required")
 	ErrInternal           = errors.New("internal server error")
 	ErrRegistrationFailed = errors.New("registration failed")
+	// ErrTooManyRegistrations refuses a *new* account, never a returning player.
+	ErrTooManyRegistrations = errors.New("too many new accounts from your network; please try again later")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
@@ -25,7 +27,14 @@ func AuthenticateSession(s ssh.Session) (string, error) {
 	return cryptossh.FingerprintSHA256(publicKey), nil
 }
 
-func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUsername, fingerprint string) (*db.User, error) {
+// LoadOrRegisterUser resolves a fingerprint to an account, registering one on first
+// sight. allowRegister gates only that first sight - a returning player never spends
+// its budget - and may be nil where registration needs no limit. Auth deliberately
+// knows nothing about how the budget is counted; it only asks.
+func LoadOrRegisterUser(
+	ctx context.Context, userRepo db.UserRepository, sshUsername, fingerprint string,
+	allowRegister func() bool,
+) (*db.User, error) {
 	user, key, err := userRepo.LoadUserByFingerprint(ctx, fingerprint)
 	if err != nil {
 		slog.ErrorContext(ctx, "database error while authenticating user", "error", err)
@@ -33,6 +42,10 @@ func LoadOrRegisterUser(ctx context.Context, userRepo db.UserRepository, sshUser
 	}
 
 	if user == nil {
+		if allowRegister != nil && !allowRegister() {
+			slog.WarnContext(ctx, "refused new account registration: network over its budget")
+			return nil, ErrTooManyRegistrations
+		}
 		user, _, err = userRepo.RegisterUserWithKey(ctx, sshUsername, fingerprint)
 		if err != nil {
 			slog.ErrorContext(ctx, "failed to register new user", "error", err)

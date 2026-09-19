@@ -96,7 +96,7 @@ func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.
 	t.Parallel()
 	tracker := NewSessionTracker(0)
 	user := &db.User{ID: 7}
-	gen, err := tracker.Connect(user.ID)
+	gen, err := tracker.Connect(user.ID, nil)
 	require.NoError(t, err)
 
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
