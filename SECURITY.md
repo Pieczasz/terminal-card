@@ -105,9 +105,10 @@ assumes. Breaking one is how a safe deployment becomes an unsafe one.
 - **The only ports the stack publishes to the world are 22 and 80**, both on
   nginx. Grafana is the single exception and is bound to `127.0.0.1:3000`; reach
   it with `ssh -L 3000:127.0.0.1:3000 <host>` and never bind it wider.
-- **`GRAFANA_ADMIN_PASSWORD` has no default** - compose refuses to start without
-  it rather than falling back to `admin/admin`. Anonymous visitors get the
-  `Viewer` role.
+- **Grafana has no login at all** - anonymous Admin, login form off. That is safe
+  only because the port is published on loopback and CI asserts it stays there:
+  reaching it means an SSH session on the host, which already owns everything.
+  Widening the binding without adding authentication is a vulnerability.
 - **Set a strong, unique `DB_PASSWORD`.** With `ENV=production` the server
   refuses to boot without one.
 - **Keep the host's own `sshd` off port 22** (the game proxy owns it) and keep

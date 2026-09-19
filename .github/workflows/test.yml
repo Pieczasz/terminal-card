@@ -22,7 +22,7 @@ jobs:
       run: go mod download
 
     - name: Run unit tests
-      run: go test ./... -race -short -count=1
+      run: go test ./... -race -short -shuffle=on -count=1
 
   integration:
     runs-on: ubuntu-latest
@@ -39,7 +39,7 @@ jobs:
       run: go mod download
 
     - name: Run integration tests
-      run: go test ./... -race -tags=integration -count=1 -timeout 15m
+      run: go test ./... -race -shuffle=on -tags=integration -count=1 -timeout 15m
 
   lint:
     runs-on: ubuntu-latest
@@ -59,6 +59,21 @@ jobs:
       with:
         version: v2.13.2
         install-mode: goinstall
+
+    - name: gofmt and go fix leave nothing to change
+      run: |
+        test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+        test -z "$(go fix -diff ./...)" || { go fix -diff ./...; exit 1; }
+
+    # The action above lints the default build; the integration tests are a second
+    # build that the size gates and test linters must also pass.
+    - name: golangci-lint (integration tag)
+      run: golangci-lint run --build-tags=integration ./...
+
+    - name: deadcode
+      run: |
+        out=$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 -test ./...)
+        if [ -n "$out" ]; then echo "$out"; exit 1; fi
 
   vulncheck:
     runs-on: ubuntu-latest
@@ -111,18 +126,19 @@ jobs:
     - name: Validate compose and the proxy config
       env:
         DB_PASSWORD: ci
-        GRAFANA_ADMIN_PASSWORD: ci
       run: |
         docker compose config --quiet
         docker run --rm --add-host backend:127.0.0.1 \
           -v "$PWD/internal/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
           nginx:1.27-alpine nginx -t
 
-    - name: Refuse a Grafana admin password default
+    # Grafana is anonymous-admin on purpose, so the VPS itself is the gate: it must
+    # never be published on anything but loopback. This is the one line that keeps
+    # that true when someone edits the ports.
+    - name: Grafana stays on loopback
       env:
         DB_PASSWORD: ci
       run: |
-        if docker compose config --quiet 2>/dev/null; then
-          echo "compose accepted an unset GRAFANA_ADMIN_PASSWORD" >&2
-          exit 1
-        fi
+        bindings=$(docker compose config --format json | jq -r '.services.grafana.ports[]? | "\(.host_ip // "0.0.0.0"):\(.published)"')
+        echo "grafana publishes: $bindings"
+        [ "$bindings" = "127.0.0.1:3000" ] || { echo "grafana must publish only 127.0.0.1:3000" >&2; exit 1; }

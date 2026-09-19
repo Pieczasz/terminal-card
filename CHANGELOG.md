@@ -75,9 +75,8 @@ unnoticed for so long.
   network prefix (an IPv6 /64), not your address; nginx logs no client addresses
   at all; and the session trace no longer carries your address next to your
   username.
-- Grafana's anonymous visitors are `Viewer`, not admin, and the stack refuses to
-  start without an explicit `GRAFANA_ADMIN_PASSWORD` - no more `admin/admin`
-  fallback.
+- Grafana is reachable only through an SSH tunnel to the host (`127.0.0.1:3000`),
+  which CI now asserts; behind that gate it needs no login of its own.
 - The deployment publishes only ports 22 and 80. Grafana stays on
   `127.0.0.1:3000` behind an SSH tunnel.
 - nginx's connection and request limits key on the IPv6 /64, so one customer with

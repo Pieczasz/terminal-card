@@ -62,9 +62,7 @@ Requires Docker, Docker Compose and an SSH client.
 
 ```bash
 cp .env.example .env
-# set these two, both have no usable default:
-#   DB_PASSWORD           - a strong unique password
-#   GRAFANA_ADMIN_PASSWORD - compose refuses to start without it
+# set DB_PASSWORD - a strong unique password; it has no usable default
 
 docker compose up -d --build
 ssh -p 22 yourname@localhost
@@ -185,7 +183,6 @@ Full list with comments in [`.env.example`](.env.example).
 | `API_REQUESTS_PER_MINUTE` | `120` | per client network |
 | `API_TRUST_PROXY` | `false` | compose opts in; only safe behind a proxy that sets `X-Forwarded-For` itself |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `localhost:4317` | logs, metrics, traces |
-| `GRAFANA_ADMIN_PASSWORD` | **none** | compose refuses to start without it |
 | `LOG_LEVEL` | `INFO` | stderr and OTLP both |
 
 New accounts are separately capped at 5 per hour per client network
@@ -211,7 +208,7 @@ Retention is explicit: **logs 14 days** (`internal/config/loki/loki.yaml`),
    and reconnect there - the game proxy owns 22.
 3. Firewall: allow 22 and 80, plus your admin SSH port from trusted addresses
    only. Do not open Postgres, Grafana, `6969` or `6970`.
-4. `cp .env.example .env`, set `DB_PASSWORD` and `GRAFANA_ADMIN_PASSWORD`.
+4. `cp .env.example .env` and set `DB_PASSWORD`.
    Compose sets `ENV=production` on the backend.
 5. `docker compose up -d --build`.
 6. Optional: install `zstd` and cron `./scripts/backup.sh` (see its header).

@@ -315,26 +315,22 @@ services:
       - ./internal/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana-data:/var/lib/grafana
     environment:
-      # Anonymous access stays on so the dashboards open without a login, but at
-      # Viewer. It used to be Admin with the login form disabled, which meant anyone
-      # who reached this port could edit datasources, use the SQL-capable ones to read
-      # the stores directly, and install plugins - with no way to log in as anybody
-      # else and take it back. Loopback was the only thing in the way.
+      # Anonymous Admin, no login form, no password: the gate is the VPS. This port is
+      # published on loopback only (below, and asserted in CI), so reaching Grafana at
+      # all means an SSH session on the host - and anyone with that already owns the
+      # database, the volumes and every secret in this file. A password here would
+      # protect nothing and add one more credential to rotate and forget. Never widen
+      # the binding without adding real authentication first.
       - GF_AUTH_ANONYMOUS_ENABLED=true
-      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
-      # And the login form is back on, because Viewer-only is useless if there is no
-      # way to become an admin.
-      - GF_AUTH_DISABLE_LOGIN_FORM=false
-      # No default. `:?` makes compose refuse to start rather than fall back to
-      # grafana's built-in admin/admin, which is what a committed default becomes the
-      # first time someone forgets to change it.
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env - there is deliberately no default}
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_BASIC_ENABLED=false
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_ANALYTICS_REPORTING_ENABLED=false
       - GF_ANALYTICS_CHECK_FOR_UPDATES=false
     # Loopback only, and the one exception to "nothing but the proxy publishes a
     # port": reach it with `ssh -L 3000:127.0.0.1:3000 <host>`. It is never bound to
-    # 0.0.0.0 - the anonymous Viewer above assumes exactly this.
+    # 0.0.0.0 - the anonymous Admin above assumes exactly this, and CI asserts it.
     ports:
       - "127.0.0.1:3000:3000"
     healthcheck:

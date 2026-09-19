@@ -1093,10 +1093,9 @@ database work under it, not the game events between them.
 
 ### Grafana
 
-Anonymous access as **Viewer** (`GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`) with the login
-form *enabled*, and `GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?...}` - compose
-refuses to start rather than fall back to `admin/admin`. The port is still bound to
-loopback. Datasources are provisioned with correlation wired both
+Anonymous access as **Admin** with the login form off: the port is bound to loopback
+only, so the VPS's own SSH is the gate (`ssh -L 3000:127.0.0.1:3000 <host>`), and CI
+asserts the binding never widens. Datasources are provisioned with correlation wired both
 ways: Prometheus `exemplarTraceIdDestinations` → Tempo, Loki `derivedFields` on
 `trace_id` → Tempo, and Tempo `tracesToLogsV2` → Loki (±1 h,
 `filterByTraceID: true`). Four dashboards: `tc-app-usage`, `tc-host`, `tc-logs`,
@@ -1137,7 +1136,7 @@ logger provider goes away.
 prebuilt binaries lag the module's Go version), `vulncheck` (`govulncheck` v1.8.0,
 pinned), `image` (buildx for linux/amd64 **and** linux/arm64 - the Dockerfile is
 exercised nowhere else), and `compose` (`docker compose config` plus `nginx -t`, and a
-step that asserts compose *refuses* an unset `GRAFANA_ADMIN_PASSWORD`). No release,
+step that asserts Grafana publishes nothing but `127.0.0.1:3000`). No release,
 GoReleaser, Dependabot or Renovate config.
 
 **Testing conventions.** Table-driven with named subtests, `t.Parallel()` where safe.
