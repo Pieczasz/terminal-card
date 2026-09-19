@@ -1,5 +1,10 @@
 # syntax=docker/dockerfile:1.4
-FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
+
+# Pinned by digest, not just by tag: `golang:1.27.1-alpine` is republished whenever
+# its Alpine base is rebuilt, so the tag alone does not describe what was built. The
+# tag is kept alongside for readability - update both together, with
+# `docker buildx imagetools inspect golang:<tag> --format '{{.Manifest.Digest}}'`.
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine@sha256:4cb7ac979db5fcc41cae44b2227ba5ab8a51e8807f40d9ba4dee20a0ad960b5b AS builder
 
 WORKDIR /code
 
@@ -17,14 +22,18 @@ COPY . .
 # has to come from the ARGs buildx sets - otherwise a cross-build ships the builder's
 # architecture inside a target-arch image and dies with "exec format error".
 # Build the package, not one file: a second file in package main would be dropped.
+#
+# -trimpath strips /code and the module cache path from the binary. Without it every
+# panic dump and every stack trace in a log carries the build machine's directory
+# layout, and two builds of the same commit from different checkouts differ.
 ARG TARGETOS
 ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod/cache \
     --mount=type=cache,target=/go-build \
     GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
-    go build -o bin/backend ./cmd/server
+    go build -trimpath -o bin/backend ./cmd/server
 
-FROM alpine:3.22 AS certs
+FROM alpine:3.22@sha256:5291449c3df73caf6ed85e649dec1b9e818b39a5d8c871e97afc13e9cd5e8fa8 AS certs
 RUN apk add --no-cache ca-certificates tzdata \
     && adduser -D -u 65532 -H -s /sbin/nologin nonroot \
     && mkdir -p /data/ssh \
