@@ -171,7 +171,7 @@ func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 		{ID: "big", Cards: []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Clubs}}},
 	}
 	state := game.NewState(rules, players, deck.StandardDeck())
-	require.NoError(t, state.Deck.Shuffle())
+	state.Deck.Shuffle()
 	state.Phase = game.Playing
 	state.CurrentTurn = 0
 
@@ -435,6 +435,59 @@ func candidateActions(raiseTo uint) []game.Action {
 	}
 }
 
+// handLedger remembers what each player was worth when the hand was dealt: their
+// stack plus whatever has already left it for the pot, which stays constant from the
+// deal until the pot is paid.
+type handLedger map[string]uint
+
+func (l handLedger) observe(extra *State) {
+	for id, chips := range extra.PlayerChips {
+		l[id] = chips + extra.TotalContributed[id]
+	}
+}
+
+// checkNoUnmatchedLoss is the per-player half of chip conservation, and the half a
+// table total cannot see: a pot paid to the wrong seats still balances. Nobody loses
+// chips nobody matched - a player can only be beaten out of what an opponent put up
+// against them - so the drop across a hand is bounded by the sum over the other
+// contributors of min(their contribution, this player's).
+func (l handLedger) checkNoUnmatchedLoss(t testingT, extra *State) {
+	t.Helper()
+	for id, before := range l {
+		after := extra.PlayerChips[id]
+		if after >= before {
+			continue
+		}
+		var matched uint
+		for other, contributed := range extra.TotalContributed {
+			if other != id {
+				matched += min(contributed, extra.TotalContributed[id])
+			}
+		}
+		require.LessOrEqual(t, before-after, matched,
+			"%s is down %d chips but opponents only matched %d of them", id, before-after, matched)
+	}
+}
+
+func seatedIDs(t testingT, e *game.Engine) []string {
+	t.Helper()
+	var ids []string
+	e.WithState(func(s *game.State) {
+		for _, p := range s.Players {
+			ids = append(ids, p.ID)
+		}
+	})
+	return ids
+}
+
+// hasNextHand is the between-hands branch of the random driver: the pot is settled, so
+// every chip must be back in a stack before the next one is dealt.
+func checkSettledHand(rt *rapid.T, ledger handLedger, extra *State, want uint) {
+	require.Zero(rt, extra.MainPool, "a completed hand must leave nothing in the pool")
+	require.Equal(rt, want, chipsInPlay(extra), "payouts must return exactly what was collected")
+	ledger.checkNoUnmatchedLoss(rt, extra)
+}
+
 func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 	t.Parallel()
 
@@ -443,6 +496,7 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 		engine := startTable(rt, n)
 		defer engine.Close()
 		want := uint(n) * DefaultStack
+		ledger := handLedger{}
 
 		require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "blinds must not create or destroy chips")
 
@@ -454,12 +508,20 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 			extra := extraOf(rt, engine)
 
 			if extra.HandComplete {
-				// The pot is settled between hands, so every chip is in a stack.
-				require.Zero(rt, extra.MainPool, "a completed hand must leave nothing in the pool")
-				require.Equal(rt, want, chipsInPlay(extra), "payouts must return exactly what was collected")
+				checkSettledHand(rt, ledger, extra, want)
 				// Only the parked dealer may deal, and it is their turn.
 				require.NoError(rt, engine.SubmitAction(id, ActionNextHand{}), "dealing the next hand")
 				require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "the next hand's blinds must not mint chips")
+				continue
+			}
+			ledger.observe(extra)
+
+			// Disconnects are rare but they are where the money bugs live: a seat that
+			// walks out mid-hand takes its uncalled chips with it.
+			if seats := seatedIDs(rt, engine); len(seats) > 2 &&
+				rapid.IntRange(0, 24).Draw(rt, fmt.Sprintf("leave%d", step)) == 0 {
+				engine.RemovePlayer(seats[rapid.IntRange(0, len(seats)-1).Draw(rt, fmt.Sprintf("who%d", step))])
+				require.Equal(rt, want, chipsInPlay(extraOf(rt, engine)), "a leave must not move chips off the table")
 				continue
 			}
 
@@ -485,10 +547,8 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 				"chips changed after step %d (%d players)", step, n)
 		}
 
-		final := extraOf(rt, engine)
-		if final.HandComplete {
-			require.Zero(rt, final.MainPool, "a completed hand must leave nothing in the pool")
-			require.Equal(rt, want, chipsInPlay(final), "payouts must return exactly the chips collected")
+		if final := extraOf(rt, engine); final.HandComplete {
+			checkSettledHand(rt, ledger, final, want)
 		}
 	})
 }
@@ -577,6 +637,11 @@ func sidePotState(t testingT, contributed map[string]uint, folded ...string) (*g
 	for _, id := range folded {
 		extra.Folded[id] = true
 	}
+	// Every contributed chip is in the pool until a pot pays it out, which is what
+	// awardPots draws each layer down from.
+	for _, c := range contributed {
+		extra.MainPool += c
+	}
 	state := game.NewState(&Rules{}, players, deck.StandardDeck())
 	state.Extra = extra
 	return state, extra
@@ -590,47 +655,22 @@ func potTotal(pots []Pot) uint {
 	return total
 }
 
-// Every chip a folded player put in must still reach a pot. When the only players
-// who reached the top level have folded, that layer is dead money and carries into
-// the last live pot rather than vanishing.
+// Every chip a folded player put in must still reach a pot. Two players who matched
+// each other above the level the survivors reached, and then both folded, leave a
+// layer nobody is eligible for: that is dead money and it carries into the last live
+// pot rather than vanishing.
 func TestBuildSidePots_DeadMoneyCarriesIntoTheLastPot(t *testing.T) {
 	t.Parallel()
-	// b folded after over-committing; only a can win anything.
-	state, extra := sidePotState(t, map[string]uint{"a": 50, "b": 100}, "b")
-
-	pots := buildSidePots(extra, contenders(state, extra))
-
-	require.Len(t, pots, 1, "only the level a reached can be contested")
-	assert.Equal(t, []string{"a"}, pots[0].Eligible)
-	assert.Equal(t, uint(150), pots[0].Amount, "b's dead 50 carries into a's pot")
-	assert.Equal(t, uint(150), potTotal(pots), "no contributed chip may be lost")
-}
-
-// If every contributor folded, no pot layer forms at all and the orphaned chips must
-// still be handed to the one player left standing.
-func TestBuildSidePots_AllContributorsFoldedAwardsTheLoneSurvivor(t *testing.T) {
-	t.Parallel()
+	// c and d matched each other at 300 and both folded; a and b can only win to 100.
 	state, extra := sidePotState(t,
-		map[string]uint{"a": 100, "b": 100, "survivor": 0}, "a", "b")
+		map[string]uint{"a": 100, "b": 100, "c": 300, "d": 300}, "c", "d")
 
 	pots := buildSidePots(extra, contenders(state, extra))
 
-	assert.Empty(t, pots, "no contested layer can form")
-	assert.Equal(t, uint(200), extra.PlayerChips["survivor"], "orphaned chips go to the survivor")
-}
-
-// Same shape, but with more than one survivor the orphan is split and the odd chip
-// is handed out rather than dropped.
-func TestBuildSidePots_OrphanSplitsAcrossSurvivorsWithoutLosingTheOddChip(t *testing.T) {
-	t.Parallel()
-	state, extra := sidePotState(t,
-		map[string]uint{"folded": 100, "x": 0, "y": 0, "z": 0}, "folded")
-
-	pots := buildSidePots(extra, contenders(state, extra))
-
-	assert.Empty(t, pots)
-	total := extra.PlayerChips["x"] + extra.PlayerChips["y"] + extra.PlayerChips["z"]
-	assert.Equal(t, uint(100), total, "100 split three ways must still total 100")
+	require.Len(t, pots, 1, "only the level a and b reached can be contested")
+	assert.Equal(t, []string{"a", "b"}, pots[0].Eligible)
+	assert.Equal(t, uint(800), pots[0].Amount, "the dead 400 carries into the live pot")
+	assert.Equal(t, uint(800), potTotal(pots), "no contributed chip may be lost")
 }
 
 // A contributor who left mid-hand keeps their contribution in the pot but must not
@@ -808,7 +848,8 @@ func TestRunOutBoard_FillsTheBoardFromAnyStreet(t *testing.T) {
 			)
 			extra.Phase = tt.from
 			extra.TotalContributed = map[string]uint{"a": 500, "b": 500}
-			require.NoError(t, state.Deck.Shuffle())
+			extra.MainPool = 1000
+			state.Deck.Shuffle()
 			for range tt.onBoard {
 				c, ok := state.Deck.Draw()
 				require.True(t, ok)
@@ -908,4 +949,180 @@ func TestStandingScore_DrawsShareAGroup(t *testing.T) {
 		assert.NotEqual(t, rules.StandingScore(state, state.Players[1]), rules.StandingScore(state, state.Players[2]),
 			"p3 lasted three hands longer: equal chips, but not a draw")
 	})
+}
+
+// A player who bets past what anyone at the table can call, and then disconnects, has
+// to get the unmatched part of that bet back. It was never money the pot could pay
+// out: folding it into the last live layer handed one player's uncalled chips to the
+// two opponents who never covered them.
+func TestRunShowdown_UncalledBetComesBackToADepartedOverBettor(t *testing.T) {
+	t.Parallel()
+	// a and d are all-in for 100 each; b bet 1100 over the top and left; c folded.
+	shortStacks := []*game.Player{
+		{ID: "a", Cards: []deck.Card{card(deck.Ace, deck.Hearts), card(deck.Ace, deck.Diamonds)}},
+		{ID: "d", Cards: []deck.Card{card(deck.King, deck.Hearts), card(deck.King, deck.Diamonds)}},
+		{ID: "c"},
+	}
+	state := game.NewState(&Rules{}, shortStacks, deck.StandardDeck())
+	state.LeftPlayers = []*game.Player{{ID: "b"}}
+	extra := &State{
+		Phase:        River,
+		Folded:       map[string]bool{"b": true, "c": true},
+		PlayersAllIn: map[string]bool{"a": true, "d": true},
+		Table: []deck.Card{
+			card(deck.Two, deck.Clubs), card(deck.Five, deck.Diamonds), card(deck.Seven, deck.Hearts),
+			card(deck.Nine, deck.Spades), card(deck.Jack, deck.Diamonds),
+		},
+		PlayerChips:      map[string]uint{"a": 0, "b": 0, "c": 0, "d": 0},
+		PlayerBets:       map[string]uint{},
+		TotalContributed: map[string]uint{"a": 100, "b": 1100, "d": 100},
+		ActedThisRound:   map[string]bool{},
+		MainPool:         1300,
+	}
+	state.Extra = extra
+
+	require.NoError(t, runShowdown(state, extra))
+
+	assert.Equal(t, uint(1000), extra.PlayerChips["b"], "the 1000 nobody could call comes back")
+	assert.Equal(t, uint(300), extra.PlayerChips["a"], "aces take the only contested pot")
+	assert.Zero(t, extra.PlayerChips["d"])
+	assert.Zero(t, extra.MainPool, "every chip left the pool")
+	assert.Equal(t, uint(300), potTotal(extra.Pots), "only the matched chips form a pot")
+}
+
+// A deal that cannot be completed leaves chips in the pool that no showdown will ever
+// award. The hand is unwound rather than closed over them: finishHand would otherwise
+// report a match whose standings are short a pot.
+func TestSettleFailure_HandsThePotBack(t *testing.T) {
+	t.Parallel()
+
+	brokenTable := func() (*game.State, *State) {
+		state, extra := seatedRound(100,
+			seat{id: "a", chips: 900, bet: 100, acted: true},
+			seat{id: "b", chips: 900, bet: 100, acted: true},
+		)
+		extra.TotalContributed = map[string]uint{"a": 100, "b": 100}
+		extra.MainPool = 200
+		state.Deck = deck.New(nil) // no burn card, so the flop cannot be dealt
+		return state, extra
+	}
+
+	t.Run("after a betting action", func(t *testing.T) {
+		t.Parallel()
+		state, extra := brokenTable()
+
+		require.Error(t, (&Rules{}).afterBettingAction(state, extra))
+
+		assert.Equal(t, uint(1000), extra.PlayerChips["a"])
+		assert.Equal(t, uint(1000), extra.PlayerChips["b"])
+		assert.Zero(t, extra.MainPool)
+	})
+
+	t.Run("after a player leaves", func(t *testing.T) {
+		t.Parallel()
+		state, extra := brokenTable()
+
+		(&Rules{}).AfterPlayerRemoved(state, 0)
+
+		assert.True(t, extra.HandComplete, "the hand is closed, not left on a dead deck")
+		assert.Equal(t, uint(1000), extra.PlayerChips["a"])
+		assert.Equal(t, uint(1000), extra.PlayerChips["b"])
+		assert.Zero(t, extra.MainPool)
+	})
+}
+
+// Losing the seat that carries a marker must not leave the marker pointing past the
+// table, and the hand has to keep somebody on turn or close itself.
+func TestLeave_SeatMarkersStillAddressARealSeat(t *testing.T) {
+	t.Parallel()
+
+	markers := func(e *State) map[string]int {
+		return map[string]int{"button": e.DealerIndex, "small blind": e.SBIndex, "big blind": e.BBIndex}
+	}
+
+	for _, which := range []string{"button", "small blind", "big blind"} {
+		t.Run("the "+which+" leaves mid-hand", func(t *testing.T) {
+			t.Parallel()
+			engine := startTable(t, 4)
+			t.Cleanup(engine.Close)
+
+			var victim string
+			engine.WithState(func(s *game.State) {
+				victim = s.Players[markers(s.Extra.(*State))[which]].ID
+			})
+
+			engine.RemovePlayer(victim)
+
+			engine.WithState(func(s *game.State) {
+				n := len(s.Players)
+				for name, idx := range markers(s.Extra.(*State)) {
+					assert.GreaterOrEqual(t, idx, 0, name)
+					assert.Less(t, idx, n, name)
+				}
+				assert.GreaterOrEqual(t, s.CurrentTurn, 0)
+				assert.Less(t, s.CurrentTurn, n)
+			})
+		})
+	}
+}
+
+// Leaving while the result screen is up costs nothing but the seat: the pot was paid
+// when the hand closed, and whoever is left still has a dealer to start the next one.
+func TestLeave_BetweenHandsReParksTheDealer(t *testing.T) {
+	t.Parallel()
+	engine := startTable(t, 3)
+	t.Cleanup(engine.Close)
+
+	// Fold the hand out so the table sits between hands.
+	for !extraOf(t, engine).HandComplete {
+		id := engine.CurrentPlayerID()
+		require.NoError(t, engine.SubmitAction(id, ActionFold{}))
+	}
+	chipsBefore := chipsInPlay(extraOf(t, engine))
+
+	engine.RemovePlayer(engine.CurrentPlayerID())
+
+	extra := extraOf(t, engine)
+	require.False(t, engine.IsFinished(), "two funded seats still have a match to play")
+	assert.Zero(t, extra.MainPool, "the pot was already paid")
+	assert.Equal(t, chipsBefore, chipsInPlay(extra), "a leave between hands moves no chips")
+	require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), ActionNextHand{}),
+		"the re-parked dealer can still deal")
+}
+
+// The last player with chips behind walking out leaves nothing but all-ins, so the
+// board runs out and the pot is paid rather than the hand stalling on an empty seat.
+func TestLeave_TheOnlyPlayerWithChipsBehindStillPaysTheAllIns(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	state := game.NewState(&Rules{}, players, deck.StandardDeck())
+	state.Phase = game.Playing
+	extra := &State{
+		Phase:        Flop,
+		Folded:       map[string]bool{},
+		PlayersAllIn: map[string]bool{"a": true, "b": true},
+		Table: []deck.Card{
+			card(deck.Two, deck.Clubs), card(deck.Five, deck.Diamonds), card(deck.Seven, deck.Hearts),
+		},
+		PlayerChips:      map[string]uint{"a": 0, "b": 0, "c": 400},
+		PlayerBets:       map[string]uint{},
+		TotalContributed: map[string]uint{"a": 300, "b": 300, "c": 300},
+		ActedThisRound:   map[string]bool{"a": true, "b": true, "c": true},
+		MainPool:         900,
+	}
+	state.Extra = extra
+	state.Deck.Shuffle()
+	rules := &Rules{}
+
+	rules.OnPlayerLeave(state, "c")
+	state.Players = state.Players[:2]
+	state.LeftPlayers = []*game.Player{players[2]}
+	rules.AfterPlayerRemoved(state, 2)
+
+	assert.True(t, extra.HandComplete)
+	assert.Len(t, extra.Table, 5, "the board ran out for the two all-ins")
+	assert.Zero(t, extra.MainPool)
+	assert.Equal(t, uint(900), extra.PlayerChips["a"]+extra.PlayerChips["b"],
+		"the departed player's called chips stay in the pot")
+	assert.Equal(t, uint(400), extra.PlayerChips["c"], "leaving forfeits the pot, not the stack behind it")
 }

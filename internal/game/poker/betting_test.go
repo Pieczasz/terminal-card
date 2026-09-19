@@ -324,46 +324,91 @@ func TestAwardPots_NamesEveryPlayerItPaid(t *testing.T) {
 	})
 }
 
-// Dead money - chips from players who all folded - has to end up somewhere.
+// Dead money - chips from players who all folded - has to end up somewhere, and the
+// side pots are what put it there.
 func TestBuildSidePots_DeadMoney(t *testing.T) {
 	t.Parallel()
 
-	t.Run("goes to the one player still in the hand", func(t *testing.T) {
+	t.Run("a folded short stack pays into the pot it could not win", func(t *testing.T) {
 		t.Parallel()
-		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100}, "a", "b")
-		// A third player is in the hand without having contributed, so no pot layer
-		// forms around them and the folded chips have nowhere else to go.
-		state.Players = append(state.Players, &game.Player{ID: "c"})
-		extra.PlayerChips["c"] = 0
+		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100, "c": 30}, "c")
 
 		pots := buildSidePots(extra, contenders(state, extra))
 
-		assert.Empty(t, pots, "no eligible contributor means no pot layer")
-		assert.Equal(t, uint(200), extra.PlayerChips["c"], "the dead money still gets awarded")
+		require.Len(t, pots, 2, "c's level closes a layer even though c cannot win it")
+		assert.Equal(t, Pot{Amount: 90, Eligible: []string{"a", "b"}}, pots[0], "c's dead 30 is in here")
+		assert.Equal(t, Pot{Amount: 140, Eligible: []string{"a", "b"}}, pots[1])
+		assert.Equal(t, uint(230), potTotal(pots), "no contributed chip may be lost")
 	})
 
-	t.Run("nobody left in the hand strands it without crashing", func(t *testing.T) {
+	t.Run("layers split by what each contributor could cover", func(t *testing.T) {
 		t.Parallel()
-		state, extra := sidePotState(t, map[string]uint{"a": 100, "b": 100}, "a", "b")
+		state, extra := sidePotState(t, map[string]uint{"short": 100, "a": 300, "b": 300})
 
-		var pots []Pot
-		require.NotPanics(t, func() { pots = buildSidePots(extra, contenders(state, extra)) })
+		pots := buildSidePots(extra, contenders(state, extra))
 
-		assert.Empty(t, pots)
-		assert.Zero(t, extra.PlayerChips["a"])
-		assert.Zero(t, extra.PlayerChips["b"])
+		require.Len(t, pots, 2)
+		assert.Equal(t, Pot{Amount: 300, Eligible: []string{"a", "b", "short"}}, pots[0])
+		assert.Equal(t, Pot{Amount: 400, Eligible: []string{"a", "b"}}, pots[1])
+		assert.Equal(t, uint(700), potTotal(pots), "no contributed chip may be lost")
 	})
+}
 
-	t.Run("splits evenly when several are still in", func(t *testing.T) {
-		t.Parallel()
-		state, extra := sidePotState(t, map[string]uint{"a": 101, "b": 0, "c": 0}, "a")
-		extra.PlayerChips["b"], extra.PlayerChips["c"] = 0, 0
+// The part of a bet nobody could match never belonged in the pot, so it goes back to
+// the player who bet it before any layer is cut - whether or not they are still in the
+// hand. Folding that money into the live pot would pay it to their opponents.
+func TestRefundUncalled(t *testing.T) {
+	t.Parallel()
 
-		require.NotPanics(t, func() { buildSidePots(extra, contenders(state, extra)) })
+	tests := []struct {
+		name        string
+		contributed map[string]uint
+		wantRefund  map[string]uint // only the entries that change
+		wantAfter   map[string]uint
+	}{
+		{
+			name:        "the lone over-bettor gets the unmatched part back",
+			contributed: map[string]uint{"a": 100, "b": 100, "over": 1100},
+			wantRefund:  map[string]uint{"over": 1000},
+			wantAfter:   map[string]uint{"a": 100, "b": 100, "over": 100},
+		},
+		{
+			name:        "a bet two players matched is not uncalled",
+			contributed: map[string]uint{"a": 100, "b": 1100, "c": 1100},
+			wantRefund:  map[string]uint{},
+			wantAfter:   map[string]uint{"a": 100, "b": 1100, "c": 1100},
+		},
+		{
+			name:        "an even table refunds nobody",
+			contributed: map[string]uint{"a": 50, "b": 50},
+			wantRefund:  map[string]uint{},
+			wantAfter:   map[string]uint{"a": 50, "b": 50},
+		},
+		{
+			name:        "only the amount above the second largest comes back",
+			contributed: map[string]uint{"a": 20, "b": 70, "c": 90},
+			wantRefund:  map[string]uint{"c": 20},
+			wantAfter:   map[string]uint{"a": 20, "b": 70, "c": 70},
+		},
+	}
 
-		assert.Equal(t, uint(101), extra.PlayerChips["b"]+extra.PlayerChips["c"],
-			"the odd chip is not allowed to vanish")
-	})
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			_, extra := sidePotState(t, tt.contributed)
+			poolBefore := extra.MainPool
+
+			refundUncalled(extra)
+
+			var refunded uint
+			for id := range tt.contributed {
+				assert.Equal(t, tt.wantRefund[id], extra.PlayerChips[id], "refund to %s", id)
+				refunded += tt.wantRefund[id]
+			}
+			assert.Equal(t, tt.wantAfter, extra.TotalContributed, "contributions after the refund")
+			assert.Equal(t, poolBefore-refunded, extra.MainPool, "the refund leaves the pool")
+		})
+	}
 }
 
 // awardPots decides who is paid from each layer.
@@ -455,6 +500,8 @@ func TestValidateRaiseTo(t *testing.T) {
 		minRaise   uint
 		bet        uint
 		chips      uint
+		oppChips   uint // the one opponent's stack; 0 means "deep enough to call anything"
+		oppBet     uint
 		amount     uint
 		wantErr    string
 	}{
@@ -493,15 +540,37 @@ func TestValidateRaiseTo(t *testing.T) {
 			name:       "an all-in below the minimum is still allowed",
 			currentBet: 100, minRaise: 500, chips: 150, amount: 150,
 		},
+		{
+			name:       "raising to exactly what the opponent can cover is allowed",
+			currentBet: 100, minRaise: 50, chips: 1000, oppChips: 300, amount: 300,
+		},
+		{
+			name:       "one chip past what the opponent can cover is refused",
+			currentBet: 100, minRaise: 50, chips: 1000, oppChips: 300, amount: 301,
+			wantErr: "no opponent can call more than 300",
+		},
+		{
+			name:       "the opponent's own street bet counts towards what they can cover",
+			currentBet: 100, minRaise: 50, chips: 1000, oppChips: 200, oppBet: 100, amount: 300,
+		},
+		{
+			name:       "nothing can be raised past an opponent who is already all-in for less",
+			currentBet: 100, minRaise: 50, chips: 1000, oppChips: 0, oppBet: 100, amount: 150,
+			wantErr: "no opponent can call more than 100",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			_, extra := seatedRound(tt.currentBet, seat{id: "a", chips: tt.chips, bet: tt.bet})
+			opp := seat{id: "b", chips: tt.oppChips, bet: tt.oppBet}
+			if tt.oppChips == 0 && tt.oppBet == 0 {
+				opp.chips = 1_000_000
+			}
+			state, extra := seatedRound(tt.currentBet, seat{id: "a", chips: tt.chips, bet: tt.bet}, opp)
 			extra.MinRaise = tt.minRaise
 
-			err := validateRaiseTo(extra, &game.Player{ID: "a"}, tt.amount)
+			err := validateRaiseTo(state, extra, &game.Player{ID: "a"}, tt.amount)
 
 			if tt.wantErr == "" {
 				require.NoError(t, err)
@@ -688,19 +757,28 @@ func TestAfterAction_NextHandReportsABadDeal(t *testing.T) {
 	require.ErrorContains(t, err, "not enough funded players")
 }
 
-// After a seat is removed the cursor can point one past the end.
-func TestAfterPlayerRemoved_ResetsAnOutOfRangeCursor(t *testing.T) {
+// Whoever is removed, the cursor the rules hand back has to address a real seat. The
+// engine clamps State.CurrentTurn before it calls AfterPlayerRemoved, so the rules
+// carry no guard of their own; this drives the real removal path to prove it.
+func TestAfterPlayerRemoved_LeavesTheCursorOnARealSeat(t *testing.T) {
 	t.Parallel()
-	state, _ := seatedRound(0,
-		seat{id: "a", chips: 900},
-		seat{id: "b", chips: 900},
-	)
-	state.CurrentTurn = len(state.Players)
 
-	require.NotPanics(t, func() { (&Rules{}).AfterPlayerRemoved(state, 2) })
+	for _, victim := range []string{"a", "b", "c"} {
+		t.Run("removing "+victim, func(t *testing.T) {
+			t.Parallel()
+			engine := game.NewEngine(&Rules{},
+				[]*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}, deck.StandardDeck())
+			t.Cleanup(engine.Close)
+			require.NoError(t, engine.Start())
 
-	assert.GreaterOrEqual(t, state.CurrentTurn, 0)
-	assert.Less(t, state.CurrentTurn, len(state.Players))
+			engine.RemovePlayer(victim)
+
+			engine.WithState(func(s *game.State) {
+				assert.GreaterOrEqual(t, s.CurrentTurn, 0)
+				assert.Less(t, s.CurrentTurn, len(s.Players))
+			})
+		})
+	}
 }
 
 // Seat 0 is a real answer from nextToAct, not the absence of one.
