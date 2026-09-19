@@ -38,6 +38,24 @@ const (
 	// lines, two spacers, two 2-line table headers, a row each, and the gap between
 	// them. Below it one table has to go.
 	twoTableMinHeight = 11
+
+	// deleteConfirmWord is typed out in full on purpose: erasure is irreversible, and
+	// a single keystroke is one too few between a mistyped filter key and an account.
+	deleteConfirmWord = "DELETE"
+	// A cap so a held key cannot grow the string without bound; four characters of
+	// slack past the word leave room to see a typo before backspacing it.
+	deleteTypedMax = len(deleteConfirmWord) + 4
+)
+
+// deletePhase is the account-erasure state machine. The confirmation is modal: while
+// it is open every key belongs to it, or typing DELETE would cycle the filters on the
+// way past.
+type deletePhase int
+
+const (
+	deleteIdle deletePhase = iota
+	deleteConfirming
+	deleteDone
 )
 
 type model struct {
@@ -51,6 +69,12 @@ type model struct {
 	gameFilterIdx int
 	resultFilters []string
 	resultIdx     int
+
+	phase deletePhase
+	typed string
+	// notice replaces the filter line rather than adding one, so a refusal cannot
+	// make the screen a row taller than the terminal it was measured against.
+	notice string
 }
 
 func New(global router.GlobalContext) tea.Model {
@@ -100,6 +124,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case accountDeletedMsg:
+		return m.accountDeleted(msg)
 	case profileLoadedMsg:
 		m.userProfile = msg.user
 		m.history = msg.history
@@ -112,7 +138,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("database error while loading match history", "error", msg.historyErr)
 		}
 	case tea.KeyPressMsg:
+		if m.phase == deleteConfirming {
+			return m.confirmKey(msg)
+		}
+		m.notice = ""
 		switch msg.String() {
+		case "x":
+			return m.openConfirm()
 		case "g":
 			m.gameFilterIdx = components.CycleIndex(m.gameFilterIdx, 1, len(m.gameFilters))
 			return m, nil
@@ -128,11 +160,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	actions := []string{"g - Game", "r - Result"}
+	actions := []string{"g - Game", "r - Result", "x - Delete account"}
 	return tea.NewView(views.RenderScreen(m.global, "User Profile", actions, m.renderContent))
 }
 
 func (m model) renderContent(contentHeight int) string {
+	switch m.phase {
+	case deleteConfirming:
+		return m.renderConfirm()
+	case deleteDone:
+		return "Your account has been deleted. Goodbye."
+	case deleteIdle:
+	}
 	if m.err != nil {
 		return "Unable to load profile. Please try again."
 	}
@@ -162,6 +201,9 @@ func (m model) renderContent(contentHeight int) string {
 		styles.PadTruncate(m.gameFilters[m.gameFilterIdx], colGame),
 		styles.PadTruncate(m.resultFilters[m.resultIdx], len(filterLosses)),
 	))
+	if m.notice != "" {
+		filters = m.global.Theme.ErrorText.Render(m.notice)
+	}
 
 	// At the declared 64x20 minimum the title and footer leave six lines, fewer than
 	// two stacked tables need at their smallest. The rankings summary gives way to
@@ -290,3 +332,95 @@ func placementPlain(placement int) string {
 }
 
 var placementWords = [3]string{"1st place", "2nd place", "3rd place"}
+
+// accountDeletedMsg is the result of the erasure round trip; err nil means the row
+// is already anonymised and the session has nothing left to authenticate.
+type accountDeletedMsg struct{ err error }
+
+func deleteAccount(ctx context.Context, userRepo db.UserRepository, userID uint) tea.Cmd {
+	return func() tea.Msg {
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return accountDeletedMsg{err: userRepo.DeleteAccount(reqCtx, userID)}
+	}
+}
+
+func (m model) openConfirm() (tea.Model, tea.Cmd) {
+	if m.global.User == nil {
+		return m, nil
+	}
+	// A seat is live state the lobby and engine hold under this player ID. Erasing the
+	// account out from under it would rename a player mid-hand and forfeit the table
+	// for everyone else, so leaving is the player's move to make first.
+	if p := views.SessionPlayer(m.global); p != nil && m.global.LobbyManager != nil &&
+		m.global.LobbyManager.FindLobbyByPlayer(p) != nil {
+		m.notice = "Leave your table before deleting your account."
+		return m, nil
+	}
+	m.phase = deleteConfirming
+	m.typed = ""
+	m.notice = ""
+	return m, nil
+}
+
+func (m model) confirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case "esc":
+		m.phase, m.typed, m.notice = deleteIdle, "", ""
+	case "enter":
+		if m.typed != deleteConfirmWord {
+			m.notice = "Type " + deleteConfirmWord + " exactly, then press enter."
+			return m, nil
+		}
+		return m, deleteAccount(m.global.RequestContext(), m.global.UserRepository, m.global.User.ID)
+	case "backspace":
+		if runes := []rune(m.typed); len(runes) > 0 {
+			m.typed = string(runes[:len(runes)-1])
+		}
+		m.notice = ""
+	default:
+		// Text is empty for every key that is not a character, so arrows and function
+		// keys cannot end up in the confirmation string.
+		if msg.Text != "" && len([]rune(m.typed)) < deleteTypedMax {
+			m.typed += msg.Text
+			m.notice = ""
+		}
+	}
+	return m, nil
+}
+
+func (m model) accountDeleted(msg accountDeletedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		slog.Error("database error while deleting account", "error", msg.err)
+		m.typed = ""
+		m.notice = "Could not delete the account. Please try again."
+		return m, nil
+	}
+	m.phase = deleteDone
+	// Quitting is what ends the SSH session through the usual release path, which is
+	// also what frees the session slot - the view never touches the ssh layer itself.
+	return m, tea.Quit
+}
+
+// The warning is deliberately not paged or shortened for a small terminal: it fits
+// the declared 64x20 minimum as it is (TestView_FitsTheTerminal), and an erasure
+// warning is the last screen worth trimming to save a row.
+func (m model) renderConfirm() string {
+	anonymised := db.AnonymisedUsername(m.global.User.ID)
+	prompt := "> " + styles.PadTruncate(m.typed, deleteTypedMax)
+	lines := []string{
+		m.global.Theme.ErrorText.Render("Delete your account permanently?"),
+		"",
+		"- SSH keys removed; a new login is a new account",
+		"- ratings removed from every leaderboard",
+		"- past matches stay, shown as " + anonymised,
+		"- this cannot be undone",
+		"",
+		"Type DELETE and press enter, esc to cancel",
+		prompt,
+	}
+	if m.notice != "" {
+		lines = append(lines, m.global.Theme.ErrorText.Render(m.notice))
+	}
+	return lg.JoinVertical(lg.Left, lines...)
+}
