@@ -1,21 +1,27 @@
-.PHONY: build test test-short test-integration lint fmt fix clean ci loadtest
+.PHONY: build test test-short test-integration lint fmt fix deadcode clean ci loadtest
 
-ci: fmt fix lint test build
+ci: fmt fix lint deadcode test build
 
 build:
 	go build -o bin/server ./cmd/server
 
 test:
-	go test -race ./...
+	go test -race -shuffle=on ./...
 
 test-short:
-	go test -race -short ./...
+	go test -race -short -shuffle=on ./...
 
 test-integration:
-	go test -race -tags=integration ./... -count=1 -timeout 15m
+	go test -race -shuffle=on -tags=integration ./... -count=1 -timeout 15m
 
 lint:
 	golangci-lint run
+	golangci-lint run --build-tags=integration
+
+# Tests count as roots: the engine's WithTurnTimeout and the two figlet-cache hooks
+# exist for them. Anything unreachable from main AND from every test is dead.
+deadcode:
+	@out=$$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 -test ./...); if [ -n "$$out" ]; then echo "$$out"; exit 1; fi
 
 fmt:
 	go fmt ./...
