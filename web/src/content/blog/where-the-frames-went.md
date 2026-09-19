@@ -8,7 +8,7 @@ draft: false
 Nobody complained about speed. The question was how many players fit on one VPS, and that
 needs a number for what a drawn frame costs.
 
-A frame is one `View()` call — the string a terminal gets after a keypress. Benchmarked
+A frame is one `View()` call - the string a terminal gets after a keypress. Benchmarked
 against a real model with a real engine behind it:
 
 ```
@@ -26,7 +26,7 @@ go tool pprof -sample_index=alloc_objects -top mem.out
 ```
 
 `alloc_objects` counts allocations instead of weighing them, which reorders the list
-completely — the top entry by bytes was a buffer allocated once, the top by count was a
+completely - the top entry by bytes was a buffer allocated once, the top by count was a
 function returning a one-space string a few thousand times. `-peek` on a suspicious leaf
 prints its callers with their share, which separates "slow" from "called by everyone".
 
@@ -34,7 +34,7 @@ prints its callers with their share, which separates "slow" from "called by ever
 
 48.6% of a frame's allocations were lipgloss generating blank space. `PlaceHorizontal`
 builds padding one rune at a time through a style renderer that supports a styled fill and
-a custom rune — neither of which we use. Every framed screen calls it three times, and
+a custom rune - neither of which we use. Every framed screen calls it three times, and
 every card and seat inside calls it again.
 
 Replacement is the same function without those, padding served from one preallocated run:
@@ -53,7 +53,7 @@ func spaces(n int) string {
 In isolation: 82,255 ns → 4,199 ns, 1,239 allocs → 2.
 
 It is held to lipgloss's output by a `rapid` property test over random content, widths,
-heights and all nine positions — which caught the first version being wrong. lipgloss
+heights and all nine positions - which caught the first version being wrong. lipgloss
 special-cases `Left` and `Right` in the opposite direction to its own centre formula, so
 unifying them mirrored the layout.
 
@@ -74,7 +74,7 @@ var cardCache sync.Map // cardKey -> string
 ```
 
 The palette collapses to one bool because every colour in a `Theme` is a function of
-`Dark` — a test fails if anyone adds one that isn't. Same for the columns of an overlapping
+`Dark` - a test fails if anyone adds one that isn't. Same for the columns of an overlapping
 fan, which mattered more: every row of every card was re-emitting its own colour escape
 sequence each frame.
 
@@ -92,7 +92,7 @@ The menus had no benchmarks, on the assumption they were trivial:
 | Poker, 6 seats *(optimised)* | 930 |
 
 `go-figure` draws the banner at the top of every screen and re-parses the whole figlet font
-on every call — 85% of a menu frame. It memoises like a card does; every menu drops to
+on every call - 85% of a menu frame. It memoises like a card does; every menu drops to
 ~6,100.
 
 ## The cache that was a vulnerability
@@ -145,5 +145,5 @@ same jump into 2.2×. Compose sets that, with `GOMEMLIMIT=1GiB` as the backstop.
 | Parallel render @ 6 cores | 1,917 renders/s | **4,683 renders/s** |
 
 The ~6,000 left in a menu frame are lipgloss composing the 120×40 border and wrapping text.
-No shortcut there, and it only runs on keypress — a browsing player costs a few thousand
+No shortcut there, and it only runs on keypress - a browsing player costs a few thousand
 allocations a second against a poker table's fourteen thousand.

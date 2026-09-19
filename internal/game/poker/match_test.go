@@ -195,7 +195,7 @@ func TestBeginHandOrFinish_ClosesAHandTheDealAlreadyFinished(t *testing.T) {
 	assert.Equal(t, Showdown, extra.Phase, "the hand was closed, not left hanging")
 	assert.NotEmpty(t, extra.Winners, "somebody took the chips")
 	// finishHand either ends the match (one funded seat) or parks the next dealer
-	// on turn — never leaves OverrideNextTurn nil while the match is still live.
+	// on turn - never leaves OverrideNextTurn nil while the match is still live.
 	if extra.MatchComplete {
 		assert.True(t, (&Rules{}).CheckWinCondition(state))
 		assert.Nil(t, state.OverrideNextTurn)

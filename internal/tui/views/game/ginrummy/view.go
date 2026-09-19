@@ -93,7 +93,7 @@ func (m *Model) renderHandOver() string {
 		title = m.Global.Theme.Accented.Render("MATCH COMPLETE")
 		hint = "esc / enter -> lobby"
 		if m.Base.Winner != "" {
-			title = m.Global.Theme.Accented.Render("MATCH COMPLETE — " + m.Base.Winner + " wins")
+			title = m.Global.Theme.Accented.Render("MATCH COMPLETE - " + m.Base.Winner + " wins")
 		}
 	}
 
@@ -121,7 +121,7 @@ func (m *Model) renderHandResult() string {
 		return ""
 	}
 	if r.Wall {
-		return lg.NewStyle().Foreground(m.Global.Theme.Warning).Render("WALL — stock exhausted, no score")
+		return lg.NewStyle().Foreground(m.Global.Theme.Warning).Render("WALL - stock exhausted, no score")
 	}
 
 	banner := ""
@@ -149,7 +149,7 @@ func (m *Model) renderHandResult() string {
 
 func (m *Model) renderMeldGroups(label string, melds [][]deck.Card, laidOff bool) string {
 	if len(melds) == 0 {
-		return m.Global.Theme.Dim.Render(label + ": —")
+		return m.Global.Theme.Dim.Render(label + ": -")
 	}
 	groups := make([]string, 0, len(melds))
 	for _, meld := range melds {
@@ -173,7 +173,7 @@ func (m *Model) renderMeldGroups(label string, melds [][]deck.Card, laidOff bool
 
 func (m *Model) renderCardRow(label string, cards []deck.Card, highlight bool) string {
 	if len(cards) == 0 {
-		return m.Global.Theme.Dim.Render(label + ": —")
+		return m.Global.Theme.Dim.Render(label + ": -")
 	}
 	parts := make([]string, 0, len(cards))
 	for _, card := range cards {

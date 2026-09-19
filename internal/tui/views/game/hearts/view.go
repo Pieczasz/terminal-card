@@ -216,7 +216,7 @@ func (m *Model) renderHandOver() string {
 		title = m.Global.Theme.Accented.Render("MATCH COMPLETE")
 		hint = "esc / enter -> lobby"
 		if m.Base.Winner != "" {
-			title = m.Global.Theme.Accented.Render("MATCH COMPLETE — " + m.Base.Winner + " wins")
+			title = m.Global.Theme.Accented.Render("MATCH COMPLETE - " + m.Base.Winner + " wins")
 		}
 	}
 
