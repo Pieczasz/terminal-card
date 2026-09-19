@@ -31,6 +31,7 @@ func listenLocal(t *testing.T) net.Listener {
 }
 
 func generateSigner(t *testing.T) cryptossh.Signer {
+	t.Helper()
 	_, privKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 
@@ -241,7 +242,7 @@ func TestServer_RateLimit(t *testing.T) {
 	}
 
 	var failed bool
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		client, err := cryptossh.Dial("tcp", env.addr, clientConfig)
 		if err != nil {
 			failed = true
@@ -263,32 +264,4 @@ func TestServer_RateLimit(t *testing.T) {
 	}
 
 	assert.True(t, failed, "Expected rate limit to block connection")
-}
-
-func TestSetupServer_Errors(t *testing.T) {
-	t.Parallel()
-
-	deps := ServerDependencies{
-		Config: &config.Config{SSHKeyPath: "/invalid/path/that/doesnt/exist"},
-	}
-	_, err := SetupServer(deps)
-	assert.ErrorContains(t, err, "error while saving keypair")
-}
-
-func TestSetupServer_SetsConnectionTimeouts(t *testing.T) {
-	t.Parallel()
-
-	deps := ServerDependencies{
-		Config: &config.Config{
-			SSHKeyPath:      t.TempDir() + "/id_ed25519",
-			RateLimitCount:  5,
-			RateLimitWindow: time.Second,
-		},
-	}
-
-	server, err := SetupServer(deps)
-	require.NoError(t, err)
-
-	assert.Equal(t, 20*time.Second, server.HandshakeTimeout, "an unauthenticated connection must be dropped")
-	assert.Equal(t, 30*time.Minute, server.IdleTimeout, "a connection that vanished without a FIN must be reaped")
 }

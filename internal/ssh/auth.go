@@ -17,6 +17,12 @@ var (
 	ErrRegistrationFailed = errors.New("registration failed")
 	// ErrTooManyRegistrations refuses a *new* account, never a returning player.
 	ErrTooManyRegistrations = errors.New("too many new accounts from your network; please try again later")
+	// ErrNameUnavailable is the single answer an unauthenticated client gets for a
+	// name it cannot have. Taken and invalid are deliberately indistinguishable: the
+	// caller is a stranger at this point, and echoing db.ErrUsernameTaken turned the
+	// login banner into a "does this account exist" oracle over every username. The
+	// distinct sentinels stay - LoadOrRegisterUser logs the real cause.
+	ErrNameUnavailable = errors.New("could not register that name; try another with ssh -l <name>")
 )
 
 func AuthenticateSession(s ssh.Session) (string, error) {
@@ -63,9 +69,11 @@ func LoadOrRegisterUser(
 
 func mapRegisterError(err error) error {
 	switch {
-	case errors.Is(err, db.ErrUsernameTaken),
-		errors.Is(err, db.ErrInvalidUsername),
-		errors.Is(err, db.ErrKeyAlreadyRegistered):
+	case errors.Is(err, db.ErrUsernameTaken), errors.Is(err, db.ErrInvalidUsername):
+		return ErrNameUnavailable
+	case errors.Is(err, db.ErrKeyAlreadyRegistered):
+		// Not an oracle: the key is the caller's own, so this tells them nothing they
+		// could not find out by connecting again.
 		return err
 	default:
 		return ErrRegistrationFailed

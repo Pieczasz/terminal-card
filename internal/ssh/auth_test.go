@@ -70,6 +70,10 @@ func (m *MockUserRepository) UserMatchHistory(_ context.Context, _ uint, _ int) 
 	return nil, nil
 }
 
+func (m *MockUserRepository) DeleteAccount(_ context.Context, _ uint) error {
+	return nil
+}
+
 func TestAuthenticateSession_NoPublicKey(t *testing.T) {
 	t.Parallel()
 	m := new(MockSession)
@@ -98,39 +102,60 @@ func TestLoadOrRegisterUser_RegisterError(t *testing.T) {
 	assert.ErrorIs(t, err, ssh.ErrRegistrationFailed)
 }
 
-func TestLoadOrRegisterUser_PassesThroughActionableSentinels(t *testing.T) {
+// The caller here is unauthenticated, so "that name is taken" and "that name is not
+// allowed" have to read identically: distinguishing them lets anyone enumerate which
+// usernames exist, one connection at a time. A key already registered is the caller's
+// own key and tells them nothing new, so it still comes back as itself.
+func TestLoadOrRegisterUser_MapsRegistrationFailures(t *testing.T) {
 	t.Parallel()
 
-	sentinels := []error{
-		db.ErrUsernameTaken,
-		db.ErrInvalidUsername,
-		db.ErrKeyAlreadyRegistered,
+	tests := []struct {
+		name     string
+		cause    error
+		want     error
+		wantText string
+	}{
+		{
+			name: "a taken username", cause: db.ErrUsernameTaken,
+			want: ssh.ErrNameUnavailable, wantText: "could not register that name",
+		},
+		{
+			name: "an invalid username", cause: db.ErrInvalidUsername,
+			want: ssh.ErrNameUnavailable, wantText: "could not register that name",
+		},
+		{
+			name: "a wrapped invalid username", cause: fmt.Errorf("%w: must be 3-16 characters", db.ErrInvalidUsername),
+			want: ssh.ErrNameUnavailable, wantText: "could not register that name",
+		},
+		{
+			name: "the caller's own key", cause: db.ErrKeyAlreadyRegistered,
+			want: db.ErrKeyAlreadyRegistered, wantText: "public key already registered",
+		},
+		{
+			name: "anything else", cause: errors.New("disk on fire"),
+			want: ssh.ErrRegistrationFailed, wantText: "registration failed",
+		},
 	}
 
-	for _, sentinel := range sentinels {
-		t.Run(sentinel.Error(), func(t *testing.T) {
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			repo := new(MockUserRepository)
 			repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(nil, nil, nil)
-			repo.On("RegisterUserWithKey", mock.Anything, "user", "fp").Return(nil, nil, sentinel)
+			repo.On("RegisterUserWithKey", mock.Anything, "user", "fp").Return(nil, nil, tt.cause)
 
 			_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "user", "fp", nil)
-			require.ErrorIs(t, err, sentinel)
-			assert.NotErrorIs(t, err, ssh.ErrRegistrationFailed)
+
+			require.ErrorIs(t, err, tt.want)
+			require.ErrorContains(t, err, tt.wantText)
+			if errors.Is(tt.cause, db.ErrUsernameTaken) || errors.Is(tt.cause, db.ErrInvalidUsername) {
+				require.NotErrorIs(t, err, db.ErrUsernameTaken, "the client can tell taken from invalid")
+				require.NotErrorIs(t, err, db.ErrInvalidUsername, "the client can tell taken from invalid")
+				assert.NotContains(t, err.Error(), "must be 3-16 characters",
+					"the wrapped cause is for the log, not for the client")
+			}
 		})
 	}
-}
-
-func TestLoadOrRegisterUser_PreservesWrappedCause(t *testing.T) {
-	t.Parallel()
-	repo := new(MockUserRepository)
-	cause := fmt.Errorf("%w: must be 3-16 characters", db.ErrInvalidUsername)
-	repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(nil, nil, nil)
-	repo.On("RegisterUserWithKey", mock.Anything, "bad", "fp").Return(nil, nil, cause)
-
-	_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "bad", "fp", nil)
-	require.ErrorIs(t, err, db.ErrInvalidUsername)
-	assert.ErrorContains(t, err, "must be 3-16 characters")
 }
 
 // Registration is the one unauthenticated write a stranger can drive in a loop, so
@@ -147,7 +172,7 @@ func TestLoadOrRegisterUser_RegistrationGate(t *testing.T) {
 		_, err := ssh.LoadOrRegisterUser(context.Background(), repo, "user", "fp",
 			func() bool { return false })
 
-		assert.ErrorIs(t, err, ssh.ErrTooManyRegistrations)
+		require.ErrorIs(t, err, ssh.ErrTooManyRegistrations)
 		repo.AssertNotCalled(t, "RegisterUserWithKey", mock.Anything, mock.Anything, mock.Anything)
 	})
 

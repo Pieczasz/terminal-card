@@ -99,9 +99,12 @@ type trackedSession struct {
 }
 
 type SessionTracker struct {
-	mu          sync.Mutex
-	active      map[uint]trackedSession
-	next        uint64
+	mu     sync.Mutex
+	active map[uint]trackedSession
+	next   uint64
+	// maxSessions is the player-visible capacity: Connect refuses beyond it with a
+	// message, unlike the TCP-level LimitListener, which silently stops accepting.
+	// Zero means unlimited.
 	maxSessions int
 }
 
@@ -211,8 +214,10 @@ func SetupServer(deps ServerDependencies) (*ssh.Server, error) {
 	rateLimiter := ratelimit.NewSlidingWindowLimiter(deps.Config.RateLimitCount, deps.Config.RateLimitWindow)
 	registerLimiter := ratelimit.NewSlidingWindowLimiter(registrationLimit, registrationWindow)
 
+	// No wish.WithAddress: cmd/server builds the listener itself (LimitListener, and
+	// PROXY protocol in front of it) and calls Serve on it, so an address here is
+	// never read and only reads as if this were the one that binds.
 	server, err := wish.NewServer(
-		wish.WithAddress(fmt.Sprintf("%s:%d", deps.Config.ServerHost, deps.Config.ServerPort)),
 		wish.WithHostKeyPEM(key.RawPrivateKey()),
 		wish.WithIdleTimeout(connIdleTimeout),
 		wish.WithPublicKeyAuth(rateLimitAuth(rateLimiter, func(_ ssh.Context, _ ssh.PublicKey) bool {
@@ -321,18 +326,9 @@ func sessionModel(
 			failSessionf(s, "auth_failed", err, "%v\n", err)
 			return nil, nil
 		}
-		gen, err := tracker.Connect(user.ID, s)
-		switch {
-		case errors.Is(err, ErrServerFull):
-			failSessionf(s, "rejected_full", err,
-				"The server is full right now - please try again in a few minutes.\n")
-			return nil, nil
-		case err != nil:
-			failSessionf(s, "rejected", err, "%v\n", err)
-			return nil, nil
-		}
-		observability.SSHSession(traceCtx, "accepted")
-
+		// Built before the slot is claimed: a panic in here, or a session whose state
+		// has already been torn down, would otherwise strand a tracker slot that
+		// nothing releases - and that account cannot connect again until a restart.
 		model := tui.Model(tui.ModelDependencies{
 			SessionCtx:   traceCtx,
 			User:         *user,
@@ -340,13 +336,33 @@ func sessionModel(
 			LobbyManager: deps.LobbyManager,
 			GameRegistry: deps.GameRegistry,
 		})
-
-		if st, ok := lookupSessionState(s); ok {
-			st.owns = true
-			st.user = user
-			st.gen = gen
-			st.model = model
+		st, ok := lookupSessionState(s)
+		if !ok {
+			err := errors.New("session state missing before the model was installed")
+			slog.ErrorContext(traceCtx, err.Error(), "remote_addr", s.RemoteAddr().String())
+			model.Close()
+			failSessionf(s, "rejected", err, "Your session could not be started - please reconnect.\n")
+			return nil, nil
 		}
+
+		gen, err := tracker.Connect(user.ID, s)
+		switch {
+		case errors.Is(err, ErrServerFull):
+			model.Close()
+			failSessionf(s, "rejected_full", err,
+				"The server is full right now - please try again in a few minutes.\n")
+			return nil, nil
+		case err != nil:
+			model.Close()
+			failSessionf(s, "rejected", err, "%v\n", err)
+			return nil, nil
+		}
+		observability.SSHSession(traceCtx, "accepted")
+
+		st.owns = true
+		st.user = user
+		st.gen = gen
+		st.model = model
 
 		// bubbletea's own recover prints to stderr and knows nothing about the span
 		// or the metric, so reportingModel catches Init/Update/View first. Its
@@ -388,13 +404,27 @@ func (m reportingModel) View() tea.View {
 // reportPanic records a recovered panic and re-panics so the caller's own frame
 // unwinds; the panic stops at bubbletea, which ends the program without taking the
 // process with it. It must be a direct defer - a recover() one call deeper is nil.
+//
+// The notice goes to the session's stderr channel, not its stdout: bubbletea owns the
+// screen and is about to tear it down. Without it the panic is written to the server's
+// stderr and the client just sees the connection close on a frozen screen - the
+// recoverSession message never runs, because nothing panics out of bubbletea.
 func reportPanic(s ssh.Session) {
 	r := recover()
 	if r == nil {
 		return
 	}
 	recordSessionPanic(s, r)
+	notifySessionPanic(s)
 	panic(r)
+}
+
+const panicNotice = "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n"
+
+func notifySessionPanic(s ssh.Session) {
+	if w := s.Stderr(); w != nil {
+		_, _ = io.WriteString(w, panicNotice)
+	}
 }
 
 func boundedPty() ssh.Option {
@@ -485,7 +515,9 @@ func startSession(s ssh.Session) *sessionState {
 	pty, _, _ := s.Pty()
 	ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
 		trace.WithAttributes(
-			attribute.String("remote_addr", s.RemoteAddr().String()),
+			// No client address here: the span also carries the username once the
+			// player is known, and joining the two is exactly the record a trace store
+			// should not hold for 48 hours. Abuse investigation has the warn-level logs.
 			attribute.String("client_version", s.Context().ClientVersion()),
 			attribute.Int("terminal.width", pty.Window.Width),
 			attribute.Int("terminal.height", pty.Window.Height),
@@ -495,7 +527,7 @@ func startSession(s ssh.Session) *sessionState {
 	sessionStates.Store(s, st)
 
 	slog.InfoContext(ctx, "ssh session connected",
-		"remote_addr", s.RemoteAddr().String(),
+		"client_net", clientNet(s.RemoteAddr()),
 		"client_version", s.Context().ClientVersion(),
 	)
 	return st
@@ -512,7 +544,7 @@ func finishSession(s ssh.Session, st *sessionState) {
 
 	observability.SSHSessionEnded(st.traceCtx, elapsed, outcome)
 	slog.InfoContext(st.traceCtx, "ssh session disconnected",
-		"remote_addr", s.RemoteAddr().String(),
+		"client_net", clientNet(s.RemoteAddr()),
 		"client_version", s.Context().ClientVersion(),
 		"duration_seconds", elapsed.Seconds(),
 		"outcome", outcome,
@@ -530,7 +562,7 @@ func recoverSession(s ssh.Session) {
 		return
 	}
 	recordSessionPanic(s, r)
-	wish.Fatalf(s, "\r\nAn unexpected internal error occurred. The administrators have been notified.\r\n")
+	wish.Fatalf(s, "%s", panicNotice)
 }
 
 // recordSessionPanic puts a recovered panic on the session span, the metric and the
@@ -595,4 +627,16 @@ func allowRegistration(
 		return false
 	}
 	return true
+}
+
+// clientNet is what the routine connect/disconnect logs record instead of the address:
+// the same /64 the rate limiter keys on. It is enough to spot a flood or a broken
+// client and it stops every ordinary session from writing a personal identifier into
+// a store with a retention policy. Warn-level refusals keep the full address; those
+// are the events an operator investigates.
+func clientNet(addr net.Addr) string {
+	if key, ok := netKeyFor(addr); ok {
+		return key
+	}
+	return "unknown"
 }
