@@ -81,6 +81,14 @@ func TestJoin_RefreshDropsTablesThatStarted(t *testing.T) {
 	registry := testRegistry()
 	require.NoError(t, l.ToggleReady(l.Leader(), registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
+	// Starting a game arms the lobby's own result watcher, which lives until the
+	// engine's feed closes. Nothing else in this test ends the match, so without this
+	// the goroutine outlives the package and goleak fails the whole run.
+	t.Cleanup(func() {
+		if engine := l.ActiveGame(); engine != nil {
+			engine.Close()
+		}
+	})
 
 	view.refresh()
 
@@ -326,6 +334,182 @@ func TestJoin_ViewFitsTheTerminal(t *testing.T) {
 			assert.LessOrEqual(t, lg.Width(out), size.w, "wider than the terminal")
 			assert.Contains(t, stripANSI(out), ">Poker", "the cursor row is on screen")
 			assert.Contains(t, stripANSI(out), "1525", "and it is the 26th table, not the first screenful")
+		})
+	}
+}
+
+// Init has to start both the cursor blink and the refresh loop: without the tick the
+// list is a snapshot of whatever was open when the screen opened.
+func TestJoin_InitStartsTheRefreshLoop(t *testing.T) {
+	t.Parallel()
+	view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+
+	assert.NotNil(t, view.Init())
+}
+
+// The tick is what Update dispatches the refresh on, so it has to produce the message
+// Update actually matches - a plain time.Time would be ignored and the list would freeze.
+func TestJoin_RefreshTickProducesARefreshMsg(t *testing.T) {
+	t.Parallel()
+
+	assert.IsType(t, refreshMsg{}, refreshTick()())
+}
+
+func TestJoin_JoinByCode(t *testing.T) {
+	t.Parallel()
+
+	t.Run("an empty code is not a join attempt", func(t *testing.T) {
+		t.Parallel()
+		view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+
+		_, cmd := view.joinByCode("")
+
+		assert.Nil(t, cmd)
+		assert.NoError(t, view.err, "the player typed nothing, which is not an error")
+	})
+
+	// The table may have filled or started while the code was being typed, so the
+	// refusal has to be on screen next to a list that is current again.
+	t.Run("an unknown code says so and re-reads the list", func(t *testing.T) {
+		t.Parallel()
+		m := lobby.NewManager(context.Background(), nil)
+		view := newJoinModel(t, m)
+		openPublicTable(t, m, "host", 1, testGameName)
+
+		_, cmd := view.joinByCode("NOSUCH12")
+
+		assert.Nil(t, cmd, "there is nowhere to navigate")
+		require.Error(t, view.err)
+		assert.Len(t, view.entries, 1, "the list was refreshed, not left stale")
+		assert.Contains(t, stripANSI(view.View().Content), "Error:")
+	})
+
+	t.Run("a good code seats the player and opens the lobby", func(t *testing.T) {
+		t.Parallel()
+		m := lobby.NewManager(context.Background(), nil)
+		table := openPublicTable(t, m, "host", 1, testGameName)
+		view := newJoinModel(t, m)
+
+		_, cmd := view.joinByCode(table.Code())
+
+		require.NotNil(t, cmd)
+		change, ok := cmd().(router.ChangeViewMsg)
+		require.True(t, ok)
+		assert.Equal(t, router.RouteLobby, change.ViewName)
+		assert.Same(t, table, change.Context, "the lobby view is handed the table that was joined")
+		assert.NoError(t, view.err)
+	})
+}
+
+// Enter and space both join the highlighted row; the browser is useless if the row the
+// cursor is on is not the one it acts on.
+func TestJoin_SelectingARowJoinsIt(t *testing.T) {
+	t.Parallel()
+
+	for _, key := range []string{"enter", "space"} {
+		t.Run("with "+key, func(t *testing.T) {
+			t.Parallel()
+			m := lobby.NewManager(context.Background(), nil)
+			openPublicTable(t, m, "host", 1, testGameName)
+			view := newJoinModel(t, m)
+			require.Len(t, view.entries, 1)
+
+			_, cmd := view.Update(keyMsg(key))
+
+			require.NotNil(t, cmd)
+			change, ok := cmd().(router.ChangeViewMsg)
+			require.True(t, ok)
+			assert.Equal(t, router.RouteLobby, change.ViewName)
+		})
+	}
+}
+
+// The code prompt is a mode, and every way in and out of it has to work: a player who
+// can open it but not cancel it is stuck on a field with no table in sight.
+func TestJoin_CodeEntryFlow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("escape cancels without joining", func(t *testing.T) {
+		t.Parallel()
+		view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+		pressJoin(t, view, "c")
+		require.True(t, view.writingCode)
+
+		pressJoin(t, view, "a")
+		pressJoin(t, view, "esc")
+
+		assert.False(t, view.writingCode)
+		assert.NoError(t, view.err, "cancelling is not a failed join")
+	})
+
+	t.Run("backspace corrects a typo", func(t *testing.T) {
+		t.Parallel()
+		view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+		pressJoin(t, view, "c")
+		for _, key := range []string{"a", "b", "backspace"} {
+			pressJoin(t, view, key)
+		}
+
+		assert.Equal(t, "A", view.textInput.Value())
+	})
+
+	t.Run("enter submits what was typed", func(t *testing.T) {
+		t.Parallel()
+		m := lobby.NewManager(context.Background(), nil)
+		table := openPublicTable(t, m, "host", 1, testGameName)
+		view := newJoinModel(t, m)
+
+		pressJoin(t, view, "c")
+		for _, r := range strings.ToLower(table.Code()) {
+			pressJoin(t, view, string(r))
+		}
+		_, cmd := view.Update(keyMsg("enter"))
+
+		require.NotNil(t, cmd, "a typed code is upper-cased on the way to the manager")
+		change, ok := cmd().(router.ChangeViewMsg)
+		require.True(t, ok)
+		assert.Equal(t, router.RouteLobby, change.ViewName)
+	})
+}
+
+// The cursor blink is not a key press, and it has to reach the field it belongs to -
+// otherwise the caret stops moving the moment the prompt opens.
+func TestJoin_NonKeyMessagesReachTheFocusedField(t *testing.T) {
+	t.Parallel()
+	view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+
+	_, cmd := view.Update(struct{ tea.Msg }{})
+	assert.Nil(t, cmd, "while browsing there is nothing to forward it to")
+
+	pressJoin(t, view, "c")
+	updated, _ := view.Update(struct{ tea.Msg }{})
+	_, ok := updated.(*joinModel)
+	assert.True(t, ok, "a focused field still owns the message")
+}
+
+// The status line is the only thing telling the player why the list looks the way it
+// does, so every filter value has to have a name on it.
+func TestJoin_FilterLineNamesEveryFilter(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		filter lobby.BrowseFilter
+		want   string
+	}{
+		{name: "the defaults", filter: lobby.BrowseFilter{OnlyWithRoom: true}, want: "game: any   mode: any   showing: with seats"},
+		{name: "ranked only", filter: lobby.BrowseFilter{Mode: lobby.BrowseRanked}, want: "game: any   mode: ranked   showing: all tables"},
+		{name: "casual only", filter: lobby.BrowseFilter{Mode: lobby.BrowseCasual}, want: "game: any   mode: casual   showing: all tables"},
+		{name: "pinned to a game", filter: lobby.BrowseFilter{GameName: "Poker"}, want: "game: Poker   mode: any   showing: all tables"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			view := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+			view.filter = tt.filter
+
+			assert.Equal(t, tt.want, stripANSI(view.filterLine()))
 		})
 	}
 }

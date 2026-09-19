@@ -172,7 +172,9 @@ func (m *joinModel) handleBrowsing(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.writingCode = true
 		m.textInput.Focus()
 		return m, textinput.Blink
-	case "enter", " ":
+	// "space", not " ": KeyPressMsg.String() normalises the spacebar to the name, so
+	// the literal never matched and space on the browse list did nothing at all.
+	case "enter", "space":
 		return m.joinSelected()
 	}
 	return m, nil

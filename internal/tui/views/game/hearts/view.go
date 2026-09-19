@@ -202,11 +202,7 @@ func (m *Model) renderPlayerSection() string {
 		handView = gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false, handWidth, handRows)
 	}
 
-	sections := []string{statusView, handView}
-	if m.lastActionErr != nil {
-		sections = append(sections, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	return lg.JoinVertical(lg.Center, sections...)
+	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, handView)
 }
 
 func (m *Model) renderHandOver() string {

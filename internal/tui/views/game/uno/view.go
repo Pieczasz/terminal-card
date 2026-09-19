@@ -107,15 +107,7 @@ func (m *Model) renderPlayerSection() string {
 	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor,
 		handWidth, handRows)
 
-	sections := []string{statusView}
-	if colorRow != "" {
-		sections = append(sections, colorRow)
-	}
-	sections = append(sections, handView)
-	if m.lastActionErr != nil {
-		sections = append(sections, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	return lg.JoinVertical(lg.Center, sections...)
+	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, colorRow, handView)
 }
 
 // renderHandColorRow paints a Uno color glyph above each card so four colors stay

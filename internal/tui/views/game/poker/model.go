@@ -116,7 +116,7 @@ func (m *Model) syncState() {
 			m.winnerName = e.Winners[0].DisplayName()
 		}
 
-		m.board = append(m.board[:0], e.Table...)
+		m.board = slices.Clone(e.Table)
 		m.seats = buildSeats(state, e, heroID)
 	})
 

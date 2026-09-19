@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -13,6 +14,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
+	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -170,4 +172,161 @@ func stripANSI(s string) string {
 		}
 	}
 	return out.String()
+}
+
+func fourHanded(width, height int) *Model {
+	seats := []game.PlayerSnapshot{
+		{ID: "1", Username: "alice", HandSize: 13},
+		{ID: "2", Username: "bob", HandSize: 13},
+		{ID: "3", Username: "carol", HandSize: 13},
+		{ID: "4", Username: "dave", HandSize: 13},
+	}
+	hand := make([]deck.Card, 0, 13)
+	for i := range 13 {
+		hand = append(hand, deck.Card{Rank: deck.Rank(i + 1), Suit: deck.Hearts})
+	}
+	return &Model{
+		Global: router.GlobalContext{Theme: styles.NewTheme(true), Width: width, Height: height},
+		Bound:  game.Bind(&game.Engine{}, "1"),
+		Base: gameview.BaseState{
+			Phase:           game.Playing,
+			MyTurn:          true,
+			Hand:            hand,
+			Seats:           seats,
+			Opponents:       seats[1:],
+			CurrentPlayer:   "alice",
+			CurrentPlayerID: "1",
+			TurnRemaining:   11 * time.Second,
+		},
+		stage:            logic.StageTrickPlay,
+		trickCards:       map[string]deck.Card{"2": {Rank: deck.Queen, Suit: deck.Spades}},
+		handPoints:       map[string]int{"1": 0, "2": 13, "3": 0, "4": 0},
+		cumulativeScores: map[string]int{"1": 12, "2": 40, "3": 7, "4": 0},
+		handNumber:       4,
+		passDirection:    logic.PassLeft,
+		seatOrder:        []string{"1", "2", "3", "4"},
+		seatNames:        map[string]string{"1": "alice", "2": "bob", "3": "carol", "4": "dave"},
+		passSelected:     map[deck.Card]struct{}{},
+	}
+}
+
+// Every screen this view can be in has to stay inside the terminal, including the
+// pass phase (whose hand is drawn by the multi-select renderer) and the summaries.
+func TestView_EveryScreenFitsTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	screens := map[string]func(*Model){
+		"trick play": func(*Model) {},
+		"the pass phase": func(m *Model) {
+			m.stage = logic.StagePassing
+			m.passSelected = map[deck.Card]struct{}{m.Base.Hand[0]: {}, m.Base.Hand[3]: {}}
+		},
+		"the hand summary": func(m *Model) { m.stage = logic.StageHandOver; m.handComplete = true },
+		"the match over": func(m *Model) {
+			m.matchComplete = true
+			m.Base.Phase = game.Finished
+			m.Base.Winner = "carol"
+		},
+		"a seat lost mid-hand": func(m *Model) {
+			m.Base.Seats = m.Base.Seats[:3]
+			m.Base.Opponents = m.Base.Seats[1:]
+		},
+	}
+
+	for _, size := range []struct{ w, h int }{
+		{styles.MinWidth, styles.MinHeight},
+		{80, 24},
+		{120, 50},
+	} {
+		for name, setup := range screens {
+			sub := fmt.Sprintf("%dx%d_%s", size.w, size.h, strings.ReplaceAll(name, " ", "_"))
+			t.Run(sub, func(t *testing.T) {
+				t.Parallel()
+				m := fourHanded(size.w, size.h)
+				setup(m)
+
+				out := m.View().Content
+				assert.LessOrEqual(t, lg.Width(out), size.w)
+				assert.LessOrEqual(t, lg.Height(out), size.h)
+			})
+		}
+	}
+}
+
+// The key line is the only prompt: showing the play keys during the pass would tell a
+// player to press enter with one card selected, which the pass refuses.
+func TestKeyHints_FollowTheStage(t *testing.T) {
+	t.Parallel()
+
+	m := fourHanded(100, 40)
+	assert.Equal(t, keyHintsPlay, m.keyHints())
+
+	m.stage = logic.StagePassing
+	assert.Equal(t, keyHintsPass, m.keyHints())
+}
+
+// Which way the three cards travel changes what a player keeps, so the direction has
+// to be on screen during the pass and gone once it is over.
+func TestRenderPassDirection_ShowsOnlyDuringThePass(t *testing.T) {
+	t.Parallel()
+
+	m := fourHanded(100, 40)
+	assert.Empty(t, m.renderPassDirection(), "trick play has no pass direction")
+
+	m.stage = logic.StagePassing
+	assert.Contains(t, m.renderPassDirection(), "Pass: ")
+}
+
+// An empty slot has to keep the cross the same size as a played one, or the trick
+// jumps around the table as each card lands.
+func TestRenderTrickSlot_DrawsAPlaceholderForASeatYetToPlay(t *testing.T) {
+	t.Parallel()
+	m := fourHanded(100, 40)
+
+	for _, mini := range []bool{false, true} {
+		t.Run(fmt.Sprintf("mini=%v", mini), func(t *testing.T) {
+			t.Parallel()
+			assert.NotEmpty(t, m.renderTrickSlot("2", mini), "bob has played")
+			assert.NotEmpty(t, m.renderTrickSlot("3", mini), "carol has not, but keeps her slot")
+			assert.NotEmpty(t, m.renderTrickSlot("", mini), "and so does a seat that is not there")
+		})
+	}
+}
+
+// The summary is the running score, so it has to name every seat and both its numbers.
+func TestRenderHandOver_ShowsEverySeatsHandAndTotal(t *testing.T) {
+	t.Parallel()
+
+	m := fourHanded(120, 50)
+	m.stage = logic.StageHandOver
+	m.handComplete = true
+
+	out := m.View().Content
+	for _, name := range []string{"alice", "bob", "carol", "dave"} {
+		assert.Contains(t, out, name)
+	}
+	assert.Contains(t, out, "HAND 4 COMPLETE")
+
+	m.matchComplete = true
+	m.Base.Winner = "bob"
+	assert.Contains(t, m.View().Content, "MATCH COMPLETE - bob wins")
+}
+
+func TestView_ShowsTheLastRejectedActionAndStillFits(t *testing.T) {
+	t.Parallel()
+
+	m := fourHanded(styles.MinWidth, styles.MinHeight)
+	m.lastActionErr = errNeedThreeCards
+
+	out := m.View().Content
+	assert.Contains(t, out, "exactly 3 cards")
+	assert.LessOrEqual(t, lg.Height(out), styles.MinHeight)
+}
+
+func TestView_WaitingScreen(t *testing.T) {
+	t.Parallel()
+
+	m := fourHanded(80, 24)
+	m.Base.Phase = game.Waiting
+	assert.Contains(t, m.View().Content, "Waiting for game to start")
 }

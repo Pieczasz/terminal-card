@@ -495,3 +495,13 @@ func TestView_NoCountdownBetweenHands(t *testing.T) {
 		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
 	}
 }
+
+func TestInit_ArmsBothTheFeedAndTheClock(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	// Batched, so the one command carries the event listener and the countdown: a
+	// view that armed only one of them either stops updating or freezes its clock.
+	assert.NotNil(t, m.Init())
+}

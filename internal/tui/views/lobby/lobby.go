@@ -31,8 +31,6 @@ type model struct {
 	leaving bool
 
 	cursor           int
-	gameOptions      []string
-	gameIndex        int
 	isPrivate        bool
 	isRanked         bool
 	maxPlayers       int
@@ -59,12 +57,10 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 			subErr = fmt.Errorf("live updates unavailable, rejoin the lobby: %w", subErr)
 		}
 	}
-	gameName := ""
 	isPrivate := true
 	isRanked := false
 	maxPlayers := 4
 	if activeLobby != nil {
-		gameName = activeLobby.GameName()
 		isPrivate = activeLobby.IsPrivate()
 		isRanked = activeLobby.IsRanked()
 		maxPlayers = activeLobby.MaxPlayers()
@@ -74,8 +70,6 @@ func New(global router.GlobalContext, activeLobby *lobby.Lobby) tea.Model {
 		currentLobby: activeLobby,
 		lobbyChan:    ch,
 		cursor:       0,
-		gameOptions:  []string{gameName},
-		gameIndex:    0,
 		isPrivate:    isPrivate,
 		isRanked:     isRanked,
 		maxPlayers:   maxPlayers,
@@ -280,10 +274,9 @@ func (m *model) adjustSetting(self *game.Player, delta int) {
 			m.isRanked = !m.isRanked
 			slog.Error("failed to set ranked mode", "error", err)
 		}
-	case cursorGame, cursorFirstGuest:
-		// Game selection is fixed once a lobby exists; guest rows have no
-		// left/right adjustment. Both are intentional no-ops.
 	default:
+		// cursorGame and the guest rows: the game is fixed once a lobby exists and a
+		// guest row has no left/right adjustment, so both rows ignore it.
 	}
 }
 
@@ -339,35 +332,71 @@ func (m *model) View() tea.View {
 	}
 
 	actions := []string{"x - Leave Lobby", "r - Ready"}
-	return tea.NewView(views.RenderScreen(m.global, "Lobby", actions, func(int) string {
+	return tea.NewView(views.RenderScreen(m.global, "Lobby", actions, func(height int) string {
 		if m.showLeaveConfirm {
 			redYes := m.global.Theme.ErrorText.Bold(true).Render("Yes")
 			return fmt.Sprintf("Are you sure you want to leave the lobby?\n\n[y] %s   [n] No", redYes)
 		}
 
-		form := m.renderForm(m.currentLobby.IsLeader(m.selfPlayer()), styles.InnerWidth(m.global.Width))
-		if m.actionErr != nil {
-			form = lg.JoinVertical(lg.Center, form, "", m.global.Theme.ErrorText.Render(m.actionErr.Error()))
+		innerWidth := styles.InnerWidth(m.global.Width)
+		isLeader := m.currentLobby.IsLeader(m.selfPlayer())
+		if m.actionErr == nil {
+			return m.renderForm(isLeader, innerWidth, height)
 		}
-		return form
+		// Wrapped before it is measured: on a narrow terminal the message is two rows,
+		// and a budget that assumed one puts the form back over the frame.
+		errText := m.global.Theme.ErrorText.Width(innerWidth).Render(m.actionErr.Error())
+		form := m.renderForm(isLeader, innerWidth, height-lg.Height(errText)-1)
+		return lg.JoinVertical(lg.Center, form, "", errText)
 	}))
 }
 
+// settingsRows is the fixed height of renderSettings: the heading, the lobby code and
+// the four option rows. The roster is the only part of this screen that grows, so it
+// is the part that gives when the terminal cannot hold both.
+const settingsRows = 6
+
+// stackedGap is the blank rows between the stacked columns. It is the first thing the
+// roster takes back on a terminal too short for both.
+const stackedGap = 2
+
 // renderForm lays the settings and player columns side by side, stacking them
 // vertically when they would not fit innerWidth: lipgloss word-wraps the columns
-// rather than shrinking them.
-func (m *model) renderForm(isLeader bool, innerWidth int) string {
+// rather than shrinking them. maxHeight is the rows RenderScreen has to spare.
+func (m *model) renderForm(isLeader bool, innerWidth, maxHeight int) string {
 	settingsStack := m.renderSettings(isLeader)
-	playersStack := lg.JoinVertical(lg.Left, m.renderPlayerList(isLeader)...)
+	rows := m.renderPlayerList(isLeader)
 
-	if lg.Width(settingsStack)+lg.Width(playersStack)+4 > innerWidth {
+	if lg.Width(settingsStack)+lg.Width(lg.JoinVertical(lg.Left, rows...))+4 > innerWidth {
+		// Stacked: the settings take their rows first and the roster gets the rest.
+		gap := stackedGap
+		if maxHeight-settingsRows-gap < 2 {
+			gap = 0
+		}
+		players := lg.JoinVertical(lg.Left, capRoster(rows, maxHeight-settingsRows-gap)...)
 		settingsCol := lg.NewStyle().Align(lg.Left).Render(settingsStack)
-		playersCol := lg.NewStyle().Align(lg.Left).MarginTop(2).Render(playersStack)
+		playersCol := lg.NewStyle().Align(lg.Left).MarginTop(gap).Render(players)
 		return lg.JoinVertical(lg.Left, settingsCol, playersCol)
 	}
+	// Side by side, so the roster has the whole height to itself.
+	players := lg.JoinVertical(lg.Left, capRoster(rows, maxHeight)...)
 	settingsCol := lg.NewStyle().Align(lg.Left).MarginRight(6).Render(settingsStack)
-	playersCol := lg.NewStyle().Align(lg.Left).Render(playersStack)
+	playersCol := lg.NewStyle().Align(lg.Left).Render(players)
 	return lg.NewStyle().Align(lg.Center).Render(lg.JoinHorizontal(lg.Top, settingsCol, playersCol))
+}
+
+// capRoster trims the player list to the rows it was given and says how many seats it
+// hid. Rendering past the frame instead hands the overflow to the terminal to wrap,
+// which shifts every row above it - including the lobby code friends join by.
+func capRoster(rows []string, maxRows int) []string {
+	switch {
+	case maxRows >= len(rows):
+		return rows
+	case maxRows <= 0:
+		return nil
+	}
+	keep := maxRows - 1
+	return append(rows[:keep:keep], fmt.Sprintf("  ... and %d more", len(rows)-keep))
 }
 
 func (m *model) renderSettings(isLeader bool) string {
@@ -393,7 +422,7 @@ func (m *model) renderSettings(isLeader bool) string {
 	return lg.JoinVertical(lg.Left,
 		"  "+m.global.Theme.SectionHeading.Render("Settings"),
 		fmt.Sprintf("  Lobby Code: %s", m.global.Theme.LobbyCode.Render(m.currentLobby.Code())),
-		renderOption(cursorGame, "Game", m.gameOptions[m.gameIndex]),
+		renderOption(cursorGame, "Game", m.currentLobby.GameName()),
 		renderOption(cursorMaxPlayers, "Max Players", strconv.Itoa(m.maxPlayers)),
 		renderOption(cursorVisibility, "Visibility", fmt.Sprintf("%-7s", vis)),
 		renderOption(cursorMode, "Mode", fmt.Sprintf("%-7s", mode)),

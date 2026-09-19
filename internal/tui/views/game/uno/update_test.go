@@ -1,6 +1,7 @@
 package uno
 
 import (
+	"context"
 	"strconv"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	logic "github.com/Pieczasz/terminal-card/internal/game/uno"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
@@ -66,7 +68,12 @@ func tableOnTurn(t *testing.T) (*game.Engine, *Model) {
 	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
 	require.NoError(t, err)
 
-	global := router.GlobalContext{User: &db.User{ID: uint(id), Username: "hero"}}
+	// A real manager, because leaving the table goes through it: the view is
+	// constructed exactly as app.go builds it.
+	global := router.GlobalContext{
+		User:         &db.User{ID: uint(id), Username: "hero"},
+		LobbyManager: lobby.NewManager(context.Background(), nil),
+	}
 	m, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	require.True(t, m.Base.MyTurn, "the view has to be bound to the seat on turn")
@@ -171,4 +178,119 @@ func TestRenderHandColorRow_FollowsTheHandItSitsOver(t *testing.T) {
 			assert.Equal(t, tt.wantRow, row != "", "the colour row appears exactly when the hand fans")
 		})
 	}
+}
+
+func TestInit_ArmsBothTheFeedAndTheClock(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t)
+
+	// Batched, so the one command carries the event listener and the countdown: a
+	// view that armed only one of them either stops updating or freezes its clock.
+	assert.NotNil(t, m.Init())
+}
+
+// Esc is overloaded: it cancels the picker while one is open and leaves the table
+// otherwise. Collapsing the two would forfeit a seat on a mistyped cancel.
+func TestHandleEscape_CancelsThePickerBeforeLeavingTheTable(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t)
+	m.pickingColor = true
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	require.Nil(t, cmd, "the first esc only closes the picker")
+	assert.False(t, m.pickingColor)
+
+	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	assert.NotNil(t, cmd, "the second esc leaves the table")
+}
+
+// A wild is the one card that needs a second decision, so enter opens the picker
+// rather than playing it into whatever colour the engine would guess.
+func TestHandleEnter_AWildOpensThePickerAndTheNextEnterCommits(t *testing.T) {
+	t.Parallel()
+
+	for _, rank := range []deck.Rank{logic.Wild, logic.WildDrawFour} {
+		t.Run(strconv.Itoa(int(rank)), func(t *testing.T) {
+			t.Parallel()
+			// No engine: the submit is refused for want of a seat, which is the
+			// rejection path without depending on where a real deal landed the wilds.
+			m := &Model{}
+			m.Base.MyTurn = true
+			m.Base.Hand = []deck.Card{{Rank: rank}}
+
+			_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			require.True(t, m.pickingColor, "a wild asks which colour it becomes")
+			require.Equal(t, 0, m.colorCursor, "the picker opens on the first colour")
+
+			m.colorCursor = 3
+			_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			assert.False(t, m.pickingColor, "committing closes the picker whatever the engine says")
+			// A rejected move has to surface a message rather than fail silently.
+			assert.Error(t, m.lastActionErr)
+		})
+	}
+}
+
+func TestHandleEnter_AnOrdinaryCardIsPlayedStraightAway(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t)
+	m.Base.Hand = []deck.Card{{Rank: logic.Zero, Suit: logic.ColorRed}}
+	m.Selected = 0
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.False(t, m.pickingColor, "only a wild opens the picker")
+}
+
+func TestHandleDraw_OnlyActsOnYourOwnTurn(t *testing.T) {
+	t.Parallel()
+	engine, m := tableOnTurn(t)
+
+	before := engine.Snapshot().DeckSize
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	require.NoError(t, m.lastActionErr)
+	require.Less(t, engine.Snapshot().DeckSize, before, "drawing takes a card off the stock")
+
+	m.syncState()
+	require.False(t, m.Base.MyTurn, "drawing passes the turn on")
+
+	after := engine.Snapshot().DeckSize
+	_, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
+	assert.Equal(t, after, engine.Snapshot().DeckSize, "d off-turn must not reach the engine")
+}
+
+// Number keys are a shortcut into the hand, so they must not move behind the picker -
+// the digit would silently retarget the card being played.
+func TestSelectDigit_IsIgnoredWhileThePickerIsOpen(t *testing.T) {
+	t.Parallel()
+	m := &Model{}
+	m.Base.Hand = make([]deck.Card, 5)
+
+	_, _ = m.Update(tea.KeyPressMsg{Code: '3', Text: "3"})
+	require.Equal(t, 3, m.Selected)
+
+	m.pickingColor = true
+	_, _ = m.Update(tea.KeyPressMsg{Code: '1', Text: "1"})
+	assert.Equal(t, 3, m.Selected, "the hand cursor is frozen behind the picker")
+}
+
+// GridStep clamps the picker's cursor, but the submit path checks again: a cursor out
+// of range must be dropped rather than index past the colour table.
+func TestSubmitColorPick_IgnoresACursorOutOfRange(t *testing.T) {
+	t.Parallel()
+	_, m := tableOnTurn(t)
+	m.pickingColor = true
+	m.colorCursor = len(colorChoices)
+
+	_, _ = m.submitColorPick(deck.Card{Rank: logic.Wild})
+	assert.True(t, m.pickingColor, "nothing was committed, so the picker stays open")
+}
+
+// Once the game is over enter is the way out, not another move.
+func TestHandleEnter_LeavesAFinishedGame(t *testing.T) {
+	t.Parallel()
+	m := &Model{}
+	m.Base.Phase = game.Finished
+
+	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	assert.NotNil(t, cmd)
 }

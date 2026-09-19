@@ -323,11 +323,7 @@ func (m *Model) renderHero(compact bool) string {
 	status := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
 	actions := m.renderActionBar()
 
-	parts := []string{seatBlock, status, actions}
-	if m.lastActionErr != nil {
-		parts = append(parts, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	block := lg.JoinVertical(lg.Center, parts...)
+	block := gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, seatBlock, status, actions)
 	if !compact {
 		return lg.NewStyle().MarginBottom(1).Render(block)
 	}

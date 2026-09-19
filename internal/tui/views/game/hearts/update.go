@@ -36,7 +36,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.SelectDigit(msg.String())
 		return m, nil
-	case " ":
+	// "space", not " ": that is what KeyPressMsg.String() normalises the spacebar to,
+	// and matching the literal meant the pass phase could not be played by hand at all
+	// - the engine's 45-second auto-pass was the only way out of it.
+	case "space":
 		return m.handleSpace()
 	case "enter":
 		return m.handleEnter()

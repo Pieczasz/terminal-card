@@ -138,10 +138,11 @@ func TitleHeightBudget(screenHeight int) int {
 // figlet font on every call, which measured as 85% of the allocations in a menu frame
 // - and a banner is a pure function of its text and the width it has to fit.
 //
-// It is capped because one caller banners the player's own username: anyone may
-// register one, so an uncapped cache would grow with every account that ever logs in.
-// Past the cap the banners still render, they just stop being remembered - the screen
-// titles that matter are already in by then.
+// Every key is now a fixed screen title at a bounded size, so the cache cannot grow
+// with the player base - the home screen used to banner the username itself, which let
+// any account mint entries. The cap stays as the backstop that made that harmless:
+// titles times sizes is still thousands of entries, and past the cap banners simply
+// stop being remembered rather than failing.
 var (
 	figureCache   sync.Map // figureKey -> string
 	figureCached  atomic.Int64

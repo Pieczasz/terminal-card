@@ -70,9 +70,13 @@ func New(global router.GlobalContext) tea.Model {
 	return model{global: global, filters: filters}
 }
 
+// loadedMsg carries the filter it was fetched for as well as the page. Pressing the
+// filter key twice quickly issues two queries, and the slower one can land last: without
+// the identity its rows would be painted under the newer filter's heading.
 type loadedMsg struct {
 	rankings []db.Ranking
 	err      error
+	gameName string
 	wantPage int
 }
 
@@ -132,7 +136,7 @@ func (m model) load(limit int, wantPage int) tea.Cmd {
 		ctx, cancel := context.WithTimeout(m.global.RequestContext(), 5*time.Second)
 		defer cancel()
 		rankings, err := m.global.UserRepository.BestPlayers(ctx, limit, gameName)
-		return loadedMsg{rankings: rankings, err: err, wantPage: wantPage}
+		return loadedMsg{rankings: rankings, err: err, gameName: gameName, wantPage: wantPage}
 	}
 }
 
@@ -174,6 +178,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case loadedMsg:
+		if msg.gameName != m.gameFilter() {
+			// A response for a filter the player has already cycled past.
+			return m, nil
+		}
 		m.loading = false
 		m.rankings = msg.rankings
 		m.err = msg.err

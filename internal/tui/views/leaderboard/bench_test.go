@@ -23,9 +23,12 @@ func BenchmarkLeaderboardView_Render(b *testing.B) {
 			Game:   db.Game{Name: "Poker"},
 		})
 	}
+	// filters is not optional: View reads the current one for its footer, so a
+	// literal without it panics where the real view, built by New, never can.
 	m := model{
 		global:   router.GlobalContext{Width: 120, Height: 40, Theme: styles.NewTheme(true)},
 		rankings: rankings,
+		filters:  []string{filterAll, "Poker"},
 	}
 
 	b.ReportAllocs()
