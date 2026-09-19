@@ -16,10 +16,13 @@ that code actually does.
 
 The controller for the personal data described here is:
 
-**[CONTROLLER_NAME_AND_CONTACT]**
+**Bartlomiej Piekarz**, a private individual based in the Netherlands.
+Email for privacy requests and anything else in this policy: **bartekp854@gmail.com**.
 
-*(the operator's legal name, a postal address where one is required, and an email
-address for privacy requests)*
+This is a personal, non-commercial project run by one person. There is no company
+behind it and no data protection officer, because processing at this scale does not
+require one. If a postal address is needed for a formal request, ask by email and one
+will be provided.
 
 The project is far below the thresholds that require a Data Protection Officer, so
 there is none. Write to the address above.
@@ -154,8 +157,9 @@ Pick a username you are happy to be seen under. Changing it later means contacti
 
 We do not sell personal data, and we do not share it for advertising. It reaches:
 
-- **[HOSTING_PROVIDER]** - the VPS provider hosting the game server and its database.
-  Acting as a processor under a data processing agreement.
+- **Contabo GmbH** (Germany) - hosts the virtual server that runs the game, its
+  database, and the log, trace and metric stores, in a data centre in Germany, inside
+  the EU. Acting as a processor under Contabo's data processing agreement.
 - **GitHub, Inc.** - hosts the static website (GitHub Pages) and the source code.
 - **Cloudflare, Inc.** - DNS and CDN in front of the website.
 
@@ -170,8 +174,8 @@ GitHub and Cloudflare are US companies and may process the request data describe
 section 3 outside the EEA. Both offer data processing terms incorporating the European
 Commission's **Standard Contractual Clauses**, which is the transfer mechanism we rely
 on, alongside their own supplementary measures. No game data - accounts, matches,
-ratings, logs - is transferred to them; it stays on the hosting provider's
-infrastructure.
+ratings, logs - is transferred to them; it stays on the server in Germany and never
+leaves the EU.
 
 ---
 
@@ -197,8 +201,10 @@ Under the GDPR you have the right to **access** your data, to **rectification** 
 anything wrong, to **erasure**, to **restriction** of processing, to **data
 portability**, and to **object** to processing based on legitimate interests
 (section 5). You also have the right to lodge a **complaint with a supervisory
-authority** - in the EU, the data protection authority of the country you live or
-work in, or where the issue happened.
+authority**. The operator is based in the Netherlands, so the lead authority is the
+Dutch **Autoriteit Persoonsgegevens** (<https://autoriteitpersoonsgegevens.nl>); you may
+equally complain to the data protection authority of the EU country you live or work
+in, or where the issue happened.
 
 **Deleting your account yourself.** Open your profile in the game (`p` from any
 screen), press **`x`**, type `DELETE` and press enter. The confirmation spells out
@@ -222,7 +228,7 @@ that is what those players' profiles show from then on. Nothing left in it names
 - no username, no key fingerprint, no rating.
 
 **If you can no longer log in** - key lost, account already unreachable - email
-**[CONTROLLER_NAME_AND_CONTACT]** and say what you want done. The same address is the
+**bartekp854@gmail.com** and say what you want done. The same address is the
 route for every other right in this section: access, rectification, restriction,
 portability, objection. To prove that an account is yours, sign a short message we
 send you with the same SSH key - that is the only credential the account has.

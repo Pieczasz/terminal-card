@@ -182,6 +182,3 @@ per-user endpoint, no writes, no auth.
    for a private room is a secret more than it is personal data. (lobby)
 3. **The username on the `ssh.session` span** for 48h. Nothing joins it to an address
    any more, so this is the weakest of the three and may be worth keeping. (ssh)
-4. **`PRIVACY.md` still carries `[RETENTION_DAYS]` and `[CONTROLLER_NAME_AND_CONTACT]`
-   placeholders**, and its §10 still says there is no self-service deletion. The
-   numbers it needs are in §6 above. (whoever publishes the notice)

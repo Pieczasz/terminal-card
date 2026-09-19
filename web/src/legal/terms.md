@@ -100,9 +100,10 @@ address in the [Privacy Policy](https://www.tty.cards/privacy/).
 
 ## 8. Governing law
 
-These terms are governed by the laws of **[JURISDICTION]**, and the courts there have
-jurisdiction, except where mandatory consumer-protection rules in your country of
-residence give you the right to bring a claim locally.
+The service is run by a private individual based in the Netherlands. These terms are
+governed by **Dutch law**, and the Dutch courts have jurisdiction, except where mandatory
+consumer-protection rules in your country of residence give you the right to bring a
+claim locally.
 
 ---
 
