@@ -15,6 +15,8 @@ import (
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -57,21 +59,21 @@ func TestUpdate_ColorPicking(t *testing.T) {
 func tableOnTurn(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
 	players := []*game.Player{
-		{ID: "1", UserID: 1, Name: "alice"},
-		{ID: "2", UserID: 2, Name: "bob"},
-		{ID: "3", UserID: 3, Name: "carol"},
+		{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"},
+		{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"},
+		{ID: testutil.SeatID(3), UserID: testutil.UID(3), Name: "carol"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, (&logic.Rules{}).InitialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
+	id, err := uuid.Parse(engine.CurrentPlayerID())
 	require.NoError(t, err)
 
 	// A real manager, because leaving the table goes through it: the view is
 	// constructed exactly as app.go builds it.
 	global := router.GlobalContext{
-		User:         &db.User{ID: uint(id), Username: "hero"},
+		User:         &db.User{ID: id, Username: "hero"},
 		LobbyManager: lobby.NewManager(context.Background(), nil),
 	}
 	m, ok := New(global, engine).(*Model)
@@ -110,14 +112,14 @@ func TestClose_ReleasesEngineSubscription(t *testing.T) {
 	t.Parallel()
 
 	players := []*game.Player{
-		{ID: "1", UserID: 1, Name: "alice"},
-		{ID: "2", UserID: 2, Name: "bob"},
+		{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"},
+		{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, (&logic.Rules{}).InitialDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: &db.User{ID: 1, Username: "alice"}}
+	global := router.GlobalContext{User: &db.User{ID: testutil.UID(1), Username: "alice"}}
 	m, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	require.Equal(t, 1, engine.Broadcaster().Len())

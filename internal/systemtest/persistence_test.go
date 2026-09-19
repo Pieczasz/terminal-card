@@ -14,6 +14,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -158,7 +159,7 @@ func newSignallingMatchRepo(inner db.MatchRepository) *signallingMatchRepo {
 }
 
 func (s *signallingMatchRepo) FinalizeRankedMatch(
-	ctx context.Context, ref db.GameRef, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uuid.UUID, places []int,
 ) error {
 	err := s.MatchRepository.FinalizeRankedMatch(ctx, ref, orderedUserIDs, places)
 	s.fire()

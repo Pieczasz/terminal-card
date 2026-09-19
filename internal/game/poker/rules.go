@@ -28,6 +28,7 @@ var (
 	_ game.PlayerLeaveHandler  = (*Rules)(nil)
 	_ game.TurnTimeoutHandler  = (*Rules)(nil)
 	_ game.TurnDurationHandler = (*Rules)(nil)
+	_ game.StandingScorer      = (*Rules)(nil)
 )
 
 // TimeoutAction never risks chips on an absent player's behalf: it checks when that

@@ -1,12 +1,14 @@
 package db
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
-	"strconv"
+	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 )
 
@@ -17,11 +19,21 @@ import (
 // uses to build queries. TestSchemaNullabilityMatchesStructs derives what the SQL must
 // guarantee from these structs, so the drift is caught by CI rather than by a tag.
 type User struct {
-	gorm.Model
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	CreatedAt  time.Time
+	UpdatedAt  time.Time
+	DeletedAt  gorm.DeletedAt
 	LastSeenAt time.Time
 	Username   string
 	PublicKeys []PublicKey
 	Rankings   []Ranking
+}
+
+func (u *User) BeforeCreate(_ *gorm.DB) error {
+	if u.ID == uuid.Nil {
+		u.ID = uuid.New()
+	}
+	return nil
 }
 
 type PublicKey struct {
@@ -29,13 +41,13 @@ type PublicKey struct {
 	Fingerprint string
 	Name        string
 	LastUsedAt  time.Time
-	UserID      uint
+	UserID      uuid.UUID
 	User        User `gorm:"foreignKey:UserID"`
 }
 
 type Ranking struct {
-	UserID uint `gorm:"primaryKey"`
-	GameID uint `gorm:"primaryKey"`
+	UserID uuid.UUID `gorm:"primaryKey"`
+	GameID uint      `gorm:"primaryKey"`
 
 	Elo uint32
 
@@ -52,21 +64,18 @@ type Ranking struct {
 	DeletedAt gorm.DeletedAt
 }
 
-// MaxUsernameLength is the users.username varchar width. AnonymisedUsername has to
-// stay inside it too, so the limit is a constant rather than a literal per caller.
+// MaxUsernameLength is the chosen-name cap ValidateUsername enforces. The column is
+// wider so AnonymisedUsername (deleted_ + 32 hex) still fits; the CHECK refuses any
+// other 17-40 character string.
 const MaxUsernameLength = 16
 
+const anonymisedUsernameLength = 40 // deleted_ + 32 hex
+
 // AnonymisedUsername is the name an erased account is left under. It has to satisfy
-// both column constraints - varchar(16) and ^[A-Za-z0-9_]+$ - because the row stays:
-// other players' match history still points at it. Decimal reads best ("deleted_42");
-// past 99999999 accounts it no longer fits, and base 36 of the same id does, which is
-// still one distinct name per account.
-func AnonymisedUsername(userID uint) string {
-	name := anonymisedPrefix + strconv.FormatUint(uint64(userID), 10)
-	if len(name) > MaxUsernameLength {
-		name = anonymisedPrefix + strconv.FormatUint(uint64(userID), 36)
-	}
-	return name
+// the column CHECK - charset, and either <=16 chars or deleted_ plus 32 hex - because
+// the row stays: other players' match history still points at it.
+func AnonymisedUsername(userID uuid.UUID) string {
+	return anonymisedPrefix + hex.EncodeToString(userID[:])
 }
 
 const anonymisedPrefix = "deleted_"
@@ -77,6 +86,9 @@ func ValidateUsername(username string) error {
 	}
 	if !usernamePattern.MatchString(username) {
 		return errors.New("username can only contain English letters, numbers, and underscores")
+	}
+	if strings.HasPrefix(username, anonymisedPrefix) {
+		return errors.New("username is reserved")
 	}
 	return nil
 }

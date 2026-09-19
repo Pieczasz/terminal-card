@@ -277,15 +277,18 @@ func (l *Lobby) unsubscribePlayerLocked(playerID string) {
 
 func (l *Lobby) ToggleReady(p *game.Player, registry *game.Registry) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if l.state == InGame {
-		finished := l.releaseFinishedGameLocked()
-		if finished == nil {
+		// releaseFinishedGame takes l.mu itself, then m.mu via releaseHeldSeats.
+		// Calling it while we hold l.mu deadlocks.
+		l.mu.Unlock()
+		l.releaseFinishedGame()
+		l.mu.Lock()
+		if l.state == InGame {
+			l.mu.Unlock()
 			return errors.New("game is already in progress")
 		}
-		finished.Close()
 	}
+	defer l.mu.Unlock()
 
 	if !l.hasPlayerLocked(p) {
 		return errors.New("player not in lobby")
@@ -580,10 +583,10 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			// back to ID, so a zero-UserID stub still matches.
 			l.manager.LeaveLobby(&game.Player{ID: event.PlayerID})
 		case game.EventGameEnded:
-			l.requestFinalize(engine, event.Reason, req)
-			// Reopen now, not on the next ready press: until it does the lobby is still
-			// InGame and an inherited leader can change no setting on the screen.
+			// Reopen before persist: a 15s write must not pin InGame while the TUI
+			// is already back in the lobby and ready-ing the next hand.
 			l.releaseFinishedGame()
+			l.requestFinalize(engine, event.Reason, req)
 			return
 		default:
 			// Turn and action events are the views' business; the lobby counts nothing.
@@ -594,6 +597,7 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 	// latest-wins and can drop EventGameEnded, and RemoveLobby closes the feed from
 	// under this goroutine.
 	if engine.IsFinished() {
+		l.releaseFinishedGame()
 		l.requestFinalize(engine, game.EndReasonUnknown, req)
 	}
 }
@@ -609,7 +613,8 @@ func (l *Lobby) requestFinalize(engine *game.Engine, reason game.EndReason, req 
 }
 
 // releaseFinishedGameLocked returns a finished lobby to Waiting and hands back the
-// engine to close - closing is the caller's job, since both callers hold l.mu.
+// engine to close. Caller holds l.mu; closing and releaseHeldSeats are the unlocked
+// caller's job (lock order is manager then lobby).
 func (l *Lobby) releaseFinishedGameLocked() *game.Engine {
 	if l.state != InGame || l.activeEngine == nil || !l.activeEngine.IsFinished() {
 		return nil

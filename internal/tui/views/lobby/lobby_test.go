@@ -19,12 +19,14 @@ import (
 	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 )
 
 const testGameName = "Crazy Eights"
 
-func testUser(id uint, name string) *db.User {
-	return &db.User{ID: id, Username: name}
+func testUser(id uint64, name string) *db.User {
+	return &db.User{ID: testutil.UID(id), Username: name}
 }
 
 func testRegistry() *game.Registry {
@@ -277,7 +279,7 @@ func managerOf(_ *testing.T, m *model) *lobby.Manager { return m.global.LobbyMan
 
 // addGuest seats another player in the lobby a view is already looking at, which is
 // what turns on the rows, the cursor range and the kick key the leader-only tests need.
-func addGuest(t *testing.T, m *model, l *lobby.Lobby, id uint, name string) *game.Player {
+func addGuest(t *testing.T, m *model, l *lobby.Lobby, id uint64, name string) *game.Player {
 	t.Helper()
 	g := lobby.NewPlayer(testUser(id, name))
 	require.NoError(t, m.global.LobbyManager.JoinLobbyByCode(l.Code(), g))
@@ -345,7 +347,7 @@ func TestSeatedIn(t *testing.T) {
 	m, _ := leaderView(t)
 	t.Cleanup(m.Close)
 
-	engine := game.NewEngine(&crazyeight.Rules{}, []*game.Player{{ID: "1"}, {ID: "2"}}, nil)
+	engine := game.NewEngine(&crazyeight.Rules{}, []*game.Player{{ID: testutil.SeatID(1)}, {ID: testutil.SeatID(2)}}, nil)
 	assert.True(t, m.seatedIn(engine), "alice is player 1")
 
 	taken := game.NewEngine(&crazyeight.Rules{}, []*game.Player{{ID: "7"}, {ID: "8"}}, nil)
@@ -778,7 +780,7 @@ func TestLobbyView_FitsTheTerminal(t *testing.T) {
 			t.Cleanup(m.Close)
 			require.NoError(t, l.SetMaxPlayers(l.Leader(), 6, 2, 6))
 			for i := 2; i <= 6; i++ {
-				addGuest(t, m, l, uint(i), fmt.Sprintf("player-number-%d", i))
+				addGuest(t, m, l, uint64(i), fmt.Sprintf("player-number-%d", i))
 			}
 			m.global.Theme = styles.NewTheme(true)
 			m.global.Width, m.global.Height = size.w, size.h

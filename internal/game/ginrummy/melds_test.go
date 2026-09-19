@@ -156,16 +156,21 @@ func TestBestMeldSplit_BeatsGreedy(t *testing.T) {
 	})
 }
 
-// The candidate melds are uint16 index masks, so a hand past bit 15 would be scored on
-// melds nobody looked at. Unreachable in play - eleven cards is the most anyone holds -
-// and the point is that it fails loudly instead of returning a quietly wrong score.
-func TestBestMeldSplit_OversizedHandPanics(t *testing.T) {
+// The candidate melds are uint16 index masks, so a hand past bit 15 cannot be
+// searched. Unreachable in play (eleven cards is the most anyone holds) and
+// TimeoutAction has no recover, so the oversized path must not panic.
+func TestBestMeldSplit_OversizedHandIsAllDeadwood(t *testing.T) {
 	t.Parallel()
 	hand := deck.StandardDeck()[:maskBits+1]
 
-	assert.PanicsWithValue(t,
-		"ginrummy: hand of 17 cards exceeds the 16-card meld search",
-		func() { bestMeldSplit(hand) })
+	var melds [][]deck.Card
+	var dw []deck.Card
+	var pts int
+	assert.NotPanics(t, func() { melds, dw, pts = bestMeldSplit(hand) })
+	assert.Empty(t, melds)
+	assert.Equal(t, hand, dw)
+	assert.Equal(t, sumDeadwood(hand), pts)
+
 	assert.NotPanics(t, func() { bestMeldSplit(deck.StandardDeck()[:maskBits]) },
 		"the largest searchable hand is still searched")
 }

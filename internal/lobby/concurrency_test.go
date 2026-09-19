@@ -10,6 +10,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -58,13 +59,13 @@ func TestConcurrent_JoinUpToCapacity(t *testing.T) {
 
 	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	guests := make([]*guestRef, joiners)
 	for i := range guests {
-		guests[i] = &guestRef{p: mockPlayer(fmt.Sprintf("g%d", i), uint(i+2))}
+		guests[i] = &guestRef{p: mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+2)))}
 	}
 
 	var (
@@ -132,13 +133,13 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	all := []*game.Player{leader}
 	for i := 1; i < players; i++ {
-		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
+		g := mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+1)))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 		all = append(all, g)
 	}
@@ -190,12 +191,12 @@ func TestConcurrent_JoinRacingLastLeave(t *testing.T) {
 			m := newTestManager(t, nil)
 			unlimitedJoins(m)
 
-			leader := mockPlayer(fmt.Sprintf("leader-%d", i), uint(2*i+1))
+			leader := mockPlayer(fmt.Sprintf("leader-%d", i), testutil.UID(uint64(2*i+1)))
 			l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 			require.NoError(t, err)
 			code := l.Code()
 
-			joiner := mockPlayer(fmt.Sprintf("joiner-%d", i), uint(2*i+2))
+			joiner := mockPlayer(fmt.Sprintf("joiner-%d", i), testutil.UID(uint64(2*i+2)))
 
 			var (
 				wg      sync.WaitGroup
@@ -251,13 +252,13 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 
 	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame("NeverStarts"))
 	require.NoError(t, err)
 
 	roster := []*game.Player{leader}
 	for i := 1; i < members; i++ {
-		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
+		g := mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+1)))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 		roster = append(roster, g)
 	}
@@ -492,9 +493,9 @@ func TestConcurrent_KickRacesLeaveAndJoin(t *testing.T) {
 			m := newTestManager(t, nil)
 			unlimitedJoins(m)
 
-			host := mockPlayer("host", 1)
-			target := mockPlayer("target", 2)
-			other := mockPlayer("other", 3)
+			host := mockPlayer("host", testutil.UID(1))
+			target := mockPlayer("target", testutil.UID(2))
+			other := mockPlayer("other", testutil.UID(3))
 
 			table, err := m.New(host, WithMaxPlayers(4), WithCardGame("TestGame"))
 			require.NoError(t, err)
@@ -554,7 +555,7 @@ func TestConcurrent_BrowseCacheNeverSwallowsAnInvalidation(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range tables {
-			_, err := m.New(mockPlayer(fmt.Sprintf("p%d", i), uint(i+1)),
+			_, err := m.New(mockPlayer(fmt.Sprintf("p%d", i), testutil.UID(uint64(i+1))),
 				WithPrivate(false), WithCardGame("TestGame"))
 			assert.NoError(t, err)
 		}

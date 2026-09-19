@@ -35,12 +35,13 @@ there is none. Write to the address above.
 |---|---|---|---|
 | Username (1-16 characters, `A-Z a-z 0-9 _`), chosen by you | Database | It is your identity at the table and on the leaderboard | Until the account is deleted |
 | SHA256 fingerprint of your SSH public key | Database | Logging you back in. **The key itself is never stored** | Until the account is deleted |
-| Account created / last seen, key last used | Database | Support and abuse handling | Until the account is deleted |
+| Account created | Database | Support and abuse handling | Until the account is deleted; `created_at` stays on the anonymised row |
+| Last seen / key last used | Database | Support and abuse handling | Last seen is cleared on deletion; keys are hard-deleted |
 | Elo rating and matches played, per game | Database | Ranked play and the leaderboard | Until the account is deleted |
 | Match history: game, ranked or casual, your placement, your Elo change, timestamps | Database | Your profile, and recomputing ratings if something goes wrong | Kept after deletion, anonymised (section 10) |
-| Your IP address | In memory only | Rate limiting, so one network cannot flood the server | Minutes |
+| Your IP address | In memory only | Rate limiting, so one network cannot flood the server | One window: 1 second for SSH auth, 1 hour for new-account registration, 60 seconds for the API |
 | Which accounts have a live session right now | In memory only | The connection cap, and letting you reconnect to your seat | Until you disconnect |
-| Server logs and traces (may include username, your network prefix - the full IP address only when a connection is refused - session and lobby identifiers) | Log/trace store on the server | Diagnosing crashes and abuse | Logs 14 days, traces 48 hours |
+| Server logs and traces (network prefix - full IP only when a connection is refused - player id, lobby codes; traces carry the username on the session span, not the address) | Log/trace store on the server | Diagnosing crashes and abuse | Logs 14 days, traces 48 hours |
 
 We do not store your email address, your real name, your SSH private key, your
 passwords (there are none), your chat messages (there is no chat), or any payment
@@ -60,7 +61,8 @@ The website is a set of static pages served by GitHub Pages behind Cloudflare.
   `https://tty.cards/api/v1/leaderboard` from your browser, once when the panel
   scrolls into view and then every 30 seconds while the tab is visible. That request
   goes to our own server. Like any HTTP request it carries your IP address, which the
-  server's rate limiter and access logs see. The response contains only public
+  server's rate limiter sees (in memory, for one minute). The nginx access log in
+  front of that API does not record the address. The response contains only public
   leaderboard data and sends nothing about you.
 - GitHub and Cloudflare keep their own operational logs (IP address, requested URL,
   user agent) in order to deliver the page. We do not control what they log and we do
@@ -96,8 +98,9 @@ game.
 
 - **Your IP address**, in the rate limiter: sliding-window counters keyed by your
   network (IPv6 addresses are collapsed to their /64, because a single subscriber is
-  routinely handed 2^64 addresses). Entries are pruned as the window moves, so this
-  is a matter of minutes, and everything is lost on restart.
+  routinely handed 2^64 addresses). Each entry lasts one window (1 second for SSH
+  auth, 1 hour for new-account registration, 60 seconds for the API) and everything
+  is lost on restart.
 - **Who is connected**: a map of which account IDs currently have a live session. It
   exists so the server can enforce its connection cap and so that a reconnect finds
   your seat instead of forfeiting your match. It stores nothing besides that - no
@@ -111,9 +114,11 @@ The server emits structured logs and OpenTelemetry traces to a self-hosted
 Loki/Tempo/Prometheus stack on the same machine. These are for finding bugs and
 abuse, and they are not published.
 
-- **Logs** can contain your username, lobby codes and what your session did.
-- **Traces** additionally carry the remote address of the SSH connection - your IP -
-  on the span for that session.
+- **Logs** can contain your network prefix (the full address only when a connection
+  is refused), a numeric player id, lobby codes, and what your session did. They do
+  not contain your username or SSH fingerprint.
+- **Traces** carry the SSH client version, terminal size, and the username on the
+  session span. They do not carry your IP address.
 - **Metrics** are aggregate counters only (games started, sessions active, errors per
   endpoint). They carry no username and no address.
 
@@ -188,7 +193,7 @@ leaves the EU.
 | Server logs | 14 days |
 | Traces | 48 hours |
 | Aggregate metrics (no personal data) | 30 days |
-| Rate-limiter counters | Minutes, in memory only |
+| Rate-limiter counters | One window in memory: 1 second SSH auth, 1 hour registration, 60 seconds API |
 | Live session and game state | Until you disconnect / the match ends |
 
 If the service is shut down for good, the database is deleted.
@@ -218,12 +223,12 @@ It removes, permanently:
 - **every rating**: the Elo and matches-played row for each game, so the account
   leaves the leaderboard immediately rather than at the next refresh.
 - **your username and your last-seen timestamp.** The account row is renamed to
-  `deleted_<number>` and the timestamp is cleared.
+  `deleted_` plus the 32 hex digits of your account id, and the timestamp is cleared.
 
 What stays is the **matches and their participation rows**, including yours. Those
 same rows are the other players' match history and the record of the Elo they have
 already won or lost, which is their data, not yours to erase. Your row is anonymised
-instead of deleted: it stays attached to the renamed `deleted_<number>` account, and
+instead of deleted: it stays attached to the renamed `deleted_<hex>` account, and
 that is what those players' profiles show from then on. Nothing left in it names you
 - no username, no key fingerprint, no rating.
 

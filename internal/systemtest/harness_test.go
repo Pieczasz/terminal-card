@@ -12,12 +12,13 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
 type finalizedMatch struct {
 	gameName string
-	userIDs  []uint
+	userIDs  []uuid.UUID
 }
 
 type finalizeSignal struct {
@@ -59,7 +60,7 @@ func newRankedFinalizeRecorder() *rankedFinalizeRecorder {
 func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 	ctx context.Context,
 	ref db.GameRef,
-	orderedUserIDs []uint,
+	orderedUserIDs []uuid.UUID,
 	_ []int,
 ) error {
 	if err := ctx.Err(); err != nil {
@@ -69,7 +70,7 @@ func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 	r.mu.Lock()
 	r.finalized = append(r.finalized, finalizedMatch{
 		gameName: ref.Name,
-		userIDs:  append([]uint(nil), orderedUserIDs...),
+		userIDs:  append([]uuid.UUID(nil), orderedUserIDs...),
 	})
 	r.mu.Unlock()
 
@@ -85,7 +86,7 @@ func (r *rankedFinalizeRecorder) calls() []finalizedMatch {
 	for i, call := range r.finalized {
 		calls[i] = finalizedMatch{
 			gameName: call.gameName,
-			userIDs:  append([]uint(nil), call.userIDs...),
+			userIDs:  append([]uuid.UUID(nil), call.userIDs...),
 		}
 	}
 	return calls
@@ -100,7 +101,7 @@ func realRegistry(t *testing.T) *game.Registry {
 	return registry
 }
 
-func newPlayer(id uint, name string) *game.Player {
+func newPlayer(id uuid.UUID, name string) *game.Player {
 	return lobby.NewPlayer(&db.User{ID: id, Username: name})
 }
 

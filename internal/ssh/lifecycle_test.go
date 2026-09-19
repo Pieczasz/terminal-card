@@ -14,6 +14,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/ssh"
 	"charm.land/wish/v2/testsession"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
@@ -41,7 +42,7 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	t.Parallel()
 
 	tracker := NewSessionTracker(0)
-	user := &db.User{ID: 11, Username: "shared"}
+	user := &db.User{ID: testutil.UID(11), Username: "shared"}
 	gen, err := tracker.Connect(user.ID, nil)
 	require.NoError(t, err)
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
@@ -77,8 +78,8 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	t.Parallel()
 
 	manager := lobby.NewManager(context.Background(), nil)
-	host := &db.User{ID: 1, Username: "host"}
-	guest := &db.User{ID: 2, Username: "guest"}
+	host := &db.User{ID: testutil.UID(1), Username: "host"}
+	guest := &db.User{ID: testutil.UID(2), Username: "guest"}
 	guestPlayer := lobby.NewPlayer(guest)
 
 	table, err := manager.New(lobby.NewPlayer(host), lobby.WithCardGame("Mock"))
@@ -175,26 +176,26 @@ func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
 func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(2)
-	_, err := tracker.Connect(1, nil)
+	_, err := tracker.Connect(testutil.UID(1), nil)
 	require.NoError(t, err)
-	_, err = tracker.Connect(2, nil)
+	_, err = tracker.Connect(testutil.UID(2), nil)
 	require.NoError(t, err)
-	_, err = tracker.Connect(3, nil)
+	_, err = tracker.Connect(testutil.UID(3), nil)
 	require.ErrorIs(t, err, ErrServerFull)
 
 	// A second session for an already-connected account displaces rather than
 	// failing: half-open TCP otherwise blocks the mid-game reconnect grace.
-	gen1, err := tracker.Connect(1, nil)
+	gen1, err := tracker.Connect(testutil.UID(1), nil)
 	require.NoError(t, err)
-	gen2, err := tracker.Connect(1, nil)
+	gen2, err := tracker.Connect(testutil.UID(1), nil)
 	require.NoError(t, err)
 	assert.NotEqual(t, gen1, gen2)
-	assert.False(t, tracker.Release(1, gen1), "stale generation must not free the slot")
+	assert.False(t, tracker.Release(testutil.UID(1), gen1), "stale generation must not free the slot")
 	assert.Equal(t, 2, tracker.Count())
-	assert.True(t, tracker.Release(1, gen2))
+	assert.True(t, tracker.Release(testutil.UID(1), gen2))
 
-	tracker.Disconnect(2)
-	_, err = tracker.Connect(3, nil)
+	tracker.Disconnect(testutil.UID(2))
+	_, err = tracker.Connect(testutil.UID(3), nil)
 	require.NoError(t, err, "capacity frees with the seat")
 }
 
@@ -290,12 +291,12 @@ func TestSessionTracker_ConnectClosesTheDisplacedSession(t *testing.T) {
 	tracker := NewSessionTracker(1)
 	first := &countingCloser{}
 
-	gen1, err := tracker.Connect(7, first)
+	gen1, err := tracker.Connect(testutil.UID(7), first)
 	require.NoError(t, err)
 	assert.Zero(t, first.closed.Load(), "nothing is displaced yet")
 
 	second := &countingCloser{err: errors.New("already gone")}
-	gen2, err := tracker.Connect(7, second)
+	gen2, err := tracker.Connect(testutil.UID(7), second)
 	require.NoError(t, err)
 
 	assert.NotEqual(t, gen1, gen2)
@@ -305,7 +306,7 @@ func TestSessionTracker_ConnectClosesTheDisplacedSession(t *testing.T) {
 
 	// A Close error is the peer already being gone, which is the common case here and
 	// must not stop the new session from being tracked.
-	assert.True(t, tracker.Owns(7, gen2))
-	assert.False(t, tracker.Release(7, gen1), "the displaced generation frees nothing")
-	assert.True(t, tracker.Release(7, gen2))
+	assert.True(t, tracker.Owns(testutil.UID(7), gen2))
+	assert.False(t, tracker.Release(testutil.UID(7), gen1), "the displaced generation frees nothing")
+	assert.True(t, tracker.Release(testutil.UID(7), gen2))
 }

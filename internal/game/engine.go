@@ -169,7 +169,8 @@ func (e *Engine) placesLocked(standings []*Player) []int {
 	// standingsLocked appends LeftPlayers after the seats the rules placed, so a
 	// leaver's StandingScore was measured against a state they are no longer in -
 	// tying it with a seated player turns a rage-quit into a rated draw. They rank
-	// strictly below everyone still at the table.
+	// strictly below everyone still at the table. Two leavers with the same score
+	// still share a place: splitting them mints Elo between people who both quit.
 	left := make(map[string]bool, len(e.state.LeftPlayers))
 	for _, p := range e.state.LeftPlayers {
 		left[p.ID] = true
@@ -181,7 +182,8 @@ func (e *Engine) placesLocked(standings []*Player) []int {
 		switch {
 		case i == 0:
 			places[i] = 1
-		case ok && p != nil && !left[p.ID] && standings[i-1] != nil &&
+		case ok && p != nil && standings[i-1] != nil &&
+			left[p.ID] == left[standings[i-1].ID] &&
 			scorer.StandingScore(e.state, p) == scorer.StandingScore(e.state, standings[i-1]):
 			places[i] = places[i-1]
 		default:

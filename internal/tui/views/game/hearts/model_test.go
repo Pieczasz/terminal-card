@@ -14,21 +14,22 @@ import (
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testUser(id uint, name string) *db.User {
-	return &db.User{ID: id, Username: name}
+func testUser() *db.User {
+	return &db.User{ID: testutil.UID(1), Username: "alice"}
 }
 
 func startedTable(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
 	players := []*game.Player{
-		{ID: "1", UserID: 1, Name: "alice"},
-		{ID: "2", UserID: 2, Name: "bob"},
-		{ID: "3", UserID: 3, Name: "carol"},
-		{ID: "4", UserID: 4, Name: "dave"},
+		{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"},
+		{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"},
+		{ID: testutil.SeatID(3), UserID: testutil.UID(3), Name: "carol"},
+		{ID: testutil.SeatID(4), UserID: testutil.UID(4), Name: "dave"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
@@ -37,7 +38,7 @@ func startedTable(t *testing.T) (*game.Engine, *Model) {
 	// A real manager, because leaving the table goes through it: the view is
 	// constructed exactly as app.go builds it.
 	global := router.GlobalContext{
-		User:         testUser(1, "alice"),
+		User:         testUser(),
 		LobbyManager: lobby.NewManager(context.Background(), nil),
 		Width:        80,
 		Height:       40,
@@ -54,7 +55,7 @@ func TestSyncState_LoadsHeartsExtra(t *testing.T) {
 	assert.Equal(t, 1, m.handNumber)
 	assert.Contains(t, []logic.Stage{logic.StagePassing, logic.StageTrickPlay}, m.stage)
 	assert.Len(t, m.seatOrder, 4)
-	assert.Equal(t, "alice", m.seatNames["1"])
+	assert.Equal(t, "alice", m.seatNames[testutil.SeatID(1)])
 	assert.False(t, m.heartsBroken)
 	assert.Equal(t, logic.DefaultTargetScore, 100)
 }

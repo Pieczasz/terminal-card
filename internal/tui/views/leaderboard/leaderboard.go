@@ -45,14 +45,19 @@ const (
 	colElo  = 5
 )
 
-// filterAll is the empty BestPlayers gameName: every ranking across every game.
+// filterAll is the empty BestPlayers slug: every ranking across every game.
 const filterAll = "All"
+
+type boardFilter struct {
+	label string
+	slug  string
+}
 
 type model struct {
 	global      router.GlobalContext
 	rankings    []db.Ranking
 	err         error
-	filters     []string
+	filters     []boardFilter
 	filterIndex int
 	page        int
 	loading     bool
@@ -62,10 +67,10 @@ type model struct {
 }
 
 func New(global router.GlobalContext) tea.Model {
-	filters := make([]string, 0, 1+len(catalog.All))
-	filters = append(filters, filterAll)
+	filters := make([]boardFilter, 0, 1+len(catalog.All))
+	filters = append(filters, boardFilter{label: filterAll})
 	for _, e := range catalog.All {
-		filters = append(filters, e.Name)
+		filters = append(filters, boardFilter{label: e.Name, slug: e.Slug})
 	}
 	return model{global: global, filters: filters}
 }
@@ -76,7 +81,7 @@ func New(global router.GlobalContext) tea.Model {
 type loadedMsg struct {
 	rankings []db.Ranking
 	err      error
-	gameName string
+	gameSlug string
 	wantPage int
 }
 
@@ -84,7 +89,11 @@ func (m model) gameFilter() string {
 	if m.filterIndex == 0 {
 		return ""
 	}
-	return m.filters[m.filterIndex]
+	return m.filters[m.filterIndex].slug
+}
+
+func (m model) filterLabel() string {
+	return m.filters[m.filterIndex].label
 }
 
 // rowsPerPage is how many ranks fit between the header and the footer right now.
@@ -131,12 +140,12 @@ func (m model) needsFetch(page int) int {
 }
 
 func (m model) load(limit int, wantPage int) tea.Cmd {
-	gameName := m.gameFilter()
+	gameSlug := m.gameFilter()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(m.global.RequestContext(), 5*time.Second)
 		defer cancel()
-		rankings, err := m.global.UserRepository.BestPlayers(ctx, limit, gameName)
-		return loadedMsg{rankings: rankings, err: err, gameName: gameName, wantPage: wantPage}
+		rankings, err := m.global.UserRepository.BestPlayers(ctx, limit, gameSlug)
+		return loadedMsg{rankings: rankings, err: err, gameSlug: gameSlug, wantPage: wantPage}
 	}
 }
 
@@ -178,7 +187,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch msg := msg.(type) {
 	case loadedMsg:
-		if msg.gameName != m.gameFilter() {
+		if msg.gameSlug != m.gameFilter() {
 			// A response for a filter the player has already cycled past.
 			return m, nil
 		}
@@ -201,9 +210,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.cycleFilter(1)
 		case "left", "h":
 			return m.cycleFilter(-1)
-		case "down", "j", "pgdown", "n":
+		case "down", "j", "pgdown":
 			return m.goPage(1)
-		case "up", "k", "pgup", "p":
+		case "up", "k", "pgup":
 			return m.goPage(-1)
 		}
 		if cmd, ok := views.NavigateOn(msg.String()); ok {
@@ -214,7 +223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) actions() []string {
-	return []string{"g/←/→ - Filter: " + m.filters[m.filterIndex], "↑/↓ - Page"}
+	return []string{"g/←/→ - Filter: " + m.filterLabel(), "↑/↓ - Page"}
 }
 
 func (m model) View() tea.View {
@@ -244,7 +253,7 @@ func (m model) renderEmpty() string {
 	if m.filterIndex == 0 {
 		return lg.JoinVertical(lg.Center, "No players have ranked yet.")
 	}
-	return lg.JoinVertical(lg.Center, fmt.Sprintf("No rankings for %s yet.", m.filters[m.filterIndex]))
+	return lg.JoinVertical(lg.Center, fmt.Sprintf("No rankings for %s yet.", m.filterLabel()))
 }
 
 // table is the fixed-cell board. The player column is the only one that flexes, and
@@ -278,7 +287,7 @@ func (m model) renderRankings(contentWidth int) string {
 	if !compact {
 		headingStyle = headingStyle.MarginBottom(1)
 	}
-	heading := headingStyle.Render("Filter: " + m.filters[m.filterIndex])
+	heading := headingStyle.Render("Filter: " + m.filterLabel())
 	pager := m.global.Theme.Dim.Render(fmt.Sprintf("page %d/%d  ranks %d-%d of %d",
 		m.page+1, m.pageCount(), start+1, end, len(m.rankings)))
 	if m.loading {

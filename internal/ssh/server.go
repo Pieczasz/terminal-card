@@ -28,6 +28,7 @@ import (
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/keygen"
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -101,7 +102,7 @@ type trackedSession struct {
 
 type SessionTracker struct {
 	mu     sync.Mutex
-	active map[uint]trackedSession
+	active map[uuid.UUID]trackedSession
 	next   uint64
 	// maxSessions is the player-visible capacity: Connect refuses beyond it with a
 	// message, unlike the TCP-level LimitListener, which silently stops accepting.
@@ -111,7 +112,7 @@ type SessionTracker struct {
 
 func NewSessionTracker(maxSessions int) *SessionTracker {
 	return &SessionTracker{
-		active:      make(map[uint]trackedSession),
+		active:      make(map[uuid.UUID]trackedSession),
 		maxSessions: maxSessions,
 	}
 }
@@ -123,7 +124,7 @@ func NewSessionTracker(maxSessions int) *SessionTracker {
 // conn is how the displaced session is actually hung up on. Without closing it, the
 // account keeps every session it ever opened until each one's TCP dies, so both the
 // per-account limit and maxSessions become advisory and Count under-reports.
-func (t *SessionTracker) Connect(userID uint, conn io.Closer) (uint64, error) {
+func (t *SessionTracker) Connect(userID uuid.UUID, conn io.Closer) (uint64, error) {
 	t.mu.Lock()
 	t.next++
 	gen := t.next
@@ -155,7 +156,7 @@ func (t *SessionTracker) Count() int {
 
 // Release frees the slot only when gen is still the live generation. A displaced
 // session's teardown must not drop the replacement or start a disconnect grace.
-func (t *SessionTracker) Release(userID uint, gen uint64) bool {
+func (t *SessionTracker) Release(userID uuid.UUID, gen uint64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.active[userID].gen != gen {
@@ -167,7 +168,7 @@ func (t *SessionTracker) Release(userID uint, gen uint64) bool {
 }
 
 // Owns reports whether gen is still the live generation for userID.
-func (t *SessionTracker) Owns(userID uint, gen uint64) bool {
+func (t *SessionTracker) Owns(userID uuid.UUID, gen uint64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.active[userID].gen == gen
@@ -175,7 +176,7 @@ func (t *SessionTracker) Owns(userID uint, gen uint64) bool {
 
 // Disconnect is Release without a generation check - tests and paths that never
 // displaced. Prefer Release from session teardown.
-func (t *SessionTracker) Disconnect(userID uint) {
+func (t *SessionTracker) Disconnect(userID uuid.UUID) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if _, ok := t.active[userID]; ok {
@@ -185,12 +186,11 @@ func (t *SessionTracker) Disconnect(userID uint) {
 }
 
 type ServerDependencies struct {
-	Config          *config.Config
-	UserRepository  db.UserRepository
-	MatchRepository db.MatchRepository
-	LobbyManager    *lobby.Manager
-	GameRegistry    *game.Registry
-	Tracker         *SessionTracker
+	Config         *config.Config
+	UserRepository db.UserRepository
+	LobbyManager   *lobby.Manager
+	GameRegistry   *game.Registry
+	Tracker        *SessionTracker
 }
 
 func SetupServer(deps ServerDependencies) (*ssh.Server, error) {

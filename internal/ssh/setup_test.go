@@ -20,6 +20,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
 	"charm.land/ssh"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	gossh "golang.org/x/crypto/ssh"
@@ -280,7 +281,7 @@ func TestSessionModel_RefusalPaths(t *testing.T) {
 		{
 			name:       "no public key",
 			session:    &stubSession{addr: stubAddr{"10.0.0.1:1"}},
-			repo:       stubUserRepo{user: &db.User{ID: 1, Username: "anyone"}},
+			repo:       stubUserRepo{user: &db.User{ID: testutil.UID(1), Username: "anyone"}},
 			tracker:    NewSessionTracker(0),
 			storeState: true,
 			wantOutput: "SSH key authentication is required",
@@ -296,7 +297,7 @@ func TestSessionModel_RefusalPaths(t *testing.T) {
 		{
 			name:       "the server is full",
 			session:    &stubSession{addr: stubAddr{"10.0.0.3:1"}, pubKey: testPublicKey(t)},
-			repo:       stubUserRepo{user: &db.User{ID: 2, Username: "late"}},
+			repo:       stubUserRepo{user: &db.User{ID: testutil.UID(2), Username: "late"}},
 			tracker:    fullTracker(t),
 			storeState: true,
 			wantOutput: "The server is full",
@@ -304,7 +305,7 @@ func TestSessionModel_RefusalPaths(t *testing.T) {
 		{
 			name:       "the session state was already torn down",
 			session:    &stubSession{addr: stubAddr{"10.0.0.4:1"}, pubKey: testPublicKey(t)},
-			repo:       stubUserRepo{user: &db.User{ID: 3, Username: "ghost"}},
+			repo:       stubUserRepo{user: &db.User{ID: testutil.UID(3), Username: "ghost"}},
 			tracker:    NewSessionTracker(0),
 			storeState: false,
 			wantOutput: "could not be started",
@@ -347,7 +348,7 @@ func testPublicKey(t *testing.T) ssh.PublicKey {
 func fullTracker(t *testing.T) *SessionTracker {
 	t.Helper()
 	tracker := NewSessionTracker(1)
-	_, err := tracker.Connect(999, nil)
+	_, err := tracker.Connect(testutil.UID(999), nil)
 	require.NoError(t, err)
 	return tracker
 }
@@ -357,7 +358,7 @@ func fullTracker(t *testing.T) *SessionTracker {
 func TestSessionModel_AcceptedSessionIsFullyRegistered(t *testing.T) {
 	t.Parallel()
 
-	user := &db.User{ID: 42, Username: "player"}
+	user := &db.User{ID: testutil.UID(42), Username: "player"}
 	s := &stubSession{addr: stubAddr{"10.0.0.9:1"}, pubKey: testPublicKey(t), user: "player"}
 	st := &sessionState{traceCtx: context.Background()}
 	sessionStates.Store(s, st)
@@ -388,7 +389,7 @@ func TestSessionProgram_RefusedSessionGetsNoProgram(t *testing.T) {
 	sessionStates.Store(s, &sessionState{traceCtx: context.Background()})
 	t.Cleanup(func() { sessionStates.Delete(s) })
 
-	deps := newSessionDeps(stubUserRepo{user: &db.User{ID: 5}})
+	deps := newSessionDeps(stubUserRepo{user: &db.User{ID: testutil.UID(5)}})
 	program := sessionProgram(deps, NewSessionTracker(0),
 		ratelimit.NewSlidingWindowLimiter(registrationLimit, registrationWindow))
 

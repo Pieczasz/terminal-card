@@ -13,9 +13,10 @@ unnoticed for so long.
 ### Added
 
 - **Delete your own account.** Profile -> `x` -> type `DELETE`. Your SSH keys and
-  your ratings are erased outright; your username becomes `deleted_<id>` so the
-  other players at your old tables keep a readable match history. Refused while
-  you are seated at a table, and the session ends once it is done.
+  your ratings are erased outright; your username becomes `deleted_` plus the hex
+  of your account id so the other players at your old tables keep a readable match
+  history. Refused while you are seated at a table, and the session ends once it
+  is done.
 - **A separate limit on new accounts** - 5 per hour per client network. Playing
   on an existing account never touches that budget.
 - **Explicit data retention.** Logs 14 days, traces 48 hours, metrics 30 days. It

@@ -12,6 +12,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -29,6 +30,8 @@ func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 		require.NotNil(t, user)
 		assert.Equal(t, "reg_ok", user.Username)
 		assert.Equal(t, "fp_reg_ok", key.Fingerprint)
+		assert.NotEqual(t, uuid.Nil, user.ID, "the account id is assigned on insert")
+		assert.Equal(t, uuid.Version(4), user.ID.Version(), "users.id is a random UUID, not a sequence")
 	})
 
 	t.Run("username already taken", func(t *testing.T) {
@@ -44,6 +47,12 @@ func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 		t.Parallel()
 		_, _, err := repo.RegisterUserWithKey(context.Background(), "this_username_is_way_too_long", "fp_too_long")
 		require.ErrorContains(t, err, "username cannot exceed 16 characters")
+	})
+
+	t.Run("erasure prefix is not registerable", func(t *testing.T) {
+		t.Parallel()
+		_, _, err := repo.RegisterUserWithKey(context.Background(), "deleted_1", "fp_deleted")
+		require.ErrorIs(t, err, db.ErrInvalidUsername)
 	})
 
 	t.Run("duplicate fingerprint", func(t *testing.T) {
@@ -320,7 +329,7 @@ func TestUserRepository_BestPlayers_FiltersByGame(t *testing.T) {
 	require.NoError(t, database.Create(&db.Ranking{UserID: alice.ID, GameID: poker.ID, Elo: 1800, MatchesPlayed: 5}).Error)
 	require.NoError(t, database.Create(&db.Ranking{UserID: bob.ID, GameID: uno.ID, Elo: 1900, MatchesPlayed: 5}).Error)
 
-	unoOnly, err := repo.BestPlayers(ctx, 10, "Uno")
+	unoOnly, err := repo.BestPlayers(ctx, 10, "uno")
 	require.NoError(t, err)
 	require.Len(t, unoOnly, 1)
 	assert.Equal(t, "bob", unoOnly[0].User.Username)
@@ -330,9 +339,35 @@ func TestUserRepository_BestPlayers_FiltersByGame(t *testing.T) {
 	require.Len(t, all, 2)
 	assert.Equal(t, "bob", all[0].User.Username, "highest Elo across games wins the mixed board")
 
-	missing, err := repo.BestPlayers(ctx, 10, "Hearts")
+	missing, err := repo.BestPlayers(ctx, 10, "hearts")
 	require.NoError(t, err)
 	assert.Empty(t, missing)
+}
+
+func TestUserRepository_BestPlayers_FiltersBySlugAfterRename(t *testing.T) {
+	t.Parallel()
+	database := testutil.SetupTestDB(t)
+	repo := repository.NewUserRepository(database)
+	ctx := context.Background()
+
+	poker := &db.Game{Slug: "poker", Name: "Poker"}
+	require.NoError(t, database.Create(poker).Error)
+	alice := &db.User{Username: "slug_alice"}
+	require.NoError(t, database.Create(alice).Error)
+	require.NoError(t, database.Create(&db.Ranking{
+		UserID: alice.ID, GameID: poker.ID, Elo: 1800, MatchesPlayed: 5,
+	}).Error)
+
+	require.NoError(t, database.Model(poker).Update("name", "Texas Holdem").Error)
+
+	bySlug, err := repo.BestPlayers(ctx, 10, "poker")
+	require.NoError(t, err)
+	require.Len(t, bySlug, 1)
+	assert.Equal(t, "slug_alice", bySlug[0].User.Username)
+
+	byName, err := repo.BestPlayers(ctx, 10, "Texas Holdem")
+	require.NoError(t, err)
+	assert.Empty(t, byName, "the display name is not the filter identity")
 }
 
 func TestUserRepository_UserProfile(t *testing.T) {
@@ -354,7 +389,7 @@ func TestUserRepository_UserProfile(t *testing.T) {
 	assert.Len(t, profile.Rankings, 1)
 	assert.Equal(t, "ProfileGame", profile.Rankings[0].Game.Name)
 
-	_, err = repo.UserProfile(ctx, 9999)
+	_, err = repo.UserProfile(ctx, uuid.New())
 	assert.Error(t, err)
 }
 
@@ -401,12 +436,12 @@ func TestUserRepository_BestPlayersOrderIsStableAcrossEqualRatings(t *testing.T)
 	}
 
 	// A fresh repository per read, so each one is a real query rather than the cache.
-	first, err := repository.NewUserRepository(database).BestPlayers(ctx, 20, "Tiebreak")
+	first, err := repository.NewUserRepository(database).BestPlayers(ctx, 20, "tiebreak")
 	require.NoError(t, err)
 	require.Len(t, first, 20)
 
 	for range 5 {
-		again, err := repository.NewUserRepository(database).BestPlayers(ctx, 20, "Tiebreak")
+		again, err := repository.NewUserRepository(database).BestPlayers(ctx, 20, "tiebreak")
 		require.NoError(t, err)
 		assert.Equal(t, usernamesOf(first), usernamesOf(again),
 			"the board reshuffled between two identical queries")
@@ -592,5 +627,5 @@ func TestUserRepository_DeleteAccountUnknownUser(t *testing.T) {
 	database := testutil.SetupTestDB(t)
 	repo := repository.NewUserRepository(database)
 
-	assert.ErrorIs(t, repo.DeleteAccount(context.Background(), 9_999_999), db.ErrUserNotFound)
+	assert.ErrorIs(t, repo.DeleteAccount(context.Background(), uuid.New()), db.ErrUserNotFound)
 }

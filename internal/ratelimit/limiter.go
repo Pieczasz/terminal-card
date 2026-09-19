@@ -91,8 +91,8 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 // point: a full table is reached by a flood of fresh addresses (one IPv6 /48 has
 // 65536 networks to spend), and picking the "best" victim meant walking all
 // maxKeys entries under the mutex on every one of those requests - the flood paid
-// for with our CPU. Map order is also the fairer choice: least-recently-seen
-// evicts the quiet keys, which during a flood are the real players.
+// for with our CPU. Go randomizes map iteration, so this is an arbitrary victim,
+// not LRU; during a flood any eviction is cheaper than walking the table.
 func (s *SlidingWindowLimiter) evictOneLocked() {
 	for ip := range s.logs {
 		delete(s.logs, ip)

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"path"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -21,6 +20,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -81,13 +81,13 @@ func TestGameViews_NeverShowAnotherSeatsCards(t *testing.T) {
 			rules := entry.Rules()
 			engine, m := seatedEngineAndView(t, entry, rules.MinPlayers(), 120, 40)
 
-			hero := heroHand(t, engine, "1")
+			hero := heroHand(t, engine, testutil.SeatID(1))
 			out := stripANSI(m.View().Content)
 
 			var others []deck.Card
 			engine.WithState(func(state *game.State) {
 				for _, p := range state.Players {
-					if p == nil || p.ID == "1" {
+					if p == nil || p.ID == testutil.SeatID(1) {
 						continue
 					}
 					others = append(others, p.Cards...)
@@ -143,9 +143,8 @@ func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*
 	players := make([]*game.Player, 0, seats)
 	for i := range seats {
 		players = append(players, &game.Player{
-			ID:     strconv.Itoa(i + 1),
-			UserID: uint(i + 1),
-			Name:   fmt.Sprintf("player%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1),
+			Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	rules := entry.Rules()
@@ -154,7 +153,7 @@ func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*
 	t.Cleanup(engine.Close)
 
 	global := router.GlobalContext{
-		User:   &db.User{ID: 1, Username: "player1"},
+		User:   &db.User{ID: testutil.UID(1), Username: "player1"},
 		Theme:  styles.NewTheme(true),
 		Width:  width,
 		Height: height,

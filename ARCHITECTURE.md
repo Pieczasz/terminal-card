@@ -486,8 +486,9 @@ account graduate.
   registering again; a soft-deleted ranking still holds the `(user_id, game_id)`
   primary key. With the keys gone, nothing can authenticate as that account.
 - The `users` row **survives, anonymised**: `username` becomes
-  `db.AnonymisedUsername(userID)` (`deleted_<id>`, which has to satisfy
-  `varchar(16)` and `^[A-Za-z0-9_]+$`, hence the base-36 fallback) and
+  `db.AnonymisedUsername(userID)` (`deleted_` plus 32 hex digits of the UUID,
+  which has to satisfy `varchar(40)` and the CHECK that allows either a chosen
+  name of at most 16 characters or that exact `deleted_` form) and
   `last_seen_at` becomes NULL. It is updated by column, not `Save`d from a loaded
   struct, because the save hooks would walk the associations the transaction just
   deleted and write them back.

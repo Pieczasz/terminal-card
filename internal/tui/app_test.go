@@ -3,7 +3,6 @@ package tui
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/catalog"
@@ -15,6 +14,7 @@ import (
 	internallobby "github.com/Pieczasz/terminal-card/internal/lobby"
 
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -42,7 +42,7 @@ func sessionModel(t *testing.T) (*router.Router, *internallobby.Manager, *db.Use
 	t.Helper()
 
 	manager := internallobby.NewManager(context.Background(), nil)
-	user := &db.User{ID: 1, Username: "alice"}
+	user := &db.User{ID: testutil.UID(1), Username: "alice"}
 	registry := game.NewRegistry()
 	for _, e := range catalog.All {
 		registry.RegisterModule(e.Module())
@@ -77,12 +77,18 @@ func TestModel_RegistersEveryRoute(t *testing.T) {
 }
 
 // Navigating away from a lobby unsubscribes but keeps the seat, so a seated player who
-// reached home would never see the game start - the engine would auto-play their turns
-// until the idle timer took the seat. All three entry screens bounce them back.
+// reached a menu would never see the game start - the engine would auto-play their
+// turns until the idle timer took the seat. Every menu route bounces them back.
 func TestModel_ASeatedPlayerIsBouncedBackToTheirLobby(t *testing.T) {
 	t.Parallel()
 
-	for _, route := range []string{router.RouteHome, router.RouteLobbyCreate, router.RouteLobbyJoin} {
+	for _, route := range []string{
+		router.RouteHome,
+		router.RouteLobbyCreate,
+		router.RouteLobbyJoin,
+		router.RouteProfile,
+		router.RouteLeaderboard,
+	} {
 		t.Run(route, func(t *testing.T) {
 			t.Parallel()
 			r, manager, user := sessionModel(t)
@@ -141,7 +147,7 @@ func TestModel_AReconnectingPlayerStartsAtTheirLobby(t *testing.T) {
 		registry.RegisterModule(e.Module())
 	}
 
-	user := &db.User{ID: 1, Username: "alice"}
+	user := &db.User{ID: testutil.UID(1), Username: "alice"}
 	host := internallobby.NewPlayer(user)
 	l, err := manager.New(host,
 		internallobby.WithCardGame(catalog.All[0].Name),
@@ -149,7 +155,7 @@ func TestModel_AReconnectingPlayerStartsAtTheirLobby(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	guest := &game.Player{ID: "2", UserID: 2, Name: "bob"}
+	guest := &game.Player{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"}
 	require.NoError(t, manager.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(host, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -223,7 +229,7 @@ func TestModel_EveryCatalogGameBuildsItsViewFromAnEngine(t *testing.T) {
 			players := make([]*game.Player, 0, rules.MinPlayers())
 			for i := range rules.MinPlayers() {
 				players = append(players, &game.Player{
-					ID: strconv.Itoa(i + 1), UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
+					ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("p%d", i+1),
 				})
 			}
 			engine := game.NewEngine(rules, players, rules.InitialDeck())

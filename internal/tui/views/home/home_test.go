@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -91,7 +92,7 @@ func TestHome_View_FitsTheTerminal(t *testing.T) {
 		t.Run(size.name, func(t *testing.T) {
 			t.Parallel()
 			m := New(router.GlobalContext{
-				User:  &db.User{ID: 1, Username: "alice"},
+				User:  &db.User{ID: testutil.UID(1), Username: "alice"},
 				Theme: styles.NewTheme(true), Width: size.w, Height: size.h,
 			})
 

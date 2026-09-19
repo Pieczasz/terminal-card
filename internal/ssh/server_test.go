@@ -62,10 +62,9 @@ func setupTestEnvironment(t *testing.T) testEnv {
 			RateLimitCount:  5,
 			RateLimitWindow: time.Second,
 		},
-		UserRepository:  userRepo,
-		MatchRepository: matchRepo,
-		LobbyManager:    lobby.NewManager(context.Background(), matchRepo),
-		GameRegistry:    game.NewRegistry(),
+		UserRepository: userRepo,
+		LobbyManager:   lobby.NewManager(context.Background(), matchRepo),
+		GameRegistry:   game.NewRegistry(),
 	}
 
 	server, err := SetupServer(deps)

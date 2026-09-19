@@ -5,6 +5,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,8 +20,7 @@ func TestNewPlayer(t *testing.T) {
 	t.Run("flattens rankings by game name", func(t *testing.T) {
 		t.Parallel()
 
-		p := NewPlayer(&db.User{
-			ID:       7,
+		p := NewPlayer(&db.User{ID: testutil.UID(7),
 			Username: "alice",
 			Rankings: []db.Ranking{
 				{Game: db.Game{Name: "Uno"}, Elo: 1700},
@@ -29,8 +29,8 @@ func TestNewPlayer(t *testing.T) {
 		})
 
 		require.NotNil(t, p)
-		assert.Equal(t, "7", p.ID)
-		assert.Equal(t, uint(7), p.UserID)
+		assert.Equal(t, testutil.UID(7).String(), p.ID)
+		assert.Equal(t, testutil.UID(7), p.UserID)
 		assert.Equal(t, "alice", p.Name)
 		assert.Equal(t, map[string]uint32{"Uno": 1700, "Hearts": 1200}, p.Ratings)
 	})
@@ -41,8 +41,7 @@ func TestNewPlayer(t *testing.T) {
 	t.Run("drops a ranking with no game name", func(t *testing.T) {
 		t.Parallel()
 
-		p := NewPlayer(&db.User{
-			ID:       9,
+		p := NewPlayer(&db.User{ID: testutil.UID(9),
 			Username: "bob",
 			Rankings: []db.Ranking{
 				{Game: db.Game{}, Elo: 3000},
@@ -58,7 +57,7 @@ func TestNewPlayer(t *testing.T) {
 	t.Run("no rankings gives an empty map, not nil lookups", func(t *testing.T) {
 		t.Parallel()
 
-		p := NewPlayer(&db.User{ID: 3, Username: "carol"})
+		p := NewPlayer(&db.User{ID: testutil.UID(3), Username: "carol"})
 
 		require.NotNil(t, p)
 		assert.Empty(t, p.Ratings)

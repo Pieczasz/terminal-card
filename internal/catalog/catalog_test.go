@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/game"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,6 +30,8 @@ func TestAll_EntriesComplete(t *testing.T) {
 		slugs[e.Slug] = true
 
 		assert.NotNil(t, e.Rules(), "rules factory for %q returned nil", e.Name)
+		_, scores := e.Rules().(game.StandingScorer)
+		assert.True(t, scores, "%q must implement StandingScorer so equal scores share a place", e.Name)
 	}
 }
 
@@ -63,7 +67,7 @@ func TestAll_NamesArePersistedAndFrozen(t *testing.T) {
 	}
 
 	assert.Equal(t, want, got,
-		"adding a game is fine - renaming or re-slugging one orphans its rows in games, rankings and match_participants")
+		"update this map when adding a game; renaming or re-slugging one orphans its rows in games, rankings and match_participants")
 }
 
 // Migration 000005 backfills games.slug from the display names that existed when it
@@ -84,8 +88,13 @@ func TestAll_SlugsMatchTheMigrationBackfill(t *testing.T) {
 		want[m[1]] = m[2]
 	}
 
+	gotByName := make(map[string]string, len(All))
 	for _, e := range All {
-		assert.Equal(t, want[e.Name], e.Slug, "%q must backfill to its catalog slug", e.Name)
+		gotByName[e.Name] = e.Slug
 	}
-	assert.Len(t, want, len(All), "the migration names every game and nothing else")
+	for name, slug := range want {
+		if got, ok := gotByName[name]; ok {
+			assert.Equal(t, slug, got, "%q must still backfill to its catalog slug", name)
+		}
+	}
 }

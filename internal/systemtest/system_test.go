@@ -10,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -26,8 +27,8 @@ func TestSystemRankedGameWithMidGameLeave(t *testing.T) {
 	manager := lobby.NewManager(context.Background(), repo)
 	registry := realRegistry(t)
 
-	leader := newPlayer(1, "alice")
-	guests := []*game.Player{newPlayer(2, "bob"), newPlayer(3, "carol"), newPlayer(4, "dave")}
+	leader := newPlayer(testutil.UID(1), "alice")
+	guests := []*game.Player{newPlayer(testutil.UID(2), "bob"), newPlayer(testutil.UID(3), "carol"), newPlayer(testutil.UID(4), "dave")}
 
 	l, err := manager.New(leader,
 		lobby.WithCardGame(pokerGame),
@@ -101,7 +102,7 @@ func TestSystemLobbyRespectsGameBounds(t *testing.T) {
 	manager := lobby.NewManager(context.Background(), newRankedFinalizeRecorder())
 	registry := realRegistry(t)
 
-	leader := newPlayer(1, "alice")
+	leader := newPlayer(testutil.UID(1), "alice")
 	l, err := manager.New(leader,
 		lobby.WithCardGame(pokerGame),
 		lobby.WithMaxPlayers(2),
@@ -113,8 +114,8 @@ func TestSystemLobbyRespectsGameBounds(t *testing.T) {
 	assert.True(t, l.IsReady(leader), "the ready flag still toggles")
 	assert.True(t, l.IsWaiting(), "one ready player cannot start a two-player game")
 
-	require.NoError(t, manager.JoinLobbyByCode(l.Code(), newPlayer(2, "bob")))
-	assert.Error(t, manager.JoinLobbyByCode(l.Code(), newPlayer(3, "carol")),
+	require.NoError(t, manager.JoinLobbyByCode(l.Code(), newPlayer(testutil.UID(2), "bob")))
+	assert.Error(t, manager.JoinLobbyByCode(l.Code(), newPlayer(testutil.UID(3), "carol")),
 		"a full lobby rejects further joins")
 }
 
@@ -122,8 +123,8 @@ func TestSystemLeaderLeavingPromotesGuest(t *testing.T) {
 	t.Parallel()
 
 	manager := lobby.NewManager(context.Background(), newRankedFinalizeRecorder())
-	leader := newPlayer(1, "alice")
-	guest := newPlayer(2, "bob")
+	leader := newPlayer(testutil.UID(1), "alice")
+	guest := newPlayer(testutil.UID(2), "bob")
 
 	l, err := manager.New(leader, lobby.WithCardGame(pokerGame), lobby.WithMaxPlayers(4))
 	require.NoError(t, err)

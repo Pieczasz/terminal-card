@@ -1,7 +1,6 @@
 package ginrummy
 
 import (
-	"fmt"
 	"math"
 	"slices"
 
@@ -50,11 +49,12 @@ func bestSplitBy(
 ) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	n := len(hand)
 	if n > maskBits {
-		// Candidate melds are uint16 index masks, so the cards past bit 15 would be
-		// dropped silently and a knock scored on melds nobody checked. Gin rummy
-		// deals ten and holds eleven mid-turn; a bigger hand is a caller bug, and a
-		// quietly wrong score is worse to debug than the stack trace.
-		panic(fmt.Sprintf("ginrummy: hand of %d cards exceeds the %d-card meld search", n, maskBits))
+		// Candidate melds are uint16 index masks. A bigger hand is a caller bug
+		// (deal is 10, hold is 11), but TimeoutAction runs in time.AfterFunc with
+		// no recover, so panicking here takes the process down. Treat the whole
+		// hand as deadwood instead of scoring a silently truncated search.
+		deadwood = slices.Clone(hand)
+		return nil, deadwood, score(deadwood)
 	}
 	cards := slices.Clone(hand)
 	candidates := generateMeldMasks(cards)

@@ -1,6 +1,10 @@
 package game
 
-import "github.com/Pieczasz/terminal-card/internal/deck"
+import (
+	"github.com/Pieczasz/terminal-card/internal/deck"
+
+	"github.com/google/uuid"
+)
 
 // Player is a seat at a table. It holds the scalars the engine, the rules and the
 // views actually read rather than the database row they came from: that is what
@@ -8,7 +12,7 @@ import "github.com/Pieczasz/terminal-card/internal/deck"
 // persisted user through the state it is handed.
 type Player struct {
 	ID     string
-	UserID uint
+	UserID uuid.UUID
 	Name   string
 	// Ratings is Elo by game name as of the moment this player sat down. Lobbies
 	// read it for matchmaking; nothing writes it back.
@@ -22,7 +26,7 @@ func (p *Player) Equal(other *Player) bool {
 	if p == nil || other == nil {
 		return false
 	}
-	if p.UserID == 0 || other.UserID == 0 {
+	if p.UserID == uuid.Nil || other.UserID == uuid.Nil {
 		return p.ID != "" && p.ID == other.ID
 	}
 	return p.UserID == other.UserID

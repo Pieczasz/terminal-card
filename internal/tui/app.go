@@ -40,40 +40,23 @@ func Model(deps ModelDependencies) *router.Router {
 
 	r := router.New(global)
 
-	r.Register(router.RouteHome, func(g router.GlobalContext, _ any) tea.Model {
-		// Navigating away from a lobby unsubscribes but keeps the seat, so a player
-		// who reached home from one would never see the game start - the engine
-		// would auto-play their turns until the idle timer took the seat. Create and
-		// join already bounce a seated player back for the same reason.
-		if l := g.LobbyManager.FindLobbyByPlayer(views.SessionPlayer(g)); l != nil {
-			return lobby.New(g, l)
+	// Navigating away from a lobby unsubscribes but keeps the seat, so a player who
+	// reached a menu would never see the game start - the engine would auto-play
+	// until the idle timer took the seat.
+	seatedOr := func(fallback func(router.GlobalContext) tea.Model) func(router.GlobalContext, any) tea.Model {
+		return func(g router.GlobalContext, _ any) tea.Model {
+			if l := g.LobbyManager.FindLobbyByPlayer(views.SessionPlayer(g)); l != nil {
+				return lobby.New(g, l)
+			}
+			return fallback(g)
 		}
-		return home.New(g)
-	})
+	}
 
-	r.Register(router.RouteProfile, func(g router.GlobalContext, _ any) tea.Model {
-		return profile.New(g)
-	})
-
-	r.Register(router.RouteLeaderboard, func(g router.GlobalContext, _ any) tea.Model {
-		return leaderboard.New(g)
-	})
-
-	r.Register(router.RouteLobbyCreate, func(g router.GlobalContext, _ any) tea.Model {
-		p := views.SessionPlayer(g)
-		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
-			return lobby.New(g, l)
-		}
-		return lobby.NewCreate(g)
-	})
-
-	r.Register(router.RouteLobbyJoin, func(g router.GlobalContext, _ any) tea.Model {
-		p := views.SessionPlayer(g)
-		if l := g.LobbyManager.FindLobbyByPlayer(p); l != nil {
-			return lobby.New(g, l)
-		}
-		return lobby.NewJoin(g)
-	})
+	r.Register(router.RouteHome, seatedOr(home.New))
+	r.Register(router.RouteProfile, seatedOr(profile.New))
+	r.Register(router.RouteLeaderboard, seatedOr(leaderboard.New))
+	r.Register(router.RouteLobbyCreate, seatedOr(lobby.NewCreate))
+	r.Register(router.RouteLobbyJoin, seatedOr(lobby.NewJoin))
 
 	r.Register(router.RouteLobby, func(g router.GlobalContext, ctx any) tea.Model {
 		l, ok := ctx.(*internallobby.Lobby)

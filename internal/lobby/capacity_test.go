@@ -4,13 +4,15 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+
 	"github.com/stretchr/testify/require"
 )
 
 func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("Uno"))
 	require.NoError(t, err)
 
@@ -18,7 +20,7 @@ func TestLobby_EveryPlayerGetsAFeedAfterTheTableGrows(t *testing.T) {
 
 	ids := []string{leader.ID}
 	for i := 1; i < 10; i++ {
-		guest := mockPlayer(fmt.Sprintf("guest%d", i), uint(i+1))
+		guest := mockPlayer(fmt.Sprintf("guest%d", i), testutil.UID(uint64(i+1)))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 		ids = append(ids, guest.ID)
 	}

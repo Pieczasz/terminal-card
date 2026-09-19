@@ -10,6 +10,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
 	charmssh "charm.land/ssh"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -58,7 +60,7 @@ func (m *MockUserRepository) BestPlayers(_ context.Context, _ int, _ string) ([]
 	return nil, nil
 }
 
-func (m *MockUserRepository) UserProfile(_ context.Context, _ uint) (*db.User, error) {
+func (m *MockUserRepository) UserProfile(_ context.Context, _ uuid.UUID) (*db.User, error) {
 	return nil, nil
 }
 
@@ -66,11 +68,11 @@ func (m *MockUserRepository) UpdateUserActivity(_ context.Context, _ *db.User, _
 	return nil
 }
 
-func (m *MockUserRepository) UserMatchHistory(_ context.Context, _ uint, _ int) ([]db.MatchParticipant, error) {
+func (m *MockUserRepository) UserMatchHistory(_ context.Context, _ uuid.UUID, _ int) ([]db.MatchParticipant, error) {
 	return nil, nil
 }
 
-func (m *MockUserRepository) DeleteAccount(_ context.Context, _ uint) error {
+func (m *MockUserRepository) DeleteAccount(_ context.Context, _ uuid.UUID) error {
 	return nil
 }
 
@@ -178,7 +180,7 @@ func TestLoadOrRegisterUser_RegistrationGate(t *testing.T) {
 
 	t.Run("a returning player never spends the budget", func(t *testing.T) {
 		t.Parallel()
-		existing := &db.User{ID: 1, Username: "known"}
+		existing := &db.User{ID: testutil.UID(1), Username: "known"}
 		repo := new(MockUserRepository)
 		repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(existing, nil, nil)
 		repo.On("UpdateUserActivity", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -194,7 +196,7 @@ func TestLoadOrRegisterUser_RegistrationGate(t *testing.T) {
 
 	t.Run("an allowed gate registers", func(t *testing.T) {
 		t.Parallel()
-		fresh := &db.User{ID: 2, Username: "new"}
+		fresh := &db.User{ID: testutil.UID(2), Username: "new"}
 		repo := new(MockUserRepository)
 		repo.On("LoadUserByFingerprint", mock.Anything, "fp").Return(nil, nil, nil)
 		repo.On("RegisterUserWithKey", mock.Anything, "new", "fp").Return(fresh, &db.PublicKey{}, nil)

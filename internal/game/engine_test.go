@@ -768,6 +768,32 @@ func TestEngine_Places_LeaverNeverTiesASeatedPlayer(t *testing.T) {
 	}
 }
 
+// Two leavers with the same StandingScore are a draw with each other. Splitting them
+// into consecutive places moves Elo between people who both walked out.
+func TestEngine_Places_LeaversWithEqualScoreShareAPlace(t *testing.T) {
+	t.Parallel()
+
+	stayed := &Player{ID: "p1"}
+	alsoStayed := &Player{ID: "p2"}
+	quitFirst := &Player{ID: "p3"}
+	quitSecond := &Player{ID: "p4"}
+
+	m := setupMockRules()
+	m.On("Standings", mock.Anything).Return([]*Player{stayed, alsoStayed})
+	engine := NewEngine(tiedScorer{m}, []*Player{stayed, alsoStayed}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+	engine.WithState(func(state *State) {
+		state.LeftPlayers = []*Player{quitFirst, quitSecond}
+	})
+
+	standings, places := engine.StandingsWithPlaces()
+
+	require.Len(t, standings, 4)
+	assert.Equal(t, []string{"p1", "p2", "p4", "p3"},
+		[]string{standings[0].ID, standings[1].ID, standings[2].ID, standings[3].ID})
+	assert.Equal(t, []int{1, 1, 3, 3}, places)
+}
+
 // drainEvents takes everything already published. Broadcast is synchronous under the
 // engine mutex, so once the call that caused it has returned the events are either in
 // the buffer or were never sent; waiting would only hide a missing one.
