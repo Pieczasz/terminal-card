@@ -58,31 +58,38 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 // reuses its connection: going back to the pool holds one while waiting for a second, so
 // DBMaxOpenConnections concurrent finalizes deadlock until they time out - and the game
 // row would outlive a rollback.
-func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
-	game := db.Game{Name: name}
+//
+// DoUpdates rather than DoNothing, for the same reason seedRankingRows revives its rows:
+// a soft-deleted game still occupies the unique slug, so DO NOTHING would leave ID zero
+// and the default-scoped reload could not see the row - every finalize for that game
+// would fail forever. Writing the name on the way through is also how a renamed game
+// reaches the leaderboard without its ratings moving.
+func getOrCreateGame(tx *gorm.DB, ref db.GameRef) (*db.Game, error) {
+	game := db.Game{Slug: ref.Slug, Name: ref.Name}
 	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "name"}},
-		DoNothing: true,
+		Columns: []clause.Column{{Name: "slug"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"deleted_at": nil,
+			"name":       ref.Name,
+			"updated_at": time.Now(),
+		}),
 	}).Create(&game).Error; err != nil {
 		return nil, fmt.Errorf("create game: %w", err)
 	}
-	if game.ID == 0 {
-		if err := tx.Where("name = ?", name).First(&game).Error; err != nil {
-			return nil, fmt.Errorf("load game: %w", err)
-		}
-	}
+	// No id check: DO UPDATE always returns the row, and a zero would fail the
+	// matches.game_id foreign key on the very next statement anyway.
 	return &game, nil
 }
 
 func (q *gormMatchRepository) RecordCasualMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uint,
 ) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	ctx, span := tracer.Start(ctx, "db.RecordCasualMatch",
-		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
+		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
 	defer func() { endSpan(span, err) }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
@@ -90,7 +97,7 @@ func (q *gormMatchRepository) RecordCasualMatch(
 	}
 
 	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGame(tx, gameName)
+		game, err := getOrCreateGame(tx, ref)
 		if err != nil {
 			return err
 		}
@@ -105,14 +112,14 @@ func (q *gormMatchRepository) RecordCasualMatch(
 // FinalizeRankedMatch creates/looks up the game, updates rankings, and records the match
 // in a single database transaction so ELO and history cannot diverge.
 func (q *gormMatchRepository) FinalizeRankedMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uint, places []int,
 ) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	ctx, span := tracer.Start(ctx, "db.FinalizeRankedMatch",
-		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
+		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
 	defer func() { endSpan(span, err) }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
@@ -120,7 +127,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 	}
 
 	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGame(tx, gameName)
+		game, err := getOrCreateGame(tx, ref)
 		if err != nil {
 			return err
 		}
@@ -174,10 +181,10 @@ const (
 	// profitable until it has a track record of its own.
 	provisionalMatches = 5
 
-	// maxSamePairingPerDay is how many ranked matches between the exact same set of
-	// players still move rating inside a 24h window. The same pair trading wins is
-	// either farming or a private rivalry; either way the ladder stops paying after
-	// three a day.
+	// maxSamePairingPerDay is how many ranked matches any two players at a table may
+	// already have shared inside a 24h window before the table stops moving rating.
+	// The same two accounts trading wins is either farming or a private rivalry;
+	// either way the ladder stops paying after three a day.
 	maxSamePairingPerDay = 3
 )
 
@@ -200,13 +207,13 @@ func (q *gormMatchRepository) updateRankingsTx(
 		return nil, fmt.Errorf("fetch rankings: %w", err)
 	}
 
-	pairings, err := samePairingCountLast24h(tx, orderedUserIDs)
+	pairings, err := repeatedPairCountLast24h(tx, orderedUserIDs)
 	if err != nil {
 		return nil, err
 	}
 	damped := pairings >= maxSamePairingPerDay
 	if damped {
-		slog.WarnContext(ctx, "ranked match damped: same players again inside 24h",
+		slog.WarnContext(ctx, "ranked match damped: these players have already met inside 24h",
 			"user_ids", orderedUserIDs, "game_id", gameID, "recent_pairings", pairings)
 	}
 
@@ -237,25 +244,40 @@ func (q *gormMatchRepository) updateRankingsTx(
 			update["elo"] = stored
 			deltas[userID] = int(stored) - int(r.Elo)
 		}
-		if err := tx.Model(r).Updates(update).Error; err != nil {
-			return nil, fmt.Errorf("update ranking: %w", err)
+		res := tx.Model(r).Updates(update)
+		if res.Error != nil {
+			return nil, fmt.Errorf("update ranking: %w", res.Error)
+		}
+		// This transaction holds the row FOR UPDATE, so zero rows means it is gone
+		// underneath us. Carrying on would write the computed elo_delta into history for
+		// a rating that never moved.
+		if res.RowsAffected == 0 {
+			return nil, fmt.Errorf("ranking for user %d in game %d was not updated", userID, gameID)
 		}
 	}
 	return deltas, nil
 }
 
-// samePairingCountLast24h counts recent ranked matches whose participant set is
-// exactly userIDs, across every game - a pair farming each other does not become
-// legitimate by switching table. One participant's recent matches bound the scan and
-// the sets are compared in Go, which is cheap at these volumes. Callers must hold
-// lockPairing so concurrent finalizes of the same set cannot both underrun the cap.
-func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
+// repeatedPairCountLast24h is the most ranked matches any single pair of players at
+// this table has already shared inside 24h, across every game.
+//
+// Pairs, not the exact seat list: {A,B}, {A,B,C} and {A,B,D} are three different
+// participant sets, so a cap on set repeats handed each of them its own budget and two
+// accounts could farm each other indefinitely by rotating a third alt through the
+// table. A and B co-occurring is what the cap is actually about, and switching game
+// does not make it legitimate either, so the window spans every game.
+//
+// The scan is bounded by the recent ranked matches these seats played; the pair
+// counting happens in Go, which is cheap at these volumes. Callers must hold
+// lockPairing, or two concurrent finalizes sharing a seat both read an undamped count.
+func repeatedPairCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
 	var matchIDs []uint
 	if err := tx.Model(&db.MatchParticipant{}).
 		Joins("JOIN matches ON matches.id = match_participants.match_id").
-		Where(`match_participants.user_id = ? AND matches.ranked
+		Where(`match_participants.user_id IN ? AND matches.ranked
 			AND matches.deleted_at IS NULL AND matches.created_at > ?`,
-			userIDs[0], time.Now().Add(-24*time.Hour)).
+			userIDs, time.Now().Add(-24*time.Hour)).
+		Distinct().
 		Pluck("match_participants.match_id", &matchIDs).Error; err != nil {
 		return 0, fmt.Errorf("query recent pairings: %w", err)
 	}
@@ -268,35 +290,57 @@ func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
 		return 0, fmt.Errorf("query pairing participants: %w", err)
 	}
 
+	here := make(map[uint]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		here[id] = struct{}{}
+	}
+	// Only the seats sitting at this table matter: a past match's other players are
+	// not part of any pair being capped now.
 	seats := make(map[uint][]uint, len(matchIDs))
 	for _, row := range rows {
-		seats[row.MatchID] = append(seats[row.MatchID], row.UserID)
-	}
-
-	want := slices.Sorted(slices.Values(userIDs))
-	count := 0
-	for _, got := range seats {
-		if slices.Equal(want, slices.Sorted(slices.Values(got))) {
-			count++
+		if _, ours := here[row.UserID]; ours {
+			seats[row.MatchID] = append(seats[row.MatchID], row.UserID)
 		}
 	}
-	return count, nil
+	return worstPairCount(seats), nil
 }
 
+// worstPairCount is the highest co-occurrence count over every pair in seats.
+func worstPairCount(seats map[uint][]uint) int {
+	counts := make(map[[2]uint]int, len(seats))
+	worst := 0
+	for _, shared := range seats {
+		slices.Sort(shared)
+		for i, a := range shared {
+			for _, b := range shared[i+1:] {
+				counts[[2]uint{a, b}]++
+				worst = max(worst, counts[[2]uint{a, b}])
+			}
+		}
+	}
+	return worst
+}
+
+// lockPairing serializes finalizes that share any seat, taking the locks in user-id
+// order so two overlapping tables cannot grab them in opposite orders and deadlock.
+// Ranking row locks are per (user, game), so the same accounts finalizing Poker and
+// Hearts at the same moment would both read an undamped pair count without this. One
+// lock per seat rather than one per exact set, because the cap is now per pair and two
+// different sets can share one.
 func lockPairing(tx *gorm.DB, userIDs []uint) error {
-	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", pairingAdvisoryKey(userIDs)).Error; err != nil {
-		return fmt.Errorf("lock pairing: %w", err)
+	for _, id := range slices.Sorted(slices.Values(userIDs)) {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", seatAdvisoryKey(id)).Error; err != nil {
+			return fmt.Errorf("lock seat %d: %w", id, err)
+		}
 	}
 	return nil
 }
 
-func pairingAdvisoryKey(userIDs []uint) int64 {
+func seatAdvisoryKey(userID uint) int64 {
 	h := fnv.New64a()
-	for _, id := range slices.Sorted(slices.Values(userIDs)) {
-		var buf [8]byte
-		binary.LittleEndian.PutUint64(buf[:], uint64(id))
-		_, _ = h.Write(buf[:])
-	}
+	var buf [8]byte
+	binary.LittleEndian.PutUint64(buf[:], uint64(userID))
+	_, _ = h.Write(buf[:])
 	// Advisory keys are opaque coordination tokens, not secrets.
 	return int64(h.Sum64()) //nolint:gosec // G115: lock key space is intentionally 64-bit wrap
 }

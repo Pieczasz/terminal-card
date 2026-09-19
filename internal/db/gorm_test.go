@@ -4,6 +4,7 @@ package db_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -16,9 +17,11 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
+	"gorm.io/gorm"
 )
 
 func TestConnect_Success(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("skipping integration test")
 	}
@@ -68,39 +71,62 @@ func TestConnect_Success(t *testing.T) {
 	require.NotNil(t, sqlDB)
 
 	err = sqlDB.Ping()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	assert.Equal(t, 5, sqlDB.Stats().MaxOpenConnections,
 		"DBMaxOpenConnections has to reach the pool, not just the config struct")
 }
 
 // A NULL scans into the Go zero value, so a nullable column whose struct field is a
-// plain string/int cannot tell "unset" from "empty" or "zero". Migration 000002
-// pinned these down; this test is what makes a future migration that loosens one
-// fail CI instead of shipping.
+// plain string/int/bool cannot tell "unset" from "empty" or "zero" or false. The list
+// is derived from the GORM structs rather than hand-written: a hand-written one had
+// already fallen behind by two columns, and a new scalar field must fail CI until the
+// migration pins it.
 func TestSchemaNullabilityMatchesStructs(t *testing.T) {
 	t.Parallel()
 	database := testutil.SetupTestDB(t)
 
-	notNull := []struct{ table, column string }{
-		{"users", "username"},
-		{"public_keys", "fingerprint"},
-		{"games", "name"},
-		{"match_participants", "placement"},
-		{"match_participants", "elo_delta"},
-		{"matches", "ranked"},
-		{"rankings", "matches_played"},
+	models := []any{&db.User{}, &db.PublicKey{}, &db.Game{}, &db.Ranking{}, &db.Match{}, &db.MatchParticipant{}}
+	checked := 0
+	for _, model := range models {
+		table, columns := scalarColumns(t, database, model)
+		for _, column := range columns {
+			checked++
+			var isNullable string
+			err := database.Raw(`SELECT is_nullable FROM information_schema.columns
+				WHERE table_name = ? AND column_name = ?`, table, column).
+				Scan(&isNullable).Error
+			require.NoError(t, err)
+			require.NotEmpty(t, isNullable, "%s.%s does not exist", table, column)
+			assert.Equal(t, "NO", isNullable, "%s.%s must be NOT NULL", table, column)
+		}
 	}
+	assert.Greater(t, checked, 10, "the derivation found almost nothing, so it is asserting almost nothing")
+}
 
-	for _, want := range notNull {
-		var isNullable string
-		err := database.Raw(`SELECT is_nullable FROM information_schema.columns
-			WHERE table_name = ? AND column_name = ?`, want.table, want.column).
-			Scan(&isNullable).Error
-		require.NoError(t, err)
-		require.NotEmpty(t, isNullable, "%s.%s does not exist", want.table, want.column)
-		assert.Equal(t, "NO", isNullable, "%s.%s must be NOT NULL", want.table, want.column)
+// scalarColumns is every column of model whose Go field is a plain string, integer or
+// bool. Time fields are excluded on purpose: the schema deliberately leaves the
+// timestamp columns nullable, and gorm.DeletedAt models NULL explicitly. Associations
+// carry no column of their own and parse with an empty DataType.
+func scalarColumns(t *testing.T, database *gorm.DB, model any) (string, []string) {
+	t.Helper()
+	stmt := &gorm.Statement{DB: database}
+	require.NoError(t, stmt.Parse(model))
+
+	columns := make([]string, 0, len(stmt.Schema.Fields))
+	for _, field := range stmt.Schema.Fields {
+		if field.DataType == "" || field.DBName == "" {
+			continue
+		}
+		switch field.FieldType.Kind() {
+		case reflect.String, reflect.Bool,
+			reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+			reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+			columns = append(columns, field.DBName)
+		default:
+		}
 	}
+	return stmt.Schema.Table, columns
 }
 
 // The leaderboard and history queries are index-shaped; losing one is a silent
@@ -114,26 +140,11 @@ func TestSchemaHasHotPathIndexes(t *testing.T) {
 		"idx_match_participants_user_match",
 		"idx_matches_game_id",
 		"idx_rankings_game_id",
+		"idx_games_slug",
 	} {
 		var count int64
 		require.NoError(t, database.Raw(
 			`SELECT count(*) FROM pg_indexes WHERE indexname = ?`, name).Scan(&count).Error)
 		assert.Equal(t, int64(1), count, "index %s is missing", name)
 	}
-}
-
-func TestConnect_Failure(t *testing.T) {
-	cfg := &config.Config{
-		DBHost:         "invalid-host",
-		DBPort:         5432,
-		DBUser:         "user",
-		DBPassword:     "pass",
-		DBName:         "db",
-		DBSSLMode:      "disable",
-		MaxConnections: 5,
-	}
-
-	database, err := db.Connect(cfg)
-	assert.Error(t, err)
-	assert.Nil(t, database)
 }

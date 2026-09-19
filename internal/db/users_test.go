@@ -6,6 +6,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
@@ -71,4 +72,30 @@ func FuzzValidateUsername(f *testing.F) {
 			assert.True(t, isAllowed, "accepted username contains disallowed rune %q", r)
 		}
 	})
+}
+
+// The anonymised name is written into users.username, so it has to clear the same
+// two constraints a chosen name does - varchar(16) and ^[A-Za-z0-9_]+$. A name that
+// does not is an account the player cannot erase.
+func TestAnonymisedUsername(t *testing.T) {
+	t.Parallel()
+
+	for _, id := range []uint{0, 1, 42, 99_999_999, 100_000_000, 1 << 40} {
+		name := AnonymisedUsername(id)
+		require.NoError(t, ValidateUsername(name), "id %d produced %q", id, name)
+		assert.True(t, strings.HasPrefix(name, "deleted_"), "id %d produced %q", id, name)
+	}
+
+	assert.Equal(t, "deleted_42", AnonymisedUsername(42), "a readable id stays readable")
+	assert.Len(t, AnonymisedUsername(99_999_999), MaxUsernameLength, "the decimal form fills the column")
+
+	// Distinct ids must stay distinct names, or two erased accounts collide on the
+	// unique index and the second player cannot be erased at all.
+	seen := make(map[string]uint, 3)
+	for _, id := range []uint{99_999_999, 100_000_000, 100_000_001} {
+		name := AnonymisedUsername(id)
+		_, clash := seen[name]
+		assert.False(t, clash, "ids %d and %d both anonymise to %q", seen[name], id, name)
+		seen[name] = id
+	}
 }
