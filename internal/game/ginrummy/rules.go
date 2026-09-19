@@ -276,24 +276,29 @@ func computeKnockOutcome(
 ) (*HandResult, []deck.Card) {
 	remaining := deck.RemoveOne(knockerHand, discard)
 	knockerMelds, knockerDW, knockerPts := bestMeldSplit(remaining)
-	oppMelds, oppDW, oppPts := bestMeldSplit(opponentHand)
 
 	result := &HandResult{
-		KnockerMelds:           knockerMelds,
-		KnockerDeadwood:        knockerDW,
-		KnockerDeadwoodPoints:  knockerPts,
-		OpponentMelds:          oppMelds,
-		OpponentDeadwood:       oppDW,
-		OpponentDeadwoodPoints: oppPts,
-		Gin:                    knockerPts == 0,
+		KnockerMelds:          knockerMelds,
+		KnockerDeadwood:       knockerDW,
+		KnockerDeadwoodPoints: knockerPts,
+		Gin:                   knockerPts == 0,
 	}
 
 	if result.Gin {
-		// Gin blocks layoffs: opponent scores raw deadwood + bonus to knocker.
+		// Gin blocks layoffs, so the opponent's best arrangement is the one with the
+		// lowest raw deadwood: opponent scores that + bonus to the knocker.
+		oppMelds, oppDW, oppPts := bestMeldSplit(opponentHand)
+		result.OpponentMelds = oppMelds
+		result.OpponentDeadwood = oppDW
+		result.OpponentDeadwoodPoints = oppPts
 		result.ScoreDelta = oppPts + ginBonus
 		result.Winner = knockerID
 		return result, remaining
 	}
+
+	// Layoffs are open, so the defender arranges for the lowest total *after* them.
+	oppMelds, oppDW, _ := bestMeldSplitAgainst(opponentHand, knockerMelds)
+	result.OpponentMelds = oppMelds
 
 	_, remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
 	remPts := sumDeadwood(remDW)

@@ -442,7 +442,7 @@ func TestRules_TimeoutAction_MatchOver(t *testing.T) {
 }
 
 // The engine removes a player whose auto-play the rules then refuse, so the move
-// TimeoutAction picks must satisfy ValidateAction — including the upcard restriction.
+// TimeoutAction picks must satisfy ValidateAction - including the upcard restriction.
 func TestRules_TimeoutAction_NeverLaysBackTakenUpcard(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -562,4 +562,49 @@ func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
 	standings, places := engine.StandingsWithPlaces()
 	require.Len(t, standings, 2)
 	assert.Equal(t, []int{1, 1}, places, "equal totals are one place, not two")
+}
+
+// A defender may arrange their hand for the lowest total *after* layoffs, not the
+// lowest raw deadwood. Here 3♠4♠5♠ is the cheaper meld on its own, but melding the
+// three 3s instead frees 4♠ and 5♠ to extend the knocker's 6♠7♠8♠ run to nothing -
+// which turns a 2-point loss into a 29-point undercut.
+func TestRules_Knock_DefenderMeldsForTheBestLayoff(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	knocker := []deck.Card{
+		c(deck.Six, deck.Spades), c(deck.Seven, deck.Spades), c(deck.Eight, deck.Spades),
+		c(deck.Jack, deck.Spades), c(deck.Jack, deck.Hearts), c(deck.Jack, deck.Diamonds),
+		c(deck.Ace, deck.Clubs), c(deck.Ace, deck.Spades), c(deck.Ace, deck.Hearts),
+		c(deck.Four, deck.Diamonds),
+		c(deck.King, deck.Clubs), // discard
+	}
+	opponent := []deck.Card{
+		c(deck.Three, deck.Spades), c(deck.Four, deck.Spades), c(deck.Five, deck.Spades),
+		c(deck.Three, deck.Hearts), c(deck.Three, deck.Diamonds),
+		c(deck.Eight, deck.Clubs), c(deck.Nine, deck.Clubs), c(deck.Ten, deck.Clubs),
+		c(deck.Jack, deck.Clubs), c(deck.Queen, deck.Clubs),
+	}
+	state := game.NewState(rules, twoPlayers(knocker, opponent), nil)
+	extra := &State{
+		HandPhase:        AwaitingDiscard,
+		FirstActor:       0,
+		CumulativeScores: map[string]int{"p1": 0, "p2": 0},
+	}
+	state.Extra = extra
+	state.CurrentTurn = 0
+	state.Deck = deck.New(nil)
+	state.Discard = deck.New(nil)
+
+	require.NoError(t, rules.ValidateAction(state, ActionKnock{Discard: c(deck.King, deck.Clubs)}))
+	rules.ApplyAction(state, ActionKnock{Discard: c(deck.King, deck.Clubs)})
+
+	res := extra.LastHandResult
+	require.NotNil(t, res)
+	assert.Equal(t, 4, res.KnockerDeadwoodPoints, "4♦ is the knock's only deadwood")
+	assert.Zero(t, res.OpponentDeadwoodPoints, "both loose spades lay off")
+	assert.ElementsMatch(t,
+		[]deck.Card{c(deck.Four, deck.Spades), c(deck.Five, deck.Spades)}, res.LaidOffCards)
+	assert.True(t, res.Undercut, "0 <= 4 is an undercut")
+	assert.Equal(t, "p2", res.Winner)
+	assert.Equal(t, 4+undercutBonus, res.ScoreDelta)
 }

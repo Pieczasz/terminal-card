@@ -28,27 +28,55 @@ const maskBits = 16
 // reported as all deadwood instead. Gin rummy deals ten and holds eleven mid-turn,
 // so the guard is for a caller that does not exist yet.
 func bestMeldSplit(hand []deck.Card) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
+	return bestSplitBy(hand, sumDeadwood)
+}
+
+// bestMeldSplitAgainst is the arrangement a defender is entitled to when the knocker
+// has knocked: the one that minimizes deadwood *after* laying off. Minimizing raw
+// deadwood first can strand cards that would have attached to a knocker meld, which
+// overcharges the defender and can cost them an undercut they had earned.
+//
+// deadwoodPts is the post-layoff total; deadwood is still the pre-layoff set, so the
+// caller runs applyLayoffs on it to learn which cards actually moved.
+func bestMeldSplitAgainst(
+	hand []deck.Card, knockerMelds [][]deck.Card,
+) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
+	return bestSplitBy(hand, func(dw []deck.Card) int {
+		_, remaining, _ := applyLayoffs(dw, knockerMelds)
+		return sumDeadwood(remaining)
+	})
+}
+
+// bestSplitBy searches every disjoint set of candidate melds and keeps the split
+// score rates lowest. score is handed the deadwood the split leaves.
+func bestSplitBy(
+	hand []deck.Card, score func(deadwood []deck.Card) int,
+) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	n := len(hand)
 	if n == 0 {
 		return nil, nil, 0
 	}
 	if n > maskBits {
-		return nil, slices.Clone(hand), sumDeadwood(hand)
+		return nil, slices.Clone(hand), score(hand)
 	}
 	cards := slices.Clone(hand)
 	candidates := generateMeldMasks(cards)
 
 	bestPts := math.MaxInt
 	var bestMasks []uint16
+	buf := make([]deck.Card, 0, n)
 
 	var search func(start int, used uint16, chosen []uint16)
 	search = func(start int, used uint16, chosen []uint16) {
-		pts := 0
+		// Reused across the whole search: score reads it before we recurse, and
+		// applyLayoffs clones what it keeps.
+		buf = buf[:0]
 		for i := range n {
 			if used&(1<<i) == 0 {
-				pts += deadwoodPoints(cards[i])
+				buf = append(buf, cards[i])
 			}
 		}
+		pts := score(buf)
 		if pts < bestPts {
 			bestPts = pts
 			bestMasks = slices.Clone(chosen)
