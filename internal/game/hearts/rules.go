@@ -351,11 +351,16 @@ func (r *Rules) OnPlayerLeave(state *game.State, _ string) {
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
 // StandingScore is the value Standings sorted by, so players who finished the match
-// on the same total are reported as the draw they are.
+// on the same total are reported as the draw they are. Mid-hand - a table that ended
+// on a disconnect - the live hand's points count too, or the winner is whoever sat
+// first. Once scoreHand has folded them into the totals they must not count twice.
 func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return 0
 	}
-	return extra.CumulativeScores[p.ID]
+	if extra.HandComplete {
+		return extra.CumulativeScores[p.ID]
+	}
+	return extra.CumulativeScores[p.ID] + extra.HandPoints[p.ID]
 }

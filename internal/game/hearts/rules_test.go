@@ -439,7 +439,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	// Drive the opening pass (or skip if hand 1 somehow had PassNone — it won't).
+	// Drive the opening pass (or skip if hand 1 somehow had PassNone - it won't).
 	for {
 		var stage Stage
 		engine.WithState(func(s *game.State) {
@@ -710,4 +710,30 @@ func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
 	require.Len(t, standings, playerCount)
 	assert.Equal(t, "p3", standings[0].ID, "the fewest points wins hearts")
 	assert.Equal(t, []int{1, 2, 2, 4}, places, "equal totals are one place, not two")
+}
+
+// A table that ends mid-hand on a disconnect has a live hand nobody has scored yet.
+// Those points decide the winner; once scoreHand folds them into the totals they must
+// not be counted a second time, or every completed match doubles its last hand.
+func TestRules_StandingScore_CountsTheLiveHandExactlyOnce(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	engine := game.NewEngine(rules, fourPlayers(), deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra := s.Extra.(*State)
+		extra.CumulativeScores = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 0}
+		extra.HandPoints = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 25}
+		extra.HandComplete = false
+
+		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "mid-hand, the live hand counts")
+		assert.Equal(t, 0, rules.StandingScore(s, s.Players[0]))
+
+		// scoreHand has run: totals now hold the hand, and HandPoints still does too.
+		extra.CumulativeScores["p4"] = 25
+		extra.HandComplete = true
+		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "scored once, not twice")
+	})
 }
