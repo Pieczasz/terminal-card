@@ -79,9 +79,7 @@ func (r *Rules) beginHand(state *game.State, extra *State) error {
 	extra.TurnsThisHand = 0
 
 	state.Deck = deck.New(deck.StandardDeck())
-	if err := state.Deck.Shuffle(); err != nil {
-		return fmt.Errorf("shuffle: %w", err)
-	}
+	state.Deck.Shuffle()
 	for _, p := range state.Players {
 		cards, ok := state.Deck.DrawNCards(dealCount)
 		if !ok {
@@ -300,7 +298,7 @@ func computeKnockOutcome(
 	oppMelds, oppDW, _ := bestMeldSplitAgainst(opponentHand, knockerMelds)
 	result.OpponentMelds = oppMelds
 
-	_, remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
+	remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
 	remPts := sumDeadwood(remDW)
 	result.LaidOffCards = laidOff
 	result.OpponentDeadwood = remDW

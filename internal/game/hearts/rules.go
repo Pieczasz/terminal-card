@@ -66,16 +66,13 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	extra.DealerIndex = dealer
 
 	state.Deck = deck.New(deck.StandardDeck())
-	if err := state.Deck.Shuffle(); err != nil {
-		return fmt.Errorf("shuffle deck: %w", err)
-	}
+	state.Deck.Shuffle()
 	for _, p := range state.Players {
 		cards, ok := state.Deck.DrawNCards(cardsPerHand)
 		if !ok {
 			return errors.New("not enough cards to deal")
 		}
 		p.Cards = cards
-		extra.HandPoints[p.ID] = 0
 	}
 
 	extra.PassDirection = PassDirection((extra.HandNumber - 1) % 4)
@@ -151,10 +148,10 @@ func validatePlay(state *game.State, extra *State, action game.Action) error {
 	if !ok {
 		return errors.New("must play a card during trick play")
 	}
-	return validatePlayCard(state, extra, state.Players[state.CurrentTurn], a.Card)
+	return validatePlayCard(extra, state.Players[state.CurrentTurn], a.Card)
 }
 
-func validatePlayCard(_ *game.State, extra *State, p *game.Player, card deck.Card) error {
+func validatePlayCard(extra *State, p *game.Player, card deck.Card) error {
 	if !slices.Contains(p.Cards, card) {
 		return errors.New("you don't have that card")
 	}
@@ -315,7 +312,7 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 		return ActionPassCards{Cards: threeLowestCards(p.Cards)}
 	case StageTrickPlay:
 		p := state.Players[state.CurrentTurn]
-		if card, ok := firstLegalCard(state, extra, p); ok {
+		if card, ok := firstLegalCard(extra, p); ok {
 			return ActionPlayCard{Card: card}
 		}
 		return nil

@@ -1,6 +1,7 @@
 package ginrummy
 
 import (
+	"fmt"
 	"math"
 	"slices"
 
@@ -22,11 +23,6 @@ func sumDeadwood(cards []deck.Card) int {
 const maskBits = 16
 
 // bestMeldSplit partitions hand into melds minimizing deadwood points.
-//
-// A hand of more than maskBits cards cannot be searched - the masks would silently
-// drop the cards past bit 15 and score a knock on melds nobody checked - so it is
-// reported as all deadwood instead. Gin rummy deals ten and holds eleven mid-turn,
-// so the guard is for a caller that does not exist yet.
 func bestMeldSplit(hand []deck.Card) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	return bestSplitBy(hand, sumDeadwood)
 }
@@ -42,7 +38,7 @@ func bestMeldSplitAgainst(
 	hand []deck.Card, knockerMelds [][]deck.Card,
 ) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	return bestSplitBy(hand, func(dw []deck.Card) int {
-		_, remaining, _ := applyLayoffs(dw, knockerMelds)
+		remaining, _ := applyLayoffs(dw, knockerMelds)
 		return sumDeadwood(remaining)
 	})
 }
@@ -53,11 +49,12 @@ func bestSplitBy(
 	hand []deck.Card, score func(deadwood []deck.Card) int,
 ) (melds [][]deck.Card, deadwood []deck.Card, deadwoodPts int) {
 	n := len(hand)
-	if n == 0 {
-		return nil, nil, 0
-	}
 	if n > maskBits {
-		return nil, slices.Clone(hand), score(hand)
+		// Candidate melds are uint16 index masks, so the cards past bit 15 would be
+		// dropped silently and a knock scored on melds nobody checked. Gin rummy
+		// deals ten and holds eleven mid-turn; a bigger hand is a caller bug, and a
+		// quietly wrong score is worse to debug than the stack trace.
+		panic(fmt.Sprintf("ginrummy: hand of %d cards exceeds the %d-card meld search", n, maskBits))
 	}
 	cards := slices.Clone(hand)
 	candidates := generateMeldMasks(cards)

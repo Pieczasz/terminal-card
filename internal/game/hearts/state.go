@@ -112,6 +112,8 @@ func resetHandState(extra *State) {
 	extra.TrickLeader = 0
 	extra.HeartsBroken = false
 	extra.TricksPlayed = 0
+	// Fresh rather than cleared: every read is by index, so an absent seat already
+	// reads zero and beginHand does not have to seed one key per player.
 	extra.HandPoints = make(map[string]int, playerCount)
 	extra.HandComplete = false
 	extra.LastTrickWinner = ""

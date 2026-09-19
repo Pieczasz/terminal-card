@@ -156,17 +156,35 @@ func TestBestMeldSplit_BeatsGreedy(t *testing.T) {
 	})
 }
 
-// The candidate melds are uint16 index masks, so a hand past bit 15 would be scored
-// on melds nobody looked at. Unreachable in play; the point is that it fails closed.
-func TestBestMeldSplit_OversizedHandIsAllDeadwood(t *testing.T) {
+// The candidate melds are uint16 index masks, so a hand past bit 15 would be scored on
+// melds nobody looked at. Unreachable in play - eleven cards is the most anyone holds -
+// and the point is that it fails loudly instead of returning a quietly wrong score.
+func TestBestMeldSplit_OversizedHandPanics(t *testing.T) {
 	t.Parallel()
 	hand := deck.StandardDeck()[:maskBits+1]
 
-	melds, dw, pts := bestMeldSplit(hand)
+	assert.PanicsWithValue(t,
+		"ginrummy: hand of 17 cards exceeds the 16-card meld search",
+		func() { bestMeldSplit(hand) })
+	assert.NotPanics(t, func() { bestMeldSplit(deck.StandardDeck()[:maskBits]) },
+		"the largest searchable hand is still searched")
+}
 
-	assert.Empty(t, melds, "no meld may be claimed on an unsearchable hand")
-	assert.Len(t, dw, len(hand))
-	assert.Equal(t, sumDeadwood(hand), pts)
+// Every empty answer has to look the same, or a caller that reads len() on one and
+// nil on the other is right by accident.
+func TestBestMeldSplit_EmptyHandLooksLikeAnyOtherEmptyResult(t *testing.T) {
+	t.Parallel()
+	melds, dw, pts := bestMeldSplit(nil)
+
+	assert.Empty(t, melds)
+	assert.Empty(t, dw)
+	assert.Equal(t, 0, pts)
+
+	// A one-card hand is the nearest non-empty case: melds empty, deadwood the card.
+	oneMelds, oneDW, onePts := bestMeldSplit([]deck.Card{c(deck.King, deck.Spades)})
+	assert.Equal(t, melds, oneMelds, "no melds either way, and the same shape")
+	assert.Len(t, oneDW, 1)
+	assert.Equal(t, 10, onePts)
 }
 
 // The split is a partition: every card is in exactly one meld or in the deadwood, the
@@ -200,5 +218,89 @@ func TestBestMeldSplit_IsAPartition(t *testing.T) {
 		}
 		require.ElementsMatch(rt, hand, append(slices.Clone(seen), dw...),
 			"melds plus deadwood must be exactly the hand")
+	})
+}
+
+// greedyDeadwood is the arrangement a person plays: take the meld that sheds the most
+// points, then the best of what is left, and so on. It is the baseline bestMeldSplit
+// has to match or beat on every hand, because a knock is scored on the difference.
+func greedyDeadwood(hand []deck.Card) int {
+	cards := slices.Clone(hand)
+	masks := generateMeldMasks(cards)
+	points := func(mask uint16) int {
+		total := 0
+		for i := range cards {
+			if mask&(1<<i) != 0 {
+				total += deadwoodPoints(cards[i])
+			}
+		}
+		return total
+	}
+
+	var used uint16
+	for {
+		var best uint16
+		bestGain := 0
+		for _, m := range masks {
+			if used&m != 0 {
+				continue
+			}
+			if gain := points(m); gain > bestGain {
+				best, bestGain = m, gain
+			}
+		}
+		if bestGain == 0 {
+			return points(^used)
+		}
+		used |= best
+	}
+}
+
+// FuzzBestMeldSplit is the meld search's contract on a hand nobody designed: the split
+// is a partition of the hand into real melds plus deadwood, the points count exactly
+// the deadwood reported, and it is never worse than playing greedily.
+func FuzzBestMeldSplit(f *testing.F) {
+	f.Add([]byte{0, 1, 2, 13, 14, 15, 26, 27, 28, 39}) // three runs and a spare
+	f.Add([]byte{0, 13, 26, 39, 1, 14, 27, 40, 2, 15}) // sets everywhere
+	f.Add([]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0})        // every byte collides
+	f.Add([]byte{7, 8, 9, 10, 20, 33, 46, 3, 17, 51})  // a run plus scattered deadwood
+	f.Add([]byte{255, 128, 64, 32, 16, 8, 4, 2, 1, 0}) // wide spread
+
+	full := deck.StandardDeck()
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		// A hand is a set of distinct cards; duplicates in the input are dropped
+		// rather than rejected, so the fuzzer is not fighting the encoding.
+		var hand []deck.Card
+		for _, b := range raw {
+			card := full[int(b)%len(full)]
+			if !slices.Contains(hand, card) {
+				hand = append(hand, card)
+			}
+			if len(hand) == dealCount+1 {
+				break
+			}
+		}
+		if len(hand) == 0 {
+			return
+		}
+
+		melds, dw, pts := bestMeldSplit(hand)
+
+		require.Equal(t, sumDeadwood(dw), pts, "the points must count the deadwood reported")
+
+		seen := make([]deck.Card, 0, len(hand))
+		for _, meld := range melds {
+			require.True(t, isSet(meld) || isRun(meld), "not a meld: %v", meld)
+			seen = append(seen, meld...)
+		}
+		counts := make(map[deck.Card]int, len(hand))
+		for _, card := range append(slices.Clone(seen), dw...) {
+			counts[card]++
+			require.Equal(t, 1, counts[card], "%v is melded and deadwood at once", card)
+		}
+		require.ElementsMatch(t, hand, append(slices.Clone(seen), dw...),
+			"melds plus deadwood must be exactly the hand")
+		require.LessOrEqual(t, pts, greedyDeadwood(hand),
+			"the search must never lose to playing greedily")
 	})
 }

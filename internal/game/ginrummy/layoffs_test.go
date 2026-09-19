@@ -16,16 +16,14 @@ func TestApplyLayoffs_ExtendRunEnds(t *testing.T) {
 	}}
 	t.Run("low end", func(t *testing.T) {
 		t.Parallel()
-		ext, rem, laid := applyLayoffs([]deck.Card{c(deck.Three, deck.Hearts)}, melds)
+		rem, laid := applyLayoffs([]deck.Card{c(deck.Three, deck.Hearts)}, melds)
 		assert.Empty(t, rem)
-		require.Len(t, ext[0], 4)
 		assert.Equal(t, []deck.Card{c(deck.Three, deck.Hearts)}, laid)
 	})
 	t.Run("high end", func(t *testing.T) {
 		t.Parallel()
-		ext, rem, laid := applyLayoffs([]deck.Card{c(deck.Seven, deck.Hearts)}, melds)
+		rem, laid := applyLayoffs([]deck.Card{c(deck.Seven, deck.Hearts)}, melds)
 		assert.Empty(t, rem)
-		require.Len(t, ext[0], 4)
 		assert.Equal(t, []deck.Card{c(deck.Seven, deck.Hearts)}, laid)
 	})
 }
@@ -35,9 +33,8 @@ func TestApplyLayoffs_ExtendSet(t *testing.T) {
 	melds := [][]deck.Card{{
 		c(deck.King, deck.Spades), c(deck.King, deck.Hearts), c(deck.King, deck.Diamonds),
 	}}
-	ext, rem, laid := applyLayoffs([]deck.Card{c(deck.King, deck.Clubs)}, melds)
+	rem, laid := applyLayoffs([]deck.Card{c(deck.King, deck.Clubs)}, melds)
 	assert.Empty(t, rem)
-	assert.Len(t, ext[0], 4)
 	assert.Equal(t, []deck.Card{c(deck.King, deck.Clubs)}, laid)
 }
 
@@ -47,8 +44,7 @@ func TestApplyLayoffs_SetAtFourBlocks(t *testing.T) {
 		c(deck.Ten, deck.Spades), c(deck.Ten, deck.Hearts),
 		c(deck.Ten, deck.Diamonds), c(deck.Ten, deck.Clubs),
 	}}
-	ext, rem, laid := applyLayoffs([]deck.Card{c(deck.Nine, deck.Spades)}, melds)
-	assert.Equal(t, melds, ext)
+	rem, laid := applyLayoffs([]deck.Card{c(deck.Nine, deck.Spades)}, melds)
 	assert.Len(t, rem, 1)
 	assert.Empty(t, laid)
 }
@@ -60,9 +56,8 @@ func TestApplyLayoffs_MultiPass(t *testing.T) {
 		c(deck.Six, deck.Hearts), c(deck.Seven, deck.Hearts), c(deck.Eight, deck.Hearts),
 	}}
 	dead := []deck.Card{c(deck.Four, deck.Hearts), c(deck.Five, deck.Hearts)}
-	ext, rem, laid := applyLayoffs(dead, melds)
+	rem, laid := applyLayoffs(dead, melds)
 	assert.Empty(t, rem)
-	assert.Len(t, ext[0], 5)
 	assert.ElementsMatch(t, dead, laid, "both cards moved, and the loop knows which")
 }
 
@@ -72,8 +67,7 @@ func TestApplyLayoffs_NoneEligible(t *testing.T) {
 		c(deck.Two, deck.Clubs), c(deck.Three, deck.Clubs), c(deck.Four, deck.Clubs),
 	}}
 	dead := []deck.Card{c(deck.Ace, deck.Hearts), c(deck.King, deck.Spades)}
-	ext, rem, laid := applyLayoffs(dead, melds)
-	assert.Equal(t, melds, ext)
+	rem, laid := applyLayoffs(dead, melds)
 	assert.Equal(t, dead, rem)
 	assert.Empty(t, laid)
 }
@@ -89,10 +83,28 @@ func TestApplyLayoffs_RunsBeforeSets(t *testing.T) {
 	}
 	dead := []deck.Card{c(deck.Eight, deck.Spades), c(deck.Nine, deck.Spades)}
 
-	ext, rem, laid := applyLayoffs(dead, melds)
+	rem, laid := applyLayoffs(dead, melds)
 
 	assert.Empty(t, rem, "spending 8♠ on the set strands 9♠")
 	assert.ElementsMatch(t, dead, laid)
-	assert.Len(t, ext[0], 3, "the set is untouched")
-	assert.Len(t, ext[1], 5, "the run absorbed both cards")
+}
+
+// The knocker's melds are what the hand is scored on. Laying off grows a working copy,
+// and appending to a meld with spare capacity would otherwise reach the caller's slice.
+func TestApplyLayoffs_LeavesTheKnockerMeldsAlone(t *testing.T) {
+	t.Parallel()
+	// Capacity beyond the three cards is what makes an in-place append visible.
+	run := make([]deck.Card, 3, 5)
+	copy(run, []deck.Card{c(deck.Four, deck.Hearts), c(deck.Five, deck.Hearts), c(deck.Six, deck.Hearts)})
+	melds := [][]deck.Card{run}
+	want := [][]deck.Card{{
+		c(deck.Four, deck.Hearts), c(deck.Five, deck.Hearts), c(deck.Six, deck.Hearts),
+	}}
+
+	rem, laid := applyLayoffs([]deck.Card{c(deck.Seven, deck.Hearts), c(deck.Three, deck.Hearts)}, melds)
+
+	require.Empty(t, rem)
+	require.Len(t, laid, 2)
+	assert.Equal(t, want, melds, "the caller's melds are read-only to a layoff")
+	assert.Equal(t, deck.Card{}, run[:cap(run)][3], "nothing was written past the meld")
 }
