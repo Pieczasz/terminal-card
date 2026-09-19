@@ -15,6 +15,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -108,16 +109,15 @@ func TestSessionPlayer(t *testing.T) {
 
 	t.Run("a signed-in user", func(t *testing.T) {
 		t.Parallel()
-		g := router.GlobalContext{User: &db.User{
-			ID:       7,
+		g := router.GlobalContext{User: &db.User{ID: testutil.UID(7),
 			Username: "alice",
 			Rankings: []db.Ranking{{Elo: 1600, Game: db.Game{Name: "Poker"}}},
 		}}
 
 		p := views.SessionPlayer(g)
 		require.NotNil(t, p)
-		assert.Equal(t, "7", p.ID)
-		assert.Equal(t, uint(7), p.UserID)
+		assert.Equal(t, testutil.UID(7).String(), p.ID)
+		assert.Equal(t, testutil.UID(7), p.UserID)
 		assert.Equal(t, "alice", p.Name)
 		assert.Equal(t, map[string]uint32{"Poker": 1600}, p.Ratings)
 

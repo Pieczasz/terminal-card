@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -87,5 +88,5 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 
 func benchPlayer(table, seat int) *game.Player {
 	id := fmt.Sprintf("t%d-s%d", table, seat)
-	return &game.Player{ID: id, UserID: uint(table*100 + seat + 1), Name: id}
+	return &game.Player{ID: id, UserID: testutil.UID(byte(table*100 + seat + 1)), Name: id}
 }

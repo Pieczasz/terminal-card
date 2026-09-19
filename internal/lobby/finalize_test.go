@@ -12,6 +12,9 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -22,8 +25,8 @@ import (
 func newFinishedGameLobby(t *testing.T, repo db.MatchRepository) (*Manager, *Lobby, *game.Engine) {
 	t.Helper()
 	m := newTestManager(t, repo)
-	leader := mockPlayer("leader", 1)
-	guest := mockPlayer("guest", 2)
+	leader := mockPlayer("leader", testutil.UID(1))
+	guest := mockPlayer("guest", testutil.UID(2))
 
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("MockGame"), WithRanked(true))
 	require.NoError(t, err)
@@ -57,7 +60,7 @@ func TestConcurrent_FinalizeRacesRemoveLobby(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 4)
-	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}, mock.Anything).
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}, mock.Anything).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -87,7 +90,7 @@ func TestFinalize_IsNotAppliedTwice(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	calls := make(chan struct{}, 4)
-	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}, mock.Anything).
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}, mock.Anything).
 		Run(func(mock.Arguments) { calls <- struct{}{} }).
 		Return(nil)
 
@@ -184,7 +187,7 @@ func TestKick_IsRejectedWhileInGame(t *testing.T) {
 
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	require.NoError(t, l.ToggleReady(leader, registry))
@@ -210,8 +213,8 @@ func TestToggleReady_FailedStartStillBroadcasts(t *testing.T) {
 	t.Parallel()
 
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("Unregistered"))
 	require.NoError(t, err)
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
@@ -260,7 +263,7 @@ func TestFinalize_InterruptedRankedMatchIsRecordedWithoutElo(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 1)
-	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}).
+	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -285,7 +288,7 @@ func TestFinalize_RulesErrorIsRecordedWithoutElo(t *testing.T) {
 
 	repo := new(MockMatchRepo)
 	recorded := make(chan struct{}, 1)
-	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uint{1, 2}).
+	repo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}).
 		Run(func(mock.Arguments) { recorded <- struct{}{} }).
 		Return(nil)
 
@@ -308,7 +311,7 @@ func TestDisconnectPlayer_MidGameSeatSurvivesTheGraceWindow(t *testing.T) {
 
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -332,7 +335,7 @@ func TestDisconnectPlayer_GraceExpiryForfeitsTheSeat(t *testing.T) {
 
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -352,7 +355,7 @@ func TestResumePlayer_AfterExpireClaimReturnsNil(t *testing.T) {
 
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -376,7 +379,7 @@ func TestResumePlayer_TakeoverWithoutPendingLeave(t *testing.T) {
 
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -388,7 +391,7 @@ func TestDisconnectPlayer_WaitingLobbyLeavesImmediately(t *testing.T) {
 	t.Parallel()
 
 	m, l, _ := newTestLobby(t, 2)
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.Equal(t, Waiting, l.state)
 
@@ -404,7 +407,7 @@ func startedGame(t *testing.T) (*Manager, *Lobby, *game.Player, *game.Player) {
 	t.Helper()
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 	require.NoError(t, l.ToggleReady(leader, registry))
 	require.NoError(t, l.ToggleReady(guest, registry))
@@ -455,6 +458,47 @@ func TestDisconnectPlayer_HeldSeatIsGivenUpWhenTheGameEnds(t *testing.T) {
 	assert.False(t, pendingGrace(m, guest.ID), "the grace timer outlived the game")
 }
 
+// ToggleReady is the other reopen path: the watcher persists before it reopens, so
+// the TUI can already be back in the lobby and ready-ing while InGame still holds a
+// grace. Reopening has to give that seat up the same way the watcher does.
+func TestToggleReady_ReleasesHeldSeatsWhenReopening(t *testing.T) {
+	t.Parallel()
+	m, l, leader, guest := startedGame(t)
+
+	m.DisconnectPlayer(guest)
+	require.True(t, l.HasPlayer(guest), "a mid-game seat is held, not dropped")
+	require.True(t, pendingGrace(m, guest.ID))
+
+	engine := l.ActiveGame()
+	require.NotNil(t, engine)
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+
+	_ = l.ToggleReady(leader, game.NewRegistry())
+
+	assert.False(t, pendingGrace(m, guest.ID), "reopening via ready left the grace armed")
+	assert.False(t, l.HasPlayer(guest), "the ghost seat stayed on the roster")
+}
+
+// The feed ending is how a dropped EventGameEnded still finalizes. It also has to
+// reopen, or a disconnected seat stays held until DisconnectGrace.
+func TestFeedEnd_ReleasesHeldSeatsWhenFinished(t *testing.T) {
+	t.Parallel()
+	m, l, _, guest := startedGame(t)
+
+	m.DisconnectPlayer(guest)
+	require.True(t, pendingGrace(m, guest.ID))
+
+	engine := l.ActiveGame()
+	require.NotNil(t, engine)
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+	engine.Close()
+
+	require.Eventually(t, func() bool { return !pendingGrace(m, guest.ID) },
+		2*time.Second, 10*time.Millisecond,
+		"closing the finished feed left the grace armed")
+	assert.False(t, l.HasPlayer(guest))
+}
+
 // A timer armed for a reconnect fires long after the drain is over: nothing would
 // then remove the lobby or close its engine, and the player is not coming back to a
 // process that is exiting.
@@ -477,7 +521,7 @@ func TestBeginShutdown_GivesUpSeatsHeldForAReconnect(t *testing.T) {
 func TestResumePlayer_DropsAStaleIndexEntry(t *testing.T) {
 	t.Parallel()
 	m, l, _ := newTestLobby(t, 3)
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	l.mu.Lock()

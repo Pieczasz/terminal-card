@@ -13,11 +13,13 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func openPublicTable(t *testing.T, m *lobby.Manager, id string, dbID uint, gameName string, opts ...lobby.Option) *lobby.Lobby {
+func openPublicTable(t *testing.T, m *lobby.Manager, id string, dbID uuid.UUID, gameName string, opts ...lobby.Option) *lobby.Lobby {
 	t.Helper()
 	leader := &game.Player{ID: id, UserID: dbID, Name: id}
 	opts = append([]lobby.Option{lobby.WithPrivate(false), lobby.WithCardGame(gameName)}, opts...)
@@ -55,7 +57,7 @@ func TestJoin_RefreshPicksUpNewTables(t *testing.T) {
 	view := newJoinModel(t, m)
 	require.Empty(t, view.entries, "nothing is open yet")
 
-	openPublicTable(t, m, "host", 1, testGameName)
+	openPublicTable(t, m, "host", testutil.UID(1), testGameName)
 
 	updated, cmd := view.Update(refreshMsg{})
 
@@ -69,8 +71,8 @@ func TestJoin_RefreshPicksUpNewTables(t *testing.T) {
 func TestJoin_RefreshDropsTablesThatStarted(t *testing.T) {
 	t.Parallel()
 	m := lobby.NewManager(context.Background(), nil)
-	l := openPublicTable(t, m, "host", 1, testGameName, lobby.WithMaxPlayers(2))
-	guest := &game.Player{ID: "guest", UserID: 2, Name: "guest"}
+	l := openPublicTable(t, m, "host", testutil.UID(1), testGameName, lobby.WithMaxPlayers(2))
+	guest := &game.Player{ID: "guest", UserID: testutil.UID(2), Name: "guest"}
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	view := newJoinModel(t, m)
@@ -101,7 +103,7 @@ func TestJoin_CursorSurvivesAShrinkingList(t *testing.T) {
 	m := lobby.NewManager(context.Background(), nil)
 	tables := make([]*lobby.Lobby, 0, 3)
 	for i, name := range []string{"a", "b", "c"} {
-		tables = append(tables, openPublicTable(t, m, name, uint(i+1), testGameName))
+		tables = append(tables, openPublicTable(t, m, name, testutil.UID(byte(i+1)), testGameName))
 	}
 
 	view := newJoinModel(t, m)
@@ -128,8 +130,8 @@ func TestJoin_FiltersCycle(t *testing.T) {
 	newBrowser := func(t *testing.T) *joinModel {
 		t.Helper()
 		m := lobby.NewManager(context.Background(), nil)
-		openPublicTable(t, m, "poker", 1, "Poker")
-		openPublicTable(t, m, "eights", 2, testGameName, lobby.WithRanked(true))
+		openPublicTable(t, m, "poker", testutil.UID(1), "Poker")
+		openPublicTable(t, m, "eights", testutil.UID(2), testGameName, lobby.WithRanked(true))
 		view := newJoinModel(t, m)
 		require.Len(t, view.entries, 2)
 		return view
@@ -189,8 +191,8 @@ func TestJoin_FiltersCycle(t *testing.T) {
 func TestJoin_FilterAppliesImmediatelyAndResetsTheCursor(t *testing.T) {
 	t.Parallel()
 	m := lobby.NewManager(context.Background(), nil)
-	openPublicTable(t, m, "poker", 1, "Poker")
-	openPublicTable(t, m, "eights", 2, testGameName)
+	openPublicTable(t, m, "poker", testutil.UID(1), "Poker")
+	openPublicTable(t, m, "eights", testutil.UID(2), testGameName)
 
 	view := newJoinModel(t, m)
 	pressJoin(t, view, "j")
@@ -220,7 +222,7 @@ func TestJoin_GameFilterWithNoTablesFallsBackToAny(t *testing.T) {
 func TestJoin_ViewShowsTheColumns(t *testing.T) {
 	t.Parallel()
 	m := lobby.NewManager(context.Background(), nil)
-	ranked := openPublicTable(t, m, "poker", 1, "Poker", lobby.WithRanked(true), lobby.WithMaxPlayers(4))
+	ranked := openPublicTable(t, m, "poker", testutil.UID(1), "Poker", lobby.WithRanked(true), lobby.WithMaxPlayers(4))
 
 	view := newJoinModel(t, m)
 	rendered := stripANSI(view.View().Content)
@@ -374,7 +376,7 @@ func TestJoin_JoinByCode(t *testing.T) {
 		t.Parallel()
 		m := lobby.NewManager(context.Background(), nil)
 		view := newJoinModel(t, m)
-		openPublicTable(t, m, "host", 1, testGameName)
+		openPublicTable(t, m, "host", testutil.UID(1), testGameName)
 
 		_, cmd := view.joinByCode("NOSUCH12")
 
@@ -387,7 +389,7 @@ func TestJoin_JoinByCode(t *testing.T) {
 	t.Run("a good code seats the player and opens the lobby", func(t *testing.T) {
 		t.Parallel()
 		m := lobby.NewManager(context.Background(), nil)
-		table := openPublicTable(t, m, "host", 1, testGameName)
+		table := openPublicTable(t, m, "host", testutil.UID(1), testGameName)
 		view := newJoinModel(t, m)
 
 		_, cmd := view.joinByCode(table.Code())
@@ -410,7 +412,7 @@ func TestJoin_SelectingARowJoinsIt(t *testing.T) {
 		t.Run("with "+key, func(t *testing.T) {
 			t.Parallel()
 			m := lobby.NewManager(context.Background(), nil)
-			openPublicTable(t, m, "host", 1, testGameName)
+			openPublicTable(t, m, "host", testutil.UID(1), testGameName)
 			view := newJoinModel(t, m)
 			require.Len(t, view.entries, 1)
 
@@ -456,7 +458,7 @@ func TestJoin_CodeEntryFlow(t *testing.T) {
 	t.Run("enter submits what was typed", func(t *testing.T) {
 		t.Parallel()
 		m := lobby.NewManager(context.Background(), nil)
-		table := openPublicTable(t, m, "host", 1, testGameName)
+		table := openPublicTable(t, m, "host", testutil.UID(1), testGameName)
 		view := newJoinModel(t, m)
 
 		pressJoin(t, view, "c")

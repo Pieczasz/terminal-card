@@ -128,7 +128,7 @@ func run() (err error) {
 
 	defer waitForFinalizers(lobbyManager)
 
-	server, tracker, err := newSSHServer(cfg, userRepo, matchRepo, lobbyManager)
+	server, tracker, err := newSSHServer(cfg, userRepo, lobbyManager)
 	if err != nil {
 		return err
 	}
@@ -218,7 +218,6 @@ func waitForFinalizers(lobbyManager *lobby.Manager) {
 func newSSHServer(
 	cfg *config.Config,
 	userRepo db.UserRepository,
-	matchRepo db.MatchRepository,
 	lobbyManager *lobby.Manager,
 ) (*charmssh.Server, *ssh.SessionTracker, error) {
 	// MaxConnections is the player-visible session cap: the tracker refuses the
@@ -226,12 +225,11 @@ func newSSHServer(
 	// handshake floods at twice that, so a full server says so instead of hanging.
 	tracker := ssh.NewSessionTracker(cfg.MaxConnections)
 	server, err := ssh.SetupServer(ssh.ServerDependencies{
-		Config:          cfg,
-		UserRepository:  userRepo,
-		MatchRepository: matchRepo,
-		LobbyManager:    lobbyManager,
-		GameRegistry:    buildRegistry(),
-		Tracker:         tracker,
+		Config:         cfg,
+		UserRepository: userRepo,
+		LobbyManager:   lobbyManager,
+		GameRegistry:   buildRegistry(),
+		Tracker:        tracker,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("setup ssh server: %w", err)

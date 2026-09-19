@@ -8,7 +8,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
-	"gorm.io/gorm"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 )
 
 // BenchmarkLeaderboardView_Render is the cost of one frame. The board renders on
@@ -17,9 +17,9 @@ func BenchmarkLeaderboardView_Render(b *testing.B) {
 	rankings := make([]db.Ranking, 0, 25)
 	for i := range 25 {
 		rankings = append(rankings, db.Ranking{
-			UserID: uint(i + 1),
+			UserID: testutil.UID(byte(i + 1)),
 			Elo:    uint32(2400 - i*30),
-			User:   db.User{Model: gorm.Model{ID: uint(i + 1)}, Username: fmt.Sprintf("player%d", i+1)},
+			User:   db.User{ID: testutil.UID(byte(i + 1)), Username: fmt.Sprintf("player%d", i+1)},
 			Game:   db.Game{Name: "Poker"},
 		})
 	}
@@ -28,7 +28,7 @@ func BenchmarkLeaderboardView_Render(b *testing.B) {
 	m := model{
 		global:   router.GlobalContext{Width: 120, Height: 40, Theme: styles.NewTheme(true)},
 		rankings: rankings,
-		filters:  []string{filterAll, "Poker"},
+		filters:  []boardFilter{{label: filterAll}, {label: "Poker", slug: "poker"}},
 	}
 
 	b.ReportAllocs()

@@ -13,6 +13,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -41,7 +42,7 @@ func TestMatchRepositoryRecordCasualMatch(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Crazy Eights"), []uint{u1.ID, u2.ID}))
+	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Crazy Eights"), []uuid.UUID{u1.ID, u2.ID}))
 
 	var match db.Match
 	require.NoError(t, gormDB.Preload("Participants").First(&match).Error)
@@ -70,8 +71,8 @@ func TestMatchRepositoryReusesTheGameRow(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uint{u.ID}))
-	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uint{u.ID}))
+	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uuid.UUID{u.ID}))
+	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uuid.UUID{u.ID}))
 
 	var games []db.Game
 	require.NoError(t, gormDB.Where("name = ?", "Poker").Find(&games).Error)
@@ -94,7 +95,7 @@ func TestMatchRepositoryFinalizeRankedMatch(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Crazy Eights"), []uint{u1.ID, u2.ID}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Crazy Eights"), []uuid.UUID{u1.ID, u2.ID}, nil))
 
 	var game db.Game
 	require.NoError(t, gormDB.Where("name = ?", "Crazy Eights").First(&game).Error)
@@ -115,7 +116,7 @@ func TestMatchRepositoryRejectsUnknownUsers(t *testing.T) {
 	ctx := context.Background()
 
 	require.NoError(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), nil), "no players is a no-op")
-	require.Error(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uint{9999, 9998}),
+	require.Error(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uuid.UUID{uuid.New(), uuid.New()}),
 		"the participants foreign key must reject users that do not exist")
 }
 
@@ -131,9 +132,9 @@ func TestMatchRepositoryRejectsDuplicateUserIDs(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	require.ErrorContains(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u.ID, u.ID}, nil),
+	require.ErrorContains(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u.ID, u.ID}, nil),
 		"duplicate user id")
-	require.ErrorContains(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uint{u.ID, u.ID}),
+	require.ErrorContains(t, repo.RecordCasualMatch(ctx, gameRef("Poker"), []uuid.UUID{u.ID, u.ID}),
 		"duplicate user id")
 
 	var matches int64
@@ -161,7 +162,7 @@ func TestMatchRepositoryConcurrentFinalizeFirstEverMatch(t *testing.T) {
 	for range workers {
 		go func() {
 			<-start
-			errs <- repo.FinalizeRankedMatch(context.Background(), gameRef("Poker"), []uint{u1.ID, u2.ID}, nil)
+			errs <- repo.FinalizeRankedMatch(context.Background(), gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil)
 		}()
 	}
 	close(start)
@@ -200,9 +201,9 @@ func TestMatchRepositoryConcurrentFinalizeMatchesSequential(t *testing.T) {
 		ctx := context.Background()
 
 		// Seed the rankings so this exercises the locking path, not the seeding one.
-		require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil))
+		require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil))
 
-		run := func() error { return repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil) }
+		run := func() error { return repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil) }
 		if concurrent {
 			errs := make(chan error, rounds)
 			start := make(chan struct{})
@@ -223,7 +224,7 @@ func TestMatchRepositoryConcurrentFinalizeMatchesSequential(t *testing.T) {
 		}
 
 		var got []db.Ranking
-		require.NoError(t, gormDB.Where("user_id IN ?", []uint{u1.ID, u2.ID}).
+		require.NoError(t, gormDB.Where("user_id IN ?", []uuid.UUID{u1.ID, u2.ID}).
 			Order("user_id").Find(&got).Error)
 		require.Len(t, got, 2)
 		return got[0].Elo, got[1].Elo
@@ -252,7 +253,7 @@ func TestRankedMatchReadsBackAsRankedInHistory(t *testing.T) {
 	users := repository.NewUserRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, matches.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil))
+	require.NoError(t, matches.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil))
 
 	var stored db.Match
 	require.NoError(t, gormDB.First(&stored).Error)
@@ -279,13 +280,13 @@ type seat struct {
 // antiFarmTable creates the game and one user per seat, pre-seeding the ranking rows
 // so a track record does not cost five real matches to build. Every anti-farm case
 // uses one game: the rules are cross-game, so which one it is proves nothing.
-func antiFarmTable(t *testing.T, gormDB *gorm.DB, seats ...seat) (uint, []uint) {
+func antiFarmTable(t *testing.T, gormDB *gorm.DB, seats ...seat) (uint, []uuid.UUID) {
 	t.Helper()
 
 	game := db.Game{Slug: antiFarmSlug, Name: antiFarmGame}
 	require.NoError(t, gormDB.Create(&game).Error)
 
-	userIDs := make([]uint, 0, len(seats))
+	userIDs := make([]uuid.UUID, 0, len(seats))
 	for i, s := range seats {
 		u := db.User{Username: fmt.Sprintf("seat%d", i)}
 		require.NoError(t, gormDB.Create(&u).Error)
@@ -297,7 +298,7 @@ func antiFarmTable(t *testing.T, gormDB *gorm.DB, seats ...seat) (uint, []uint) 
 	return game.ID, userIDs
 }
 
-func rankingOf(t *testing.T, gormDB *gorm.DB, userID, gameID uint) db.Ranking {
+func rankingOf(t *testing.T, gormDB *gorm.DB, userID uuid.UUID, gameID uint) db.Ranking {
 	t.Helper()
 	var r db.Ranking
 	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userID, gameID).First(&r).Error)
@@ -306,12 +307,12 @@ func rankingOf(t *testing.T, gormDB *gorm.DB, userID, gameID uint) db.Ranking {
 
 // lastMatchDeltas is the elo_delta history of the most recent match, which is where a
 // damped or unpaid result has to show up as a zero rather than as nothing at all.
-func lastMatchDeltas(t *testing.T, gormDB *gorm.DB) map[uint]int {
+func lastMatchDeltas(t *testing.T, gormDB *gorm.DB) map[uuid.UUID]int {
 	t.Helper()
 	var match db.Match
 	require.NoError(t, gormDB.Preload("Participants").Order("id DESC").First(&match).Error)
 
-	deltas := make(map[uint]int, len(match.Participants))
+	deltas := make(map[uuid.UUID]int, len(match.Participants))
 	for _, p := range match.Participants {
 		deltas[p.UserID] = p.EloDelta
 	}
@@ -410,6 +411,47 @@ func TestFinalizeRankedMatchDampsRepeatedPairing(t *testing.T) {
 	assert.Equal(t, int64(4), matches)
 }
 
+// Switching game is not a new pairing: A and B meeting at Poker then Hearts is still
+// the same two accounts trading rating. The fourth match of the day pays nobody.
+func TestFinalizeRankedMatchDampsAPairAcrossGames(t *testing.T) {
+	t.Parallel()
+	gormDB := testutil.SetupTestDB(t)
+	ctx := context.Background()
+	repo := repository.NewMatchRepository(gormDB)
+
+	u1 := &db.User{Username: "cross1"}
+	u2 := &db.User{Username: "cross2"}
+	require.NoError(t, gormDB.Create(u1).Error)
+	require.NoError(t, gormDB.Create(u2).Error)
+	ids := []uuid.UUID{u1.ID, u2.ID}
+
+	for _, g := range []db.Game{
+		{Slug: "poker", Name: "Poker"},
+		{Slug: "hearts", Name: "Hearts"},
+	} {
+		require.NoError(t, gormDB.Create(&g).Error)
+		for _, id := range ids {
+			require.NoError(t, gormDB.Create(&db.Ranking{
+				UserID: id, GameID: g.ID, Elo: 1500, MatchesPlayed: 10,
+			}).Error)
+		}
+	}
+
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), ids, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), ids, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Hearts"), ids, nil))
+
+	before := rankingOfSlug(t, gormDB, u1.ID, "hearts")
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Hearts"), ids, nil))
+
+	deltas := lastMatchDeltas(t, gormDB)
+	after := rankingOfSlug(t, gormDB, u1.ID, "hearts")
+	assert.Equal(t, before.Elo, after.Elo, "the fourth pairing of the day across games still pays")
+	assert.Zero(t, deltas[u1.ID])
+	assert.Zero(t, deltas[u2.ID])
+	assert.Equal(t, before.MatchesPlayed+1, after.MatchesPlayed)
+}
+
 // matches_played is what a provisional account graduates on, so a finalize that
 // forgot to increment it would leave every account provisional forever.
 func TestFinalizeRankedMatchCountsMatchesPlayed(t *testing.T) {
@@ -424,8 +466,8 @@ func TestFinalizeRankedMatchCountsMatchesPlayed(t *testing.T) {
 	repo := repository.NewMatchRepository(gormDB)
 	ctx := context.Background()
 
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil))
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil))
 
 	var game db.Game
 	require.NoError(t, gormDB.Where("name = ?", "Poker").First(&game).Error)
@@ -474,7 +516,7 @@ func TestMatchRepositoryRevivesASoftDeletedGame(t *testing.T) {
 	require.NoError(t, gormDB.Create(&buried).Error)
 	require.NoError(t, gormDB.Delete(&buried).Error)
 
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{u1.ID, u2.ID}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{u1.ID, u2.ID}, nil))
 
 	var game db.Game
 	require.NoError(t, gormDB.Where("slug = ?", "poker").First(&game).Error)
@@ -500,12 +542,12 @@ func TestMatchRepositoryRenamingAGameKeepsItsRatings(t *testing.T) {
 	require.NoError(t, gormDB.Create(u2).Error)
 
 	require.NoError(t, repo.FinalizeRankedMatch(ctx, db.GameRef{Slug: "poker", Name: "Poker"},
-		[]uint{u1.ID, u2.ID}, nil))
+		[]uuid.UUID{u1.ID, u2.ID}, nil))
 	before := rankingOfSlug(t, gormDB, u1.ID, "poker")
 
 	// Same slug, new display name - what renaming the catalog entry looks like here.
 	require.NoError(t, repo.FinalizeRankedMatch(ctx, db.GameRef{Slug: "poker", Name: "Texas Holdem"},
-		[]uint{u1.ID, u2.ID}, nil))
+		[]uuid.UUID{u1.ID, u2.ID}, nil))
 
 	var games []db.Game
 	require.NoError(t, gormDB.Find(&games).Error)
@@ -517,7 +559,7 @@ func TestMatchRepositoryRenamingAGameKeepsItsRatings(t *testing.T) {
 	assert.Equal(t, uint64(2), after.MatchesPlayed, "the track record was orphaned by the rename")
 }
 
-func rankingOfSlug(t *testing.T, gormDB *gorm.DB, userID uint, slug string) db.Ranking {
+func rankingOfSlug(t *testing.T, gormDB *gorm.DB, userID uuid.UUID, slug string) db.Ranking {
 	t.Helper()
 	var game db.Game
 	require.NoError(t, gormDB.Where("slug = ?", slug).First(&game).Error)
@@ -544,11 +586,11 @@ func TestFinalizeRankedMatchDampsAPairPaddedWithAlts(t *testing.T) {
 
 	// Three different participant sets, each containing the same pair.
 	for _, extra := range padding[:3] {
-		require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{a, b, extra}, nil))
+		require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{a, b, extra}, nil))
 	}
 
 	before := rankingOf(t, gormDB, a, gameID)
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{a, b, padding[3]}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{a, b, padding[3]}, nil))
 	after := rankingOf(t, gormDB, a, gameID)
 
 	assert.Equal(t, before.Elo, after.Elo, "a padded repeat of the same pair still paid out")
@@ -572,17 +614,17 @@ func TestFinalizeRankedMatchConcurrentOverlappingTablesRespectTheCap(t *testing.
 	gameID, ids := antiFarmTable(t, gormDB, seats...)
 	a, b, c, d := ids[0], ids[1], ids[2], ids[3]
 
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{a, b, c}, nil))
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{a, b, d}, nil))
-	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uint{a, b, c}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{a, b, c}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{a, b, d}, nil))
+	require.NoError(t, repo.FinalizeRankedMatch(ctx, gameRef("Poker"), []uuid.UUID{a, b, c}, nil))
 
 	before := rankingOf(t, gormDB, a, gameID)
 
 	// Both tables hold the same pair and are already at the cap.
 	errs := make(chan error, 2)
-	for _, third := range []uint{c, d} {
-		go func(third uint) {
-			errs <- repo.FinalizeRankedMatch(context.Background(), gameRef("Poker"), []uint{a, b, third}, nil)
+	for _, third := range []uuid.UUID{c, d} {
+		go func(third uuid.UUID) {
+			errs <- repo.FinalizeRankedMatch(context.Background(), gameRef("Poker"), []uuid.UUID{a, b, third}, nil)
 		}(third)
 	}
 	for range 2 {

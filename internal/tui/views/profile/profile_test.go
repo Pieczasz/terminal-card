@@ -16,6 +16,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -32,8 +34,7 @@ func loaded(t *testing.T, msg profileLoadedMsg) model {
 }
 
 func alice() *db.User {
-	return &db.User{
-		ID:       1,
+	return &db.User{ID: testutil.UID(1),
 		Username: "alice",
 		Rankings: []db.Ranking{{Elo: 1600, Game: db.Game{Name: "Poker"}}},
 	}
@@ -159,7 +160,7 @@ func TestView_FitsTheTerminal(t *testing.T) {
 				Theme: styles.NewTheme(true), Width: size.w, Height: size.h,
 				// The delete confirmation names the account it would anonymise, so the
 				// widest id is what the line has to fit.
-				User: &db.User{ID: 99_999_999, Username: "alice"},
+				User: &db.User{ID: testutil.UID(99), Username: "alice"},
 			}
 			updated, _ := New(global).Update(profileLoadedMsg{user: user, history: history})
 			m, ok := updated.(model)
@@ -196,20 +197,20 @@ func TestView_FitsTheTerminal(t *testing.T) {
 // rather than a quietly passing test.
 type fakeUsers struct {
 	db.UserRepository
-	profile       func(ctx context.Context, userID uint) (*db.User, error)
-	history       func(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error)
-	deleteAccount func(ctx context.Context, userID uint) error
+	profile       func(ctx context.Context, userID uuid.UUID) (*db.User, error)
+	history       func(ctx context.Context, userID uuid.UUID, limit int) ([]db.MatchParticipant, error)
+	deleteAccount func(ctx context.Context, userID uuid.UUID) error
 }
 
-func (f fakeUsers) DeleteAccount(ctx context.Context, userID uint) error {
+func (f fakeUsers) DeleteAccount(ctx context.Context, userID uuid.UUID) error {
 	return f.deleteAccount(ctx, userID)
 }
 
-func (f fakeUsers) UserProfile(ctx context.Context, userID uint) (*db.User, error) {
+func (f fakeUsers) UserProfile(ctx context.Context, userID uuid.UUID) (*db.User, error) {
 	return f.profile(ctx, userID)
 }
 
-func (f fakeUsers) UserMatchHistory(ctx context.Context, userID uint, limit int) ([]db.MatchParticipant, error) {
+func (f fakeUsers) UserMatchHistory(ctx context.Context, userID uuid.UUID, limit int) ([]db.MatchParticipant, error) {
 	return f.history(ctx, userID, limit)
 }
 
@@ -220,18 +221,18 @@ func TestLoadProfile(t *testing.T) {
 		t.Parallel()
 		var gotLimit int
 		repo := fakeUsers{
-			profile: func(_ context.Context, id uint) (*db.User, error) {
-				assert.Equal(t, uint(1), id)
+			profile: func(_ context.Context, id uuid.UUID) (*db.User, error) {
+				assert.Equal(t, testutil.UID(1), id)
 				return alice(), nil
 			},
-			history: func(_ context.Context, id uint, limit int) ([]db.MatchParticipant, error) {
-				assert.Equal(t, uint(1), id)
+			history: func(_ context.Context, id uuid.UUID, limit int) ([]db.MatchParticipant, error) {
+				assert.Equal(t, testutil.UID(1), id)
 				gotLimit = limit
 				return []db.MatchParticipant{{Placement: 1}}, nil
 			},
 		}
 
-		msg, ok := loadProfile(t.Context(), repo, 1)().(profileLoadedMsg)
+		msg, ok := loadProfile(t.Context(), repo, testutil.UID(1))().(profileLoadedMsg)
 		require.True(t, ok)
 
 		assert.Equal(t, historyFetchLimit, gotLimit)
@@ -246,14 +247,14 @@ func TestLoadProfile(t *testing.T) {
 	t.Run("a failed profile short-circuits the history query", func(t *testing.T) {
 		t.Parallel()
 		repo := fakeUsers{
-			profile: func(context.Context, uint) (*db.User, error) { return nil, errQuery },
-			history: func(context.Context, uint, int) ([]db.MatchParticipant, error) {
+			profile: func(context.Context, uuid.UUID) (*db.User, error) { return nil, errQuery },
+			history: func(context.Context, uuid.UUID, int) ([]db.MatchParticipant, error) {
 				t.Error("history must not be queried once the profile failed")
 				return nil, nil
 			},
 		}
 
-		msg, ok := loadProfile(t.Context(), repo, 1)().(profileLoadedMsg)
+		msg, ok := loadProfile(t.Context(), repo, testutil.UID(1))().(profileLoadedMsg)
 		require.True(t, ok)
 
 		require.ErrorIs(t, msg.err, errQuery)
@@ -264,13 +265,13 @@ func TestLoadProfile(t *testing.T) {
 	t.Run("a failed history keeps the profile", func(t *testing.T) {
 		t.Parallel()
 		repo := fakeUsers{
-			profile: func(context.Context, uint) (*db.User, error) { return alice(), nil },
-			history: func(context.Context, uint, int) ([]db.MatchParticipant, error) {
+			profile: func(context.Context, uuid.UUID) (*db.User, error) { return alice(), nil },
+			history: func(context.Context, uuid.UUID, int) ([]db.MatchParticipant, error) {
 				return nil, errQuery
 			},
 		}
 
-		msg, ok := loadProfile(t.Context(), repo, 1)().(profileLoadedMsg)
+		msg, ok := loadProfile(t.Context(), repo, testutil.UID(1))().(profileLoadedMsg)
 		require.True(t, ok)
 
 		require.NoError(t, msg.err)
@@ -291,13 +292,13 @@ func TestInit(t *testing.T) {
 
 	t.Run("a signed-in user loads their own profile", func(t *testing.T) {
 		t.Parallel()
-		var gotID uint
+		var gotID uuid.UUID
 		repo := fakeUsers{
-			profile: func(_ context.Context, id uint) (*db.User, error) {
+			profile: func(_ context.Context, id uuid.UUID) (*db.User, error) {
 				gotID = id
 				return alice(), nil
 			},
-			history: func(context.Context, uint, int) ([]db.MatchParticipant, error) { return nil, nil },
+			history: func(context.Context, uuid.UUID, int) ([]db.MatchParticipant, error) { return nil, nil },
 		}
 		user := alice()
 
@@ -525,9 +526,9 @@ func typeWord(t *testing.T, m model, word string) model {
 func deletingModel(t *testing.T, err error) (model, *int) {
 	t.Helper()
 	calls := 0
-	repo := fakeUsers{deleteAccount: func(_ context.Context, id uint) error {
+	repo := fakeUsers{deleteAccount: func(_ context.Context, id uuid.UUID) error {
 		calls++
-		assert.Equal(t, uint(1), id, "a session may only erase its own account")
+		assert.Equal(t, testutil.UID(1), id, "a session may only erase its own account")
 		return err
 	}}
 	global := router.GlobalContext{
@@ -559,7 +560,7 @@ func TestUpdate_DeleteAccountFlow(t *testing.T) {
 		out := stripANSI(m.renderContent(20))
 		assert.Contains(t, out, "SSH keys removed")
 		assert.Contains(t, out, "ratings removed")
-		assert.Contains(t, out, db.AnonymisedUsername(1), "the name past matches will show")
+		assert.Contains(t, out, db.AnonymisedUsername(alice().ID), "the name past matches will show")
 		assert.Contains(t, out, "cannot be undone")
 		assert.Contains(t, out, deleteConfirmWord)
 		assert.Zero(t, *calls)
@@ -716,7 +717,7 @@ func TestRenderConfirm_KeepsThePromptAtTheMinimumSize(t *testing.T) {
 
 	global := router.GlobalContext{
 		Theme: styles.NewTheme(true), Width: styles.MinWidth, Height: styles.MinHeight,
-		User: &db.User{ID: 99_999_999},
+		User: &db.User{ID: testutil.UID(99)},
 	}
 	m, ok := New(global).(model)
 	require.True(t, ok)
@@ -727,5 +728,5 @@ func TestRenderConfirm_KeepsThePromptAtTheMinimumSize(t *testing.T) {
 	assert.Contains(t, out, deleteConfirmWord, "the word to type must be on screen")
 	assert.Contains(t, out, "esc to cancel", "so must the way out")
 	assert.Contains(t, out, "> ", "and the line being typed into")
-	assert.Contains(t, out, db.AnonymisedUsername(99_999_999), "and the name that replaces theirs")
+	assert.Contains(t, out, db.AnonymisedUsername(testutil.UID(99)), "and the name that replaces theirs")
 }

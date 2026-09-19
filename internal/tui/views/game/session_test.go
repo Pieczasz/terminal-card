@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -135,14 +136,14 @@ func TestSession_UnsubscribeIsIdempotent(t *testing.T) {
 func startedSession(t *testing.T) (*game.Engine, Session) {
 	t.Helper()
 	players := []*game.Player{
-		{ID: "1", UserID: 1, Name: "alice"},
-		{ID: "2", UserID: 2, Name: "bob"},
+		{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"},
+		{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"},
 	}
 	engine := game.NewEngine(&crazyeight.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: &db.User{ID: 1, Username: "alice"}}
+	global := router.GlobalContext{User: &db.User{ID: testutil.UID(1), Username: "alice"}}
 	s, err := NewSession(global, engine, "crazy eights")
 	require.NoError(t, err)
 	return engine, s
@@ -153,7 +154,7 @@ func TestNewSession_BindsAndSubscribes(t *testing.T) {
 	engine, s := startedSession(t)
 
 	require.NotNil(t, s.Bound)
-	assert.Equal(t, "1", s.Bound.PlayerID())
+	assert.Equal(t, testutil.SeatID(1), s.Bound.PlayerID())
 	assert.NotNil(t, s.Events)
 	assert.Equal(t, 1, engine.Broadcaster().Len())
 }
@@ -178,8 +179,8 @@ func TestSession_SyncBase(t *testing.T) {
 
 	// Seats carry every player in seat order, hero included; Opponents does not.
 	require.Len(t, s.Base.Seats, 2)
-	assert.Equal(t, []string{"1", "2"}, s.Base.SeatOrder())
-	assert.Equal(t, map[string]string{"1": "alice", "2": "bob"}, s.Base.SeatNames())
+	assert.Equal(t, []string{testutil.SeatID(1), testutil.SeatID(2)}, s.Base.SeatOrder())
+	assert.Equal(t, map[string]string{testutil.SeatID(1): "alice", testutil.SeatID(2): "bob"}, s.Base.SeatNames())
 	assert.Positive(t, s.Base.DeckSize)
 }
 

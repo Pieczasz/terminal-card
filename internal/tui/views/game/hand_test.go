@@ -14,6 +14,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -237,16 +238,16 @@ func TestSeatNames_CannotCarryATerminalEscape(t *testing.T) {
 func TestSession_SubmitCountsARejection(t *testing.T) {
 	t.Parallel()
 
-	players := []*game.Player{{ID: "1", UserID: 1, Name: "alice"}, {ID: "2", UserID: 2, Name: "bob"}}
+	players := []*game.Player{{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"}, {ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"}}
 	engine := game.NewEngine(&crazyeight.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
 	// The seat that is not on turn: submitting from it is the rejection path, and the
 	// assertion is that it comes back as an error rather than reaching the rules.
-	offTurn := "1"
+	offTurn := testutil.SeatID(1)
 	if engine.CurrentPlayerID() == offTurn {
-		offTurn = "2"
+		offTurn = testutil.SeatID(2)
 	}
 	s := Session{Bound: game.Bind(engine, offTurn), gameName: "crazy eights"}
 	require.Error(t, s.Submit(crazyeight.ActionDrawCard{}))

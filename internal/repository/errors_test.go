@@ -10,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -73,13 +74,18 @@ func TestRepositoriesReportDatabaseFailures(t *testing.T) {
 			want: "update last seen",
 		},
 		{
+			name: "erasing an account",
+			call: func() error { return users.DeleteAccount(ctx, user.ID) },
+			want: "delete account transaction",
+		},
+		{
 			name: "recording a casual match",
-			call: func() error { return matches.RecordCasualMatch(ctx, ref, []uint{user.ID}) },
+			call: func() error { return matches.RecordCasualMatch(ctx, ref, []uuid.UUID{user.ID}) },
 			want: "record casual match",
 		},
 		{
 			name: "finalizing a ranked match",
-			call: func() error { return matches.FinalizeRankedMatch(ctx, ref, []uint{user.ID}, nil) },
+			call: func() error { return matches.FinalizeRankedMatch(ctx, ref, []uuid.UUID{user.ID}, nil) },
 			want: "finalize ranked match",
 		},
 	}

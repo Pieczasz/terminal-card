@@ -4,6 +4,9 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
+
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,13 +20,13 @@ func TestCheckDistinctPlayers(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		ids     []uint
+		ids     []uuid.UUID
 		wantErr string
 	}{
 		{name: "empty", ids: nil},
-		{name: "distinct", ids: []uint{3, 1, 2}},
-		{name: "adjacent duplicate", ids: []uint{1, 1}, wantErr: "duplicate user id 1"},
-		{name: "distant duplicate", ids: []uint{4, 7, 9, 4}, wantErr: "duplicate user id 4"},
+		{name: "distinct", ids: []uuid.UUID{testutil.UID(3), testutil.UID(1), testutil.UID(2)}},
+		{name: "adjacent duplicate", ids: []uuid.UUID{testutil.UID(1), testutil.UID(1)}, wantErr: "duplicate user id " + testutil.UID(1).String()},
+		{name: "distant duplicate", ids: []uuid.UUID{testutil.UID(4), testutil.UID(7), testutil.UID(9), testutil.UID(4)}, wantErr: "duplicate user id " + testutil.UID(4).String()},
 	}
 
 	for _, tt := range tests {
@@ -71,23 +74,27 @@ func TestWorstPairCount(t *testing.T) {
 
 	tests := []struct {
 		name  string
-		seats map[uint][]uint
+		seats map[uint][]uuid.UUID
 		want  int
 	}{
 		{name: "nothing recent", seats: nil, want: 0},
-		{name: "a lone seat forms no pair", seats: map[uint][]uint{1: {7}}, want: 0},
-		{name: "one meeting", seats: map[uint][]uint{1: {7, 8}}, want: 1},
+		{name: "a lone seat forms no pair", seats: map[uint][]uuid.UUID{1: {testutil.UID(7)}}, want: 0},
+		{name: "one meeting", seats: map[uint][]uuid.UUID{1: {testutil.UID(7), testutil.UID(8)}}, want: 1},
 		{
 			name: "the same pair padded with a different third each time",
-			seats: map[uint][]uint{
-				1: {7, 8, 9}, 2: {7, 8, 10}, 3: {7, 8, 11},
+			seats: map[uint][]uuid.UUID{
+				1: {testutil.UID(7), testutil.UID(8), testutil.UID(9)},
+				2: {testutil.UID(7), testutil.UID(8), testutil.UID(10)},
+				3: {testutil.UID(7), testutil.UID(8), testutil.UID(11)},
 			},
 			want: 3,
 		},
 		{
 			name: "a busy seat with different partners is not a busy pair",
-			seats: map[uint][]uint{
-				1: {7, 8}, 2: {7, 9}, 3: {7, 10},
+			seats: map[uint][]uuid.UUID{
+				1: {testutil.UID(7), testutil.UID(8)},
+				2: {testutil.UID(7), testutil.UID(9)},
+				3: {testutil.UID(7), testutil.UID(10)},
 			},
 			want: 1,
 		},
@@ -106,16 +113,13 @@ func TestWorstPairCount(t *testing.T) {
 func TestSeatAdvisoryKey(t *testing.T) {
 	t.Parallel()
 	rapid.Check(t, func(t *rapid.T) {
-		a := rapid.Uint().Draw(t, "a")
-		b := rapid.Uint().Draw(t, "b")
-
+		a := uuid.New()
+		b := uuid.New()
 		if a == b {
-			return // nothing to tell apart
+			return
 		}
-		{
-			assert.NotEqual(t, seatAdvisoryKey(a), seatAdvisoryKey(b),
-				"two seats collapsed onto one advisory lock")
-		}
+		assert.NotEqual(t, seatAdvisoryKey(a), seatAdvisoryKey(b),
+			"two seats collapsed onto one advisory lock")
 	})
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,7 @@ import (
 func TestManager_New(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
+	leader := mockPlayer("p1", testutil.UID(1))
 
 	l, err := m.New(leader, WithMaxPlayers(3), WithPrivate(false), WithCardGame("TestGame"))
 	require.NoError(t, err)
@@ -33,16 +34,16 @@ func TestManager_New(t *testing.T) {
 	_, err = m.New(leader, WithCardGame("TestGame"))
 	require.ErrorContains(t, err, "already in a lobby")
 
-	_, err = m.New(mockPlayer("p2", 2))
+	_, err = m.New(mockPlayer("p2", testutil.UID(2)))
 	require.ErrorContains(t, err, "card game is required")
 }
 
 func TestManager_JoinLobbyByCode(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest1 := mockPlayer("g1", 2)
-	guest2 := mockPlayer("g2", 3)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest1 := mockPlayer("g1", testutil.UID(2))
+	guest2 := mockPlayer("g2", testutil.UID(3))
 
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame("TestGame"))
 	require.NoError(t, err)
@@ -65,9 +66,9 @@ func TestManager_JoinLobbyByCode(t *testing.T) {
 func TestManager_LeaveLobby(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest1 := mockPlayer("g1", 2)
-	guest2 := mockPlayer("g2", 3)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest1 := mockPlayer("g1", testutil.UID(2))
+	guest2 := mockPlayer("g2", testutil.UID(3))
 
 	l, _ := m.New(leader, WithMaxPlayers(3), WithCardGame("TestGame"))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest1))
@@ -92,9 +93,9 @@ func TestManager_BrowseLobbies_ListsOnlyPublicTables(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	p1 := mockPlayer("p1", 1)
-	p2 := mockPlayer("p2", 2)
-	p3 := mockPlayer("p3", 3)
+	p1 := mockPlayer("p1", testutil.UID(1))
+	p2 := mockPlayer("p2", testutil.UID(2))
+	p3 := mockPlayer("p3", testutil.UID(3))
 
 	l1, _ := m.New(p1, WithPrivate(false), WithCardGame("TestGame"))
 	l2, _ := m.New(p2, WithPrivate(true), WithCardGame("TestGame"))
@@ -124,8 +125,8 @@ func TestManager_BrowseLobbiesCacheAndSorting(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	p1 := mockPlayer("p1", 1)
-	p2 := mockPlayer("p2", 2)
+	p1 := mockPlayer("p1", testutil.UID(1))
+	p2 := mockPlayer("p2", testutil.UID(2))
 
 	_, _ = m.New(p1, WithPrivate(false), WithCardGame("CrazyEights"))
 
@@ -141,7 +142,7 @@ func TestManager_BrowseLobbiesCacheAndSorting(t *testing.T) {
 func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
+	leader := mockPlayer("p1", testutil.UID(1))
 
 	l, _ := m.New(leader, WithCardGame("TestGame"))
 
@@ -149,7 +150,7 @@ func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
 	m.mu.Lock()
 	l.mu.Lock()
 	// Remove leader from lobby but keep in manager's map
-	l.leader = mockPlayer("p2", 2)
+	l.leader = mockPlayer("p2", testutil.UID(2))
 	l.mu.Unlock()
 	m.mu.Unlock()
 
@@ -161,9 +162,9 @@ func TestManager_FindLobbyByPlayer_Cleanup(t *testing.T) {
 func TestManager_RejectMidGameJoin(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
-	late := mockPlayer("p3", 3)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
+	late := mockPlayer("p3", testutil.UID(3))
 
 	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
@@ -190,10 +191,10 @@ func TestManager_RejectMidGameJoin(t *testing.T) {
 func TestManager_Kick(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
-	guest2 := mockPlayer("p4", 4)
-	intruder := mockPlayer("p3", 3)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
+	guest2 := mockPlayer("p4", testutil.UID(4))
+	intruder := mockPlayer("p3", testutil.UID(3))
 
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 	require.NoError(t, err)
@@ -216,15 +217,15 @@ func TestManager_JoinLobbyByCode_RateLimit(t *testing.T) {
 	m := newTestManager(t, nil)
 	m.joinLimiter = ratelimit.NewSlidingWindowLimiter(2, time.Minute)
 
-	leader := mockPlayer("leader", 1)
-	joiner := mockPlayer("joiner", 2)
+	leader := mockPlayer("leader", testutil.UID(1))
+	joiner := mockPlayer("joiner", testutil.UID(2))
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), joiner))
 	m.LeaveLobby(joiner)
 
-	other := mockPlayer("other", 3)
+	other := mockPlayer("other", testutil.UID(3))
 	_, err = m.New(other, WithMaxPlayers(4), WithCardGame("TestGame2"))
 	require.NoError(t, err)
 
@@ -247,13 +248,13 @@ func TestManager_BrowseLobbies_ClosestRatingFirst(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	p1 := mockPlayer("p1", 1) // average Elo = 1000
+	p1 := mockPlayer("p1", testutil.UID(1)) // average Elo = 1000
 	p1.Ratings = map[string]uint32{"Game": 1000}
 
-	p2 := mockPlayer("p2", 2) // average Elo = 2000
+	p2 := mockPlayer("p2", testutil.UID(2)) // average Elo = 2000
 	p2.Ratings = map[string]uint32{"Game": 2000}
 
-	p3 := mockPlayer("p3", 3)
+	p3 := mockPlayer("p3", testutil.UID(3))
 	p3.Ratings = map[string]uint32{"Game": 3000}
 
 	l1, _ := m.New(p1, WithPrivate(false), WithCardGame("Game"))
@@ -325,11 +326,11 @@ func FuzzJoinLobbyByCode(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, code string) {
 		m := newTestManager(t, nil)
-		host := &game.Player{ID: "host", UserID: 1}
+		host := &game.Player{ID: "host", UserID: testutil.UID(1)}
 		l, err := m.New(host, WithCardGame("Poker"), WithMaxPlayers(4))
 		require.NoError(t, err)
 
-		joiner := &game.Player{ID: "joiner", UserID: 2}
+		joiner := &game.Player{ID: "joiner", UserID: testutil.UID(2)}
 		err = m.JoinLobbyByCode(code, joiner)
 
 		if code == l.Code() {
@@ -412,7 +413,7 @@ func TestManager_BrowseLobbiesReuseTheScanUntilSomethingChanges(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	_, err := m.New(mockPlayer("p1", 1), WithPrivate(false), WithCardGame("TestGame"))
+	_, err := m.New(mockPlayer("p1", testutil.UID(1)), WithPrivate(false), WithCardGame("TestGame"))
 	require.NoError(t, err)
 	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
 
@@ -431,11 +432,11 @@ func TestManager_BrowseLobbiesSeeChangesImmediately(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	first, err := m.New(mockPlayer("p1", 1), WithPrivate(false), WithCardGame("TestGame"))
+	first, err := m.New(mockPlayer("p1", testutil.UID(1)), WithPrivate(false), WithCardGame("TestGame"))
 	require.NoError(t, err)
 	require.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 1)
 
-	_, err = m.New(mockPlayer("p2", 2), WithPrivate(false), WithCardGame("TestGame"))
+	_, err = m.New(mockPlayer("p2", testutil.UID(2)), WithPrivate(false), WithCardGame("TestGame"))
 	require.NoError(t, err)
 	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{}), 2, "a new table is offered at once")
 
@@ -448,8 +449,8 @@ func TestManager_BrowseLobbiesSeeChangesImmediately(t *testing.T) {
 func TestManager_BrowseLobbiesDropTablesThatStartPlaying(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
 
 	l, err := m.New(leader, WithPrivate(false), WithMaxPlayers(2), WithCardGame("Mock"))
 	require.NoError(t, err)
@@ -477,13 +478,13 @@ func TestManager_BrowseLobbiesDropTablesThatStartPlaying(t *testing.T) {
 func TestManager_FindLobbyByPlayer_DropsTheStaleEntry(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
+	leader := mockPlayer("p1", testutil.UID(1))
 
 	l, err := m.New(leader, WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	l.mu.Lock()
-	l.leader = mockPlayer("someone-else", 2)
+	l.leader = mockPlayer("someone-else", testutil.UID(2))
 	l.mu.Unlock()
 
 	assert.Nil(t, m.FindLobbyByPlayer(leader))
@@ -501,8 +502,8 @@ func TestManager_FindLobbyByPlayer_DropsTheStaleEntry(t *testing.T) {
 func TestManager_RemoveLobbyClosesSubscribers(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
 
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 	require.NoError(t, err)
@@ -532,14 +533,14 @@ func TestManager_BrowseLobbies_IgnoresUnnamedRankings(t *testing.T) {
 	t.Parallel()
 	m := newTestManager(t, nil)
 
-	weak, err := m.New(mockPlayer("weak", 1), WithPrivate(false), WithCardGame("CrazyEights"))
+	weak, err := m.New(mockPlayer("weak", testutil.UID(1)), WithPrivate(false), WithCardGame("CrazyEights"))
 	require.NoError(t, err)
-	strongLeader := mockPlayer("strong", 2)
+	strongLeader := mockPlayer("strong", testutil.UID(2))
 	strongLeader.Ratings = map[string]uint32{"CrazyEights": 3000}
 	strong, err := m.New(strongLeader, WithPrivate(false), WithCardGame("CrazyEights"))
 	require.NoError(t, err)
 
-	browser := mockPlayer("browser", 3)
+	browser := mockPlayer("browser", testutil.UID(3))
 	browser.Ratings = map[string]uint32{"CrazyEights": 3000}
 
 	public := m.BrowseLobbies(browser, BrowseFilter{})
@@ -555,7 +556,7 @@ func TestManager_Stats(t *testing.T) {
 	t.Parallel()
 
 	m, playing, _, _ := startedGame(t)
-	waiting, err := m.New(mockPlayer("p9", 9), WithCardGame("Mock"))
+	waiting, err := m.New(mockPlayer("p9", testutil.UID(9)), WithCardGame("Mock"))
 	require.NoError(t, err)
 
 	inGame, open := m.Stats()
@@ -579,7 +580,7 @@ func TestLobby_IsLeader(t *testing.T) {
 	t.Parallel()
 	m, l, _ := newTestLobby(t, 3)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	assert.True(t, l.IsLeader(leader))

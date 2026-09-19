@@ -15,8 +15,8 @@ published port. Schema is `internal/db/migrations/`.
 
 | Table.column | What it is | Why it exists |
 |---|---|---|
-| `users.username` | 1-16 chars, `[A-Za-z0-9_]`, chosen by the player, **publicly displayed** on the in-game leaderboard and on the website. After erasure it reads `deleted_<id>` (`db.AnonymisedUsername`) | identity |
-| `users.id` | surrogate key; **this is also the `player_id` that appears in logs** (`internal/lobby/player.go`) | joins |
+| `users.username` | chosen names are 1-16 chars, `[A-Za-z0-9_]`, **publicly displayed** on the in-game leaderboard and on the website. After erasure it reads `deleted_` plus 32 hex digits of the UUID (`db.AnonymisedUsername`, 40 chars) | identity |
+| `users.id` | UUID primary key; **this is also the `player_id` that appears in logs** (`internal/lobby/player.go`). It is not a sequence. | joins |
 | `users.last_seen_at` | last connection timestamp | activity |
 | `users.created_at` / `updated_at` / `deleted_at` | account lifecycle; `deleted_at` is a GORM **soft** delete | lifecycle |
 | `public_keys.fingerprint` | `SHA256:…` of the player's SSH public key, `NOT NULL UNIQUE` | the credential; the only thing authentication matches on |
@@ -36,8 +36,9 @@ Two things to say plainly in a notice:
 - **`matches` + `match_participants` is a social graph.** Joined on `created_at` it
   answers who played with whom and when.
 
-**Retention: none is configured.** These rows have no expiry. They go when the account
-goes, and that is now a thing a player can do for themselves.
+**Retention: none is configured.** Account rows, keys and ratings have no expiry.
+They go when the account is erased. Match history is kept, anonymised: other
+players at those tables still have a name to resolve.
 
 **Erasure: `db.UserRepository.DeleteAccount(ctx, userID)`**, implemented by
 `eraseUserLocked` in `internal/repository/user.go`, one transaction. Reached from the
@@ -48,8 +49,8 @@ table, and the session ends afterwards.
 |---|---|---|
 | `public_keys` | **hard**-deleted (`Unscoped`) | the fingerprint column is unique, so a soft-deleted row would lock the person out of ever registering again. With the keys gone, nothing can authenticate as the account |
 | `rankings` | **hard**-deleted (`Unscoped`) | a soft-deleted ranking still holds the `(user_id, game_id)` primary key |
-| `users` | **kept, anonymised**: `username` → `db.AnonymisedUsername(userID)` (`deleted_<id>`), `last_seen_at` → NULL | it is the parent of `match_participants` rows belonging to *other* players, whose history has to keep resolving to a name |
-| `match_participants` | untouched | same reason; the erased player shows as `deleted_<id>` |
+| `users` | **kept, anonymised**: `username` → `db.AnonymisedUsername(userID)` (`deleted_` + 32 hex), `last_seen_at` → NULL | it is the parent of `match_participants` rows belonging to *other* players, whose history has to keep resolving to a name |
+| `match_participants` | untouched | same reason; the erased player shows as `deleted_` plus hex |
 
 Two details a notice should state plainly: erasure is **not** reversible and does not
 remove the person from other players' match history, only their name from it; and the
@@ -119,10 +120,6 @@ comment in `startSession` states the reason.
 What remains: the username on `ssh.session` for 48h, and `user_id` on repository spans
 (`internal/repository/user.go`, including `db.DeleteAccount`).
 
-Stale comment, flagged rather than fixed here: `internal/config/tempo/tempo.yaml` still
-says "A session span carries the client's address and the username on the same span".
-That file is not owned by this package.
-
 ### Metrics → Prometheus. **30 days** (`compose.yaml`, `--storage.tsdb.retention.time=30d`, plus an 8GB size cap)
 
 **No personal data**, and that is enforced rather than asserted:
@@ -164,7 +161,8 @@ per-user endpoint, no writes, no auth.
 
 | Data | Store | Kept | Set in |
 |---|---|---|---|
-| Account, keys, ratings, match history | Postgres | until the account is deleted | no expiry job exists; erasure is §1 |
+| Account, keys, ratings | Postgres | until erasure | no expiry job exists; erasure is §1 |
+| Match history | Postgres | kept, anonymised on erasure | `match_participants` is not deleted |
 | Application and container logs | Loki | **14 days** | `internal/config/loki/loki.yaml` (`retention_period: 336h`, compactor retention on) |
 | Traces | Tempo | **48 hours** | `internal/config/tempo/tempo.yaml` (`block_retention: 48h`) |
 | Metrics | Prometheus | **30 days**, 8 GB cap | `compose.yaml` (`--storage.tsdb.retention.time=30d`) |

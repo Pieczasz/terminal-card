@@ -3,14 +3,15 @@ package game
 import (
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 )
 
 func TestPlayer_Equal(t *testing.T) {
 	t.Parallel()
-	p1 := &Player{ID: "a", UserID: 1}
-	p2 := &Player{ID: "b", UserID: 1}
-	p3 := &Player{ID: "a", UserID: 2}
+	p1 := &Player{ID: "a", UserID: testutil.UID(1)}
+	p2 := &Player{ID: "b", UserID: testutil.UID(1)}
+	p3 := &Player{ID: "a", UserID: testutil.UID(2)}
 
 	t.Run("same account is the same player whatever the session ID", func(t *testing.T) {
 		t.Parallel()

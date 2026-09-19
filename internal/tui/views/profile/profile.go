@@ -17,6 +17,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -99,7 +101,7 @@ type profileLoadedMsg struct {
 	historyErr error
 }
 
-func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uint) tea.Cmd {
+func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -337,7 +339,7 @@ var placementWords = [3]string{"1st place", "2nd place", "3rd place"}
 // is already anonymised and the session has nothing left to authenticate.
 type accountDeletedMsg struct{ err error }
 
-func deleteAccount(ctx context.Context, userRepo db.UserRepository, userID uint) tea.Cmd {
+func deleteAccount(ctx context.Context, userRepo db.UserRepository, userID uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -413,7 +415,9 @@ func (m model) renderConfirm() string {
 		"",
 		"- SSH keys removed; a new login is a new account",
 		"- ratings removed from every leaderboard",
-		"- past matches stay, shown as " + anonymised,
+		// InnerWidth at MinWidth is 54; the 40-char deleted_ name has to share that
+		// line or the confirmation wraps taller than the 20-row minimum.
+		"- kept as " + anonymised,
 		"- this cannot be undone",
 		"",
 		"Type DELETE and press enter, esc to cancel",

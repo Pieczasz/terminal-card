@@ -9,6 +9,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/observability"
+
+	"github.com/google/uuid"
 )
 
 // finalizeRequest is the lobby-side snapshot a finished game needs to persist.
@@ -100,9 +102,9 @@ func (m *Manager) persistFinishedMatch(
 		return
 	}
 
-	userIDs := make([]uint, 0, len(standings))
+	userIDs := make([]uuid.UUID, 0, len(standings))
 	for i, p := range standings {
-		if p == nil || p.UserID == 0 {
+		if p == nil || p.UserID == uuid.Nil {
 			slog.ErrorContext(ctx, "standing player has no database user; match not recorded",
 				"lobby", req.lobbyCode, "game", req.game.Slug, "ranked", req.isRanked, "player_index", i)
 			observability.MatchFinalize(ctx, "dropped", req.isRanked)
@@ -131,7 +133,7 @@ func (m *Manager) persistFinishedMatch(
 }
 
 func (m *Manager) recordFinishedMatch(
-	ctx context.Context, ref db.GameRef, userIDs []uint, places []int, isRanked bool,
+	ctx context.Context, ref db.GameRef, userIDs []uuid.UUID, places []int, isRanked bool,
 ) error {
 	if isRanked {
 		if err := m.matchRepo.FinalizeRankedMatch(ctx, ref, userIDs, places); err != nil {

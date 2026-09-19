@@ -14,18 +14,18 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"gorm.io/gorm"
 )
 
 func rankings(n int) []db.Ranking {
 	out := make([]db.Ranking, 0, n)
 	for i := range n {
 		out = append(out, db.Ranking{
-			UserID: uint(i + 1),
+			UserID: testutil.UID(byte(i + 1)),
 			Elo:    uint32(2000 - i),
-			User:   db.User{Model: gorm.Model{ID: uint(i + 1)}, Username: fmt.Sprintf("player%02d", i+1)},
+			User:   db.User{ID: testutil.UID(byte(i + 1)), Username: fmt.Sprintf("player%02d", i+1)},
 			Game:   db.Game{Name: "Poker"},
 		})
 	}
@@ -37,7 +37,7 @@ func board(t *testing.T, n int) model {
 	return model{
 		global:   router.GlobalContext{Theme: styles.NewTheme(true), Width: 100, Height: 40},
 		rankings: rankings(n),
-		filters:  []string{filterAll, "Poker", "Uno"},
+		filters:  []boardFilter{{label: filterAll}, {label: "Poker", slug: "poker"}, {label: "Uno", slug: "uno"}},
 	}
 }
 
@@ -56,11 +56,11 @@ func TestCycleFilter_AdvancesAndClearsRows(t *testing.T) {
 	next, cmd := m.cycleFilter(1)
 	nm := next.(model)
 	assert.Equal(t, 1, nm.filterIndex)
-	assert.Equal(t, "Poker", nm.filters[nm.filterIndex])
+	assert.Equal(t, "Poker", nm.filters[nm.filterIndex].label)
 	assert.Nil(t, nm.rankings, "stale rows must not linger under a new filter")
 	assert.Equal(t, 0, nm.page)
 	assert.NotNil(t, cmd, "a filter change reloads from the repository")
-	assert.Equal(t, "Poker", nm.gameFilter())
+	assert.Equal(t, "poker", nm.gameFilter())
 }
 
 func TestGoPage_StaysInsideLoadedPages(t *testing.T) {
@@ -181,7 +181,7 @@ func TestView_FitsTheTerminalAtEverySupportedSize(t *testing.T) {
 			m := model{
 				global:   router.GlobalContext{Theme: styles.NewTheme(true), Width: size.w, Height: size.h},
 				rankings: rankings(maxLeaderboardPlayers),
-				filters:  []string{filterAll, "Poker"},
+				filters:  []boardFilter{{label: filterAll}, {label: "Poker", slug: "poker"}},
 			}
 
 			out := m.View().Content
@@ -199,7 +199,7 @@ func TestRowsPerPage_PagesByWhatItDraws(t *testing.T) {
 	short := model{
 		global:   router.GlobalContext{Theme: styles.NewTheme(true), Width: 80, Height: 24},
 		rankings: rankings(maxLeaderboardPlayers),
-		filters:  []string{filterAll},
+		filters:  []boardFilter{{label: filterAll}},
 	}
 	tall := short
 	tall.global.Height = 50
@@ -237,11 +237,12 @@ func TestNew_BuildsAFilterPerCatalogGame(t *testing.T) {
 	require.True(t, ok)
 
 	require.Len(t, m.filters, 1+len(catalog.All))
-	assert.Equal(t, filterAll, m.filters[0], "the unfiltered view is the default")
+	assert.Equal(t, filterAll, m.filters[0].label, "the unfiltered view is the default")
 	for i, e := range catalog.All {
-		assert.Equal(t, e.Name, m.filters[i+1])
+		assert.Equal(t, e.Name, m.filters[i+1].label)
+		assert.Equal(t, e.Slug, m.filters[i+1].slug)
 	}
-	assert.Empty(t, m.gameFilter(), "index 0 means every game, which is the empty gameName")
+	assert.Empty(t, m.gameFilter(), "index 0 means every game, which is the empty slug")
 }
 
 // Init has to ask for a whole page: it runs before the first WindowSizeMsg, so
@@ -287,9 +288,9 @@ func TestUpdate_DiscardsAResponseForAFilterAlreadyCycledPast(t *testing.T) {
 		return next.(model)
 	}
 	m = press(m) // Poker
-	require.Equal(t, "Poker", m.gameFilter())
+	require.Equal(t, "poker", m.gameFilter())
 	m = press(m) // Uno, before Poker has answered
-	require.Equal(t, "Uno", m.gameFilter())
+	require.Equal(t, "uno", m.gameFilter())
 
 	uno := rankings(2)
 	uno[0].User.Username = "uno_player"
@@ -297,12 +298,12 @@ func TestUpdate_DiscardsAResponseForAFilterAlreadyCycledPast(t *testing.T) {
 	poker[0].User.Username = "poker_player"
 
 	// The current filter's answer lands first...
-	next, _ := m.Update(loadedMsg{rankings: uno, gameName: "Uno"})
+	next, _ := m.Update(loadedMsg{rankings: uno, gameSlug: "uno"})
 	m = next.(model)
 	require.Len(t, m.rankings, 2)
 
 	// ...and the abandoned one arrives afterwards.
-	next, cmd := m.Update(loadedMsg{rankings: poker, gameName: "Poker"})
+	next, cmd := m.Update(loadedMsg{rankings: poker, gameSlug: "poker"})
 	m = next.(model)
 
 	assert.Nil(t, cmd)
@@ -381,11 +382,9 @@ func TestUpdate_Keys(t *testing.T) {
 		{name: "down pages forward", key: "down", wantPage: 1},
 		{name: "j pages forward", key: "j", wantPage: 1},
 		{name: "pgdown pages forward", key: "pgdown", wantPage: 1},
-		{name: "n pages forward", key: "n", wantPage: 1},
 		{name: "up at the top stays put", key: "up", wantPage: 0},
 		{name: "k at the top stays put", key: "k", wantPage: 0},
 		{name: "pgup at the top stays put", key: "pgup", wantPage: 0},
-		{name: "p at the top stays put", key: "p", wantPage: 0},
 	}
 
 	for _, tt := range tests {
@@ -407,15 +406,28 @@ func TestUpdate_Keys(t *testing.T) {
 // board that swallowed them would strand the player on the leaderboard.
 func TestUpdate_NavigationKeysStillNavigate(t *testing.T) {
 	t.Parallel()
-	m := board(t, 0)
 
-	next, cmd := m.Update(keyPress("f"))
+	tests := []struct {
+		key  string
+		want string
+	}{
+		{key: "f", want: router.RouteLobbyJoin},
+		{key: "p", want: router.RouteProfile},
+		{key: "n", want: router.RouteLobbyCreate},
+	}
+	for _, tt := range tests {
+		t.Run(tt.key, func(t *testing.T) {
+			t.Parallel()
+			m := board(t, 0)
+			next, cmd := m.Update(keyPress(tt.key))
 
-	assert.Equal(t, 0, next.(model).filterIndex)
-	require.NotNil(t, cmd)
-	msg, ok := cmd().(router.ChangeViewMsg)
-	require.True(t, ok)
-	assert.Equal(t, router.RouteLobbyJoin, msg.ViewName)
+			assert.Equal(t, 0, next.(model).filterIndex)
+			require.NotNil(t, cmd)
+			msg, ok := cmd().(router.ChangeViewMsg)
+			require.True(t, ok)
+			assert.Equal(t, tt.want, msg.ViewName)
+		})
+	}
 }
 
 func TestUpdate_UnboundKeyDoesNothing(t *testing.T) {
@@ -503,7 +515,7 @@ func TestView_FitsTheTerminalInEveryContentState(t *testing.T) {
 				t.Parallel()
 				m := apply(model{
 					global:  router.GlobalContext{Theme: styles.NewTheme(true), Width: size.w, Height: size.h},
-					filters: []string{filterAll, "Poker"},
+					filters: []boardFilter{{label: filterAll}, {label: "Poker", slug: "poker"}},
 				})
 
 				out := m.View().Content
@@ -520,7 +532,7 @@ func TestView_FitsTheTerminalInEveryContentState(t *testing.T) {
 func TestRenderPlayerRow_HighlightsTheViewer(t *testing.T) {
 	t.Parallel()
 	m := board(t, 3)
-	m.global.User = &db.User{ID: 2}
+	m.global.User = &db.User{ID: testutil.UID(2)}
 	tbl := m.table(80, 3)
 
 	mine := m.renderPlayerRow(tbl, 1, m.rankings[1])
