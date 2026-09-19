@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.4
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27.1-alpine AS builder
 
 WORKDIR /code
 
@@ -13,9 +13,16 @@ RUN --mount=type=cache,target=/go/pkg/mod/cache \
 
 COPY . .
 
+# The builder stage runs on the build host (BUILDPLATFORM) for speed, so the target
+# has to come from the ARGs buildx sets - otherwise a cross-build ships the builder's
+# architecture inside a target-arch image and dies with "exec format error".
+# Build the package, not one file: a second file in package main would be dropped.
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod/cache \
     --mount=type=cache,target=/go-build \
-    go build -o bin/backend cmd/server/main.go
+    GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-$(go env GOARCH)} \
+    go build -o bin/backend ./cmd/server
 
 FROM alpine:3.22 AS certs
 RUN apk add --no-cache ca-certificates tzdata \

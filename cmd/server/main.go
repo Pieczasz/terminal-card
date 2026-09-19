@@ -29,9 +29,6 @@ import (
 	"golang.org/x/net/netutil"
 )
 
-// Shutdown spends these sequentially: ssh drain, stats api, match finalizers, OTel
-// flush - 70s worst case counting the second finalizer window. compose's
-// stop_grace_period must exceed the total or the runtime kills a match write.
 const (
 	sshDrainTimeout      = 30 * time.Second
 	apiDrainTimeout      = 5 * time.Second
@@ -40,12 +37,13 @@ const (
 )
 
 func main() {
-	// -healthcheck probes the local stats API and exits: the container image is
-	// distroless, so the server binary doubles as the compose healthcheck command.
 	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
 		os.Exit(healthcheck())
 	}
 	if err := run(); err != nil {
+		// A config or OTel failure happens before the slog handler is installed, so
+		// stderr is the only place it can still be seen.
+		fmt.Fprintln(os.Stderr, "fatal:", err)
 		os.Exit(1)
 	}
 }
@@ -73,8 +71,6 @@ func healthcheck() int {
 }
 
 func run() (err error) {
-	// First statement in the process: a config or OTel failure below has to reach the
-	// JSON handler, not the default text one. The level follows once config is readable.
 	logLevel := installLogging()
 
 	cfg, err := config.Load()
@@ -111,8 +107,6 @@ func run() (err error) {
 			slog.ErrorContext(ctx, "failed to close database", "error", err)
 		}
 	}()
-	// The pool is a hard cap that queues silently, so these gauges are the only
-	// warning before saturation. Losing them is not worth failing a boot over.
 	if err := observability.RegisterDBStats(sqlDB); err != nil {
 		slog.ErrorContext(ctx, "failed to register database pool metrics", "error", err)
 	}
@@ -121,8 +115,6 @@ func run() (err error) {
 	matchRepo := repository.NewMatchRepository(database)
 	lobbyManager := lobby.NewManager(ctx, matchRepo)
 
-	// Registered after the sqlDB.Close defer above, so LIFO stops new match writes
-	// and drains registered ones before the handle they write through is closed.
 	defer waitForFinalizers(lobbyManager)
 
 	server, tracker, err := newSSHServer(cfg, userRepo, matchRepo, lobbyManager)
@@ -141,9 +133,6 @@ func run() (err error) {
 	})
 }
 
-// installLogging fans slog output to stderr and the OTel logger provider, so a line is
-// both visible to the container runtime and exported. MultiHandler clones the record per
-// sink, so one broken sink never hides another. The returned LevelVar drives both.
 func installLogging() *slog.LevelVar {
 	level := new(slog.LevelVar)
 	level.Set(slog.LevelInfo)
@@ -154,8 +143,6 @@ func installLogging() *slog.LevelVar {
 	return level
 }
 
-// levelGate applies a level to a handler with none of its own: the otelslog bridge
-// exports whatever it is handed, so LOG_LEVEL would otherwise only quiet stderr.
 type levelGate struct {
 	slog.Handler
 	level slog.Leveler
@@ -171,7 +158,6 @@ func (g levelGate) WithGroup(name string) slog.Handler {
 	return levelGate{Handler: g.Handler.WithGroup(name), level: g.level}
 }
 
-// setupOTel pairs export setup with its cleanup so the shutdown budget cannot drift.
 func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
 	shutdown, err := observability.SetupOTel(ctx, cfg)
 	if err != nil {
@@ -184,6 +170,19 @@ func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
 			slog.ErrorContext(shutdownCtx, "failed to shutdown OpenTelemetry", "error", err)
 		}
 	}, nil
+}
+
+// TODO: is this a valid way to to this? WAL or some other shit?
+func waitForFinalizers(lobbyManager *lobby.Manager) {
+	if lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
+		return
+	}
+	slog.Warn("match finalizers exceeded their deadline; giving them one more window",
+		"timeout", finalizeDrainTimeout)
+	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
+		slog.Error("abandoning match finalizers; a finished match may be missing from history",
+			"timeout", finalizeDrainTimeout)
+	}
 }
 
 // The tracker comes back because the stats api shares it to count who is online.
@@ -221,8 +220,6 @@ func buildRegistry() *game.Registry {
 	return registry
 }
 
-// startStatsAPI returns the shutdown hook and a channel carrying a serve failure: a bind
-// error used to be a log line nobody reads and a website whose numbers stopped moving.
 func startStatsAPI(
 	cfg *config.Config,
 	tracker *ssh.SessionTracker,
@@ -258,20 +255,6 @@ func startStatsAPI(
 	}, serveErr
 }
 
-func waitForFinalizers(lobbyManager *lobby.Manager) {
-	if lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-		return
-	}
-	slog.Warn("match finalizers exceeded their deadline; giving them one more window",
-		"timeout", finalizeDrainTimeout)
-	// Capped, not unbounded: a wedged write held past the runtime's kill timer loses the
-	// log line explaining why.
-	if !lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
-		slog.Error("abandoning match finalizers; a finished match may be missing from history",
-			"timeout", finalizeDrainTimeout)
-	}
-}
-
 type sshServer interface {
 	Serve(net.Listener) error
 	Shutdown(context.Context) error
@@ -279,11 +262,9 @@ type sshServer interface {
 }
 
 type serveDeps struct {
-	config    *config.Config
-	sshServer sshServer
-	apiErr    <-chan error
-	// onShutdown runs before any session is drained: a match the deploy ended must not
-	// be rated.
+	config     *config.Config
+	sshServer  sshServer
+	apiErr     <-chan error
 	onShutdown func()
 }
 
