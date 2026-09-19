@@ -5,18 +5,18 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-make test-short        # unit tests, no Docker
-make test              # go test -race ./...
-make test-integration  # -tags=integration, needs Docker (testcontainers)
-make lint              # golangci-lint
-make build             # -> bin/server
-make ci                # fmt, fix, lint, test, build
+make test-short # unit tests, no Docker
+make test # go test -race ./...
+make test-integration # -tags=integration, needs Docker (testcontainers)
+make lint # golangci-lint
+make build # -> bin/server
+make ci # fmt, fix, lint, test, build
 
-go test -race -run TestName ./internal/game/poker/          # single test
-go test -race -run 'TestX/subtest_name' ./internal/lobby/   # single subtest
+go test -race -run TestName ./internal/game/poker/ # single test
+go test -race -run 'TestX/subtest_name' ./internal/lobby/ # single subtest
 
-make migrate-create    # prompts for name, writes internal/db/migrations/
-make migrate-up        # needs $DB_DSN exported
+make migrate-create # prompts for name, writes internal/db/migrations/
+make migrate-up # needs $DB_DSN exported
 ```
 
 Local multi-client testing: `./scripts/dev-session.sh` opens three tmux-attached SSH clients against a running server (`TC_PORT=6969` bypasses the nginx proxy; the server then needs `PROXY_PROTOCOL=false`, since a bare ssh client sends no PROXY header).
@@ -35,7 +35,7 @@ Two identifiers, two consumers: `Module.Name` (display name) is the registry key
 
 `internal/deck` owns card mechanics every game needs: `RemoveOne`/`RemoveEach` (hand
 removal that never aliases), and three distinct rank questions that must not be
-swapped — `RankValue` (Ace high, 14, for poker and Hearts), `RunOrder` (Ace low 1..13,
+swapped - `RankValue` (Ace high, 14, for poker and Hearts), `RunOrder` (Ace low 1..13,
 courts distinct, for Gin Rummy runs) and `PipValue` (courts count 10, for deadwood).
 Standard ranks are 1-based, so a zero `deck.Card` is detectably empty rather than the
 ace of spades; Uno's extra ranks sit in their own block at 20+. `AllRanks` is what
@@ -62,7 +62,7 @@ Mid-hand disconnects: implement the optional `game.PlayerLeaveHandler` (`OnPlaye
 
 `applyNextTurnLocked` also arms a per-turn timer (`DefaultTurnTimeout`, 30s). On expiry the engine plays the move from the optional `game.TurnTimeoutHandler` (`TimeoutAction`) and broadcasts `EventTurnTimedOut`; after `MaxMissedTurns` (3) consecutive expiries it re-checks under the engine lock and only then broadcasts `EventPlayerIdle` and removes the seat. A player's own *accepted* action clears their count - a move the rules reject does not, or spamming garbage would dodge removal forever - so this only fires on someone who stopped playing.
 
-Rules opt in: no `TurnTimeoutHandler` means no clock. Poker checks when free, folds when not, and deals between hands (an absent dealer would otherwise freeze the table); crazy eights and uno draw; hearts passes its three lowest cards, plays its first legal card, and deals the next hand; gin rummy draws, sheds its priciest deadwood and deals. `TimeoutAction` must return something `ValidateAction` accepts, or the turn re-arms and the seat is taken on the next expiry instead — gin rummy's `autoDiscard` skips the card the upcard rule forbids for exactly this reason.
+Rules opt in: no `TurnTimeoutHandler` means no clock. Poker checks when free, folds when not, and deals between hands (an absent dealer would otherwise freeze the table); crazy eights and uno draw; hearts passes its three lowest cards, plays its first legal card, and deals the next hand; gin rummy draws, sheds its priciest deadwood and deals. `TimeoutAction` must return something `ValidateAction` accepts, or the turn re-arms and the seat is taken on the next expiry instead - gin rummy's `autoDiscard` skips the card the upcard rule forbids for exactly this reason.
 
 `game.TurnDurationHandler` lets a rules set stretch a particular turn: hearts gives the pass phase 45s and the between-hands prompt a minute; poker and gin rummy stretch the between-hands deal the same way. Returning zero keeps the engine default; it cannot resurrect a clock `WithTurnTimeout` disabled.
 
@@ -80,9 +80,9 @@ It is a façade, not a capability: `BoundEngine.Engine()` still reaches whole-ta
 
 ### gameview.Session is the view baseline
 
-Every game view embeds `gameview.Session` (`internal/tui/views/game/session.go`). It owns the parts that are the same in all five games: binding to the engine, subscribing (`NewSession`), reading the feed and the whole `Update` loop (`HandleFrame`), losing a seat to the idle timer (`IdleRemoved`), the hand cursor (`MoveCursor` / `SelectDigit` / `SelectedCard`), leaving the table (`Leave`), and `Close` — which is what satisfies `router.Closer`. The shared layout frame (`gameview.RenderBands`, the compact breakpoints, the width-budgeted hand renderers) lives in `internal/tui/views/game`; a new game implements its own rules rendering and nothing else.
+Every game view embeds `gameview.Session` (`internal/tui/views/game/session.go`). It owns the parts that are the same in all five games: binding to the engine, subscribing (`NewSession`), reading the feed and the whole `Update` loop (`HandleFrame`), losing a seat to the idle timer (`IdleRemoved`), the hand cursor (`MoveCursor` / `SelectDigit` / `SelectedCard`), leaving the table (`Leave`), and `Close` - which is what satisfies `router.Closer`. The shared layout frame (`gameview.RenderBands`, the compact breakpoints, the width-budgeted hand renderers) lives in `internal/tui/views/game`; a new game implements its own rules rendering and nothing else.
 
-Read per-game state through the `extra` callback of `Session.Sync` (unredacted table state the view has to filter itself; `BoundEngine.Frame` is the standalone form) — and seat order, display names and stock size through `BaseState` (`Seats`, `SeatOrder()`, `SeatNames()`, `DeckSize`) rather than reaching back through `Engine().WithState` — `PlayerSnapshot.Username` already falls back to the player ID.
+Read per-game state through the `extra` callback of `Session.Sync` (unredacted table state the view has to filter itself; `BoundEngine.Frame` is the standalone form) - and seat order, display names and stock size through `BaseState` (`Seats`, `SeatOrder()`, `SeatNames()`, `DeckSize`) rather than reaching back through `Engine().WithState` - `PlayerSnapshot.Username` already falls back to the player ID.
 
 Anything a view keeps after releasing the engine lock must be copied, not aliased (`maps.Clone`, `HandResult.Clone`).
 
@@ -129,3 +129,48 @@ The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing 
 - Wrap errors with `%w`, lowercase messages.
 - The `.golangci.yml` size gates (`funlen` 75/55, `cyclop` 21, `gocognit` 30, `nestif` 9, `lll` 140) sit just above the worst surviving function. Split the function rather than raising a threshold.
 - Comments explain *why*, not *what*; the codebase is intentionally light on them.
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **terminal-card** (4149 symbols, 18961 relationships, 353 execution flows).
+
+> Index stale? Run `node .gitnexus/run.cjs analyze --index-only` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? Bootstrap with `npx`, `bunx`, or `pnpm dlx` — e.g. `bunx gitnexus@latest analyze` (npm 11 npx crash; #1939).
+
+## Always Do
+
+- **MUST run impact before editing.** Use `impact({target: "symbolName", direction: "upstream"})` or `node .gitnexus/run.cjs impact "symbolName" --direction upstream --repo .`; report callers, processes, and risk. Never substitute grep for graph analysis.
+- **MUST analyze graph changes before committing.** Use `detect_changes({scope: "all"})` (MCP) or `node .gitnexus/run.cjs detect-changes --scope all --repo .` (CLI fallback). `partial: true` or `truncated: true` is not a clean check — a zero means unseen, not unaffected; re-run it. For regression review: `detect_changes({scope: "compare", base_ref: "main"})` or `node .gitnexus/run.cjs detect-changes --scope compare --base-ref "main" --repo .`.
+- MUST warn on HIGH/CRITICAL `risk` pre-edit; never use `riskSharedAxes` to waive a HIGH/CRITICAL `risk` warning. Compare File/symbol: MCP File omits axes; Graph-RAG expands File.
+- **MUST treat `risk: UNKNOWN` as unresolved, not as low.** An empty caller set is not evidence the symbol is unused — it can also mean the callers are not resolvable by the index (plain-object property access, dynamic dispatch, cross-language calls). `impact` pairs `UNKNOWN` with a `riskNote` saying so. Confirm with a text search before treating the symbol as safe to change or delete; do not proceed on the strength of a zero.
+- **MUST use `query({search_query: "concept"})` for concepts/flows, `context({name: "symbolName"})` for a named symbol, or `impact` for blast radius, on read-only callers, dependencies, imports, or execution flow.** Graph first; text search only for empty/`UNKNOWN`/literals.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+
+## Never Do
+
+- NEVER edit a function, class, or method before MCP/CLI impact analysis.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis, and never read `UNKNOWN` as an all-clear — it means the walk could not answer, which is the one verdict that requires confirming by other means.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit before MCP/CLI graph change analysis.
+
+## Resources
+
+| Resource | Use for |
+| --- | --- |
+| `gitnexus://repo/terminal-card/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/terminal-card/clusters` | All functional areas |
+| `gitnexus://repo/terminal-card/processes` | All execution flows |
+| `gitnexus://repo/terminal-card/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+| --- | --- |
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->
