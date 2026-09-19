@@ -298,7 +298,10 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 	extra.leaverWasOnTurn = false
 
 	n := len(state.Players)
-	if !onTurn || extra.Direction >= 0 || n == 0 {
+	// Below two seats there is no neighbour to hand the turn to, and a non-nil
+	// OverrideNextTurn would tell the engine the last seat still has work - which
+	// costs the survivor the forfeit win.
+	if !onTurn || extra.Direction >= 0 || n < 2 {
 		return
 	}
 	// Counterclockwise the turn owes to the seat before the leaver, which keeps its
