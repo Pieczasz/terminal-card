@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -138,22 +139,22 @@ func TestLeaderboard_RepositoryErrorIsOpaque(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), "unavailable")
 }
 
-func TestLeaderboard_GameFilterIsPassedThrough(t *testing.T) {
+// The board is always the whole board. A caller-supplied game name reached the
+// repository unvalidated, and anything that is not a real game name misses the cache
+// and costs a join - a free database query per request, from any visitor.
+func TestLeaderboard_GameParamIsIgnored(t *testing.T) {
 	t.Parallel()
-	users := &stubUsers{}
-	rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard?game=Uno")
 
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Equal(t, "Uno", users.gotGame)
-}
+	for _, query := range []string{"", "?game=Uno", "?game=" + strings.Repeat("x", 64), "?game=%27%20OR%201%3D1"} {
+		t.Run("query="+query, func(t *testing.T) {
+			t.Parallel()
+			users := &stubUsers{}
+			rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard"+query)
 
-func TestLeaderboard_AbsentGameMeansAll(t *testing.T) {
-	t.Parallel()
-	users := &stubUsers{}
-	rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard")
-
-	require.Equal(t, http.StatusOK, rec.Code)
-	assert.Empty(t, users.gotGame)
+			require.Equal(t, http.StatusOK, rec.Code)
+			assert.Empty(t, users.gotGame, "the repository must never be handed a caller-supplied game name")
+		})
+	}
 }
 
 func TestUnknownRouteIs404(t *testing.T) {
@@ -361,4 +362,121 @@ func TestLeaderboard_LimitOverflowIsRejected(t *testing.T) {
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
 	assert.Equal(t, 0, users.gotLimit, "the repository must never be reached")
+}
+
+// A repeated parameter takes the first value; the junk after it must not turn a
+// perfectly good request into a 400, nor sneak past the parse.
+func TestLeaderboard_RepeatedLimitUsesTheFirstValue(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		query     string
+		wantCode  int
+		wantLimit int
+	}{
+		{name: "good then junk", query: "?limit=5&limit=abc", wantCode: http.StatusOK, wantLimit: 5},
+		{name: "junk then good", query: "?limit=abc&limit=5", wantCode: http.StatusBadRequest},
+		{name: "empty then good", query: "?limit=&limit=7", wantCode: http.StatusOK, wantLimit: defaultLimit},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			users := &stubUsers{}
+			rec := get(t, Handler(Deps{Users: users}), "/v1/leaderboard"+tt.query)
+
+			require.Equal(t, tt.wantCode, rec.Code)
+			if tt.wantCode == http.StatusOK {
+				assert.Equal(t, tt.wantLimit, users.gotLimit)
+			}
+		})
+	}
+}
+
+// A blank-ish forwarded header used to key every one of these callers to NetKey(""),
+// so they all shared one budget: an attacker could spend it and lock the rest out, or
+// ride someone else's. Falling back to the socket address is the only honest answer.
+func TestTrustedProxy_BlankForwardedHeaderFallsBackToTheSocket(t *testing.T) {
+	t.Parallel()
+
+	for _, xff := range []string{",", " ", ", 10.0.0.1", "not-an-address", "10.0.0.256"} {
+		t.Run("xff="+xff, func(t *testing.T) {
+			t.Parallel()
+			h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 1, TrustedProxy: true})
+
+			send := func(socket string) int {
+				req := httptest.NewRequest(http.MethodGet, "/v1/stats", nil)
+				req.RemoteAddr = socket
+				req.Header.Set("X-Forwarded-For", xff)
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, req)
+				return rec.Code
+			}
+
+			require.Equal(t, http.StatusOK, send("198.51.100.1:1111"))
+			assert.Equal(t, http.StatusOK, send("203.0.113.2:2222"),
+				"a second socket must have its own budget, not share one empty bucket")
+		})
+	}
+}
+
+// NetKey collapses IPv6 to its /64 because one customer is routinely delegated 2^64
+// addresses; without it, a fresh address per request is a free pass.
+func TestRateLimit_IPv6AddressesInOneNetworkShareABudget(t *testing.T) {
+	t.Parallel()
+	h := Handler(Deps{Sessions: fakeSessions(1), RequestsPerMinute: 1})
+
+	send := func(addr string) int {
+		req := httptest.NewRequest(http.MethodGet, "/v1/stats", nil)
+		req.RemoteAddr = addr
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	require.Equal(t, http.StatusOK, send("[2001:db8:1:1::1]:4000"))
+	assert.Equal(t, http.StatusTooManyRequests, send("[2001:db8:1:1:ffff::9]:4001"),
+		"a second address in the same /64 is the same subscriber")
+	assert.Equal(t, http.StatusOK, send("[2001:db8:1:2::1]:4002"),
+		"a different /64 is a different subscriber")
+}
+
+// /healthz backs the container healthcheck, so both of its answers are load-bearing:
+// a 200 that is really unhealthy keeps a wedged process in rotation.
+func TestHealthz(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		health   func(context.Context) error
+		wantCode int
+		wantBody string
+	}{
+		{name: "no probe means the process alone", wantCode: http.StatusOK, wantBody: `{"status":"ok"}`},
+		{
+			name:     "probe passes",
+			health:   func(context.Context) error { return nil },
+			wantCode: http.StatusOK, wantBody: `{"status":"ok"}`,
+		},
+		{
+			name:     "probe fails",
+			health:   func(context.Context) error { return errors.New("dial tcp: connection refused") },
+			wantCode: http.StatusServiceUnavailable, wantBody: `{"error":"unhealthy"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rec := get(t, Handler(Deps{Health: tt.health}), "/healthz")
+
+			require.Equal(t, tt.wantCode, rec.Code)
+			assert.JSONEq(t, tt.wantBody, rec.Body.String())
+			assert.Equal(t, "nosniff", rec.Header().Get("X-Content-Type-Options"))
+			assert.Equal(t, "no-store", rec.Header().Get("Cache-Control"),
+				"a cached health answer is a claim about a moment that has passed")
+			assert.NotContains(t, rec.Body.String(), "connection refused", "the probe's error is ours, not the caller's")
+		})
+	}
 }

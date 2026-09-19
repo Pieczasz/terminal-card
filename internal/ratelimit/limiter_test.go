@@ -186,3 +186,52 @@ func TestSlidingWindowLimiter_FullTableStillAdmitsNewKeys(t *testing.T) {
 	assert.True(t, limiter.Allow("newcomer"), "a new network is admitted, not locked out")
 	assert.LessOrEqual(t, limiter.Size(), 4, "and the table is still bounded")
 }
+
+// The shape that matters for abuse: a full table taking a fresh key on every call,
+// which is what a single IPv6 /48 (65536 networks) buys an attacker. Eviction runs
+// under the lock on every one of these, so it must not be a walk of the table.
+func BenchmarkAllow_NewKeyAtCapacity(b *testing.B) {
+	for _, keys := range []int{1_000, 10_000} {
+		b.Run(fmt.Sprintf("maxKeys=%d", keys), func(b *testing.B) {
+			l := ratelimit.NewSlidingWindowLimiter(120, time.Minute).WithMaxKeys(keys)
+			for i := range keys {
+				l.Allow(strconv.Itoa(i))
+			}
+
+			b.ReportAllocs()
+			for i := 0; b.Loop(); i++ {
+				l.Allow("fresh-" + strconv.Itoa(i))
+			}
+		})
+	}
+}
+
+// Admitting a new key into a full table must cost about the same whether the table
+// holds ten keys or ten thousand, because that path is exactly what an attacker with
+// a /48 to spend drives, and it runs under the limiter's only mutex.
+//
+// A wall-clock budget rather than a unit assertion, because "does not walk the table"
+// has no other observable shape. The margin is deliberately enormous: the walking
+// implementation this replaced measured ~400us per call at 10k keys, so this loop
+// took it ~8s without -race and far longer with it, against ~0.5s here.
+func TestSlidingWindowLimiter_NewKeyAtCapacityDoesNotWalkTheTable(t *testing.T) {
+	t.Parallel()
+	const maxKeys = 10_000
+	const fresh = 20_000
+
+	limiter := ratelimit.NewSlidingWindowLimiter(120, time.Minute).WithMaxKeys(maxKeys)
+	for i := range maxKeys {
+		require.True(t, limiter.Allow(strconv.Itoa(i)))
+	}
+	require.Equal(t, maxKeys, limiter.Size())
+
+	start := time.Now()
+	for i := range fresh {
+		limiter.Allow("flood-" + strconv.Itoa(i))
+	}
+	elapsed := time.Since(start)
+
+	assert.Less(t, elapsed, 5*time.Second,
+		"%d new keys against a full table took %s: eviction is scanning the table again", fresh, elapsed)
+	assert.LessOrEqual(t, limiter.Size(), maxKeys, "and the table is still bounded")
+}
