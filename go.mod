@@ -1,6 +1,6 @@
 module github.com/Pieczasz/terminal-card
 
-go 1.27.0
+go 1.27.1
 
 require (
 	charm.land/bubbles/v2 v2.2.1
@@ -40,7 +40,7 @@ require (
 )
 
 require (
-	charm.land/log/v2 v2.0.0 // indirect
+	charm.land/log/v2 v2.0.1 // indirect
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20250102033503-faa5f7b0171c // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
@@ -50,7 +50,7 @@ require (
 	github.com/cenkalti/backoff/v5 v5.0.3 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/charmbracelet/colorprofile v0.4.3 // indirect
-	github.com/charmbracelet/ultraviolet v0.0.0-20260812204455-68fa937c71be // indirect
+	github.com/charmbracelet/ultraviolet v0.0.0-20260903151058-ae99b731b8c5 // indirect
 	github.com/charmbracelet/x/ansi v0.11.8 // indirect
 	github.com/charmbracelet/x/conpty v0.2.0 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect
@@ -86,7 +86,7 @@ require (
 	github.com/lucasb-eyer/go-colorful v1.4.1 // indirect
 	github.com/lufia/plan9stats v0.0.0-20260627054121-477a66015f15 // indirect
 	github.com/magiconair/properties v1.8.10 // indirect
-	github.com/mattn/go-runewidth v0.0.28 // indirect
+	github.com/mattn/go-runewidth v0.0.29 // indirect
 	github.com/moby/docker-image-spec v1.3.1 // indirect
 	github.com/moby/go-archive v0.2.0 // indirect
 	github.com/moby/moby/api v1.55.0 // indirect
@@ -115,7 +115,7 @@ require (
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20260825221802-da73d73af1c5 // indirect
-	google.golang.org/genproto/googleapis/rpc v0.0.0-20260825221802-da73d73af1c5 // indirect
+	google.golang.org/genproto/googleapis/api v0.0.0-20260904194346-d0f1323225a4 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260904194346-d0f1323225a4 // indirect
 	google.golang.org/protobuf v1.36.12 // indirect
 )

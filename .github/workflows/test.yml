@@ -15,7 +15,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: true
 
     - name: Download dependencies
@@ -32,7 +32,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: true
 
     - name: Download dependencies
@@ -49,12 +49,12 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: false
 
     - name: golangci-lint
       # Prebuilt binaries lag the module's Go version (v2.12.x is go1.26 and
-      # refuses go 1.27.0). goinstall builds with the setup-go toolchain.
+      # refuses go 1.27.x). goinstall builds with the setup-go toolchain.
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.13.2
@@ -68,7 +68,7 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
 
     # Reachability-based, so it fails only on advisories our call graph can actually
     # reach. Clean today; this is what keeps it clean.
