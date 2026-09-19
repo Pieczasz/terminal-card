@@ -85,7 +85,8 @@ func lookupSessionState(s ssh.Session) (*sessionState, bool) {
 	if !ok {
 		return nil, false
 	}
-	return st.(*sessionState), true
+	state, ok := st.(*sessionState)
+	return state, ok
 }
 
 // ErrServerFull is Connect's capacity refusal.
@@ -513,7 +514,9 @@ func sessionLifecycle(deps ServerDependencies, tracker *SessionTracker) wish.Mid
 
 func startSession(s ssh.Session) *sessionState {
 	pty, _, _ := s.Pty()
-	ctx, span := otel.Tracer("terminal-card/ssh").Start(s.Context(), "ssh.session",
+	tracer := otel.Tracer("terminal-card/ssh")
+	//nolint:spancheck // the span outlives this function: finishSession ends it as the last deferred step
+	ctx, span := tracer.Start(s.Context(), "ssh.session",
 		trace.WithAttributes(
 			// No client address here: the span also carries the username once the
 			// player is known, and joining the two is exactly the record a trace store
@@ -530,7 +533,7 @@ func startSession(s ssh.Session) *sessionState {
 		"client_net", clientNet(s.RemoteAddr()),
 		"client_version", s.Context().ClientVersion(),
 	)
-	return st
+	return st //nolint:spancheck // the span outlives this call: finishSession ends it, as the outermost deferred step of sessionLifecycle
 }
 
 func finishSession(s ssh.Session, st *sessionState) {

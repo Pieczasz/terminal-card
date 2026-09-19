@@ -328,7 +328,7 @@ func checkChipConservation(extra *State) {
 	slog.Error("poker chip conservation broken",
 		"hand", extra.HandNumber,
 		"phase", extra.Phase.String(),
-		"delta", int64(total)-int64(extra.handStartChips),
+		"delta", int64(total)-int64(extra.handStartChips), //nolint:gosec // G115: chip totals are far below 2^63
 	)
 }
 

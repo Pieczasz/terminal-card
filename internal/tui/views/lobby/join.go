@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -305,7 +306,7 @@ func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 		styles.PadTruncate(entry.GameName, colGame),
 		styles.PadTruncate(fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers), colSeats),
 		modeRendered,
-		styles.PadTruncate(fmt.Sprint(entry.AvgElo), colRating),
+		styles.PadTruncate(strconv.FormatUint(uint64(entry.AvgElo), 10), colRating),
 	)
 
 	marker := " "

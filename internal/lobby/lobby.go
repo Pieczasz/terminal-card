@@ -585,6 +585,8 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			// InGame and an inherited leader can change no setting on the screen.
 			l.releaseFinishedGame()
 			return
+		default:
+			// Turn and action events are the views' business; the lobby counts nothing.
 		}
 	}
 

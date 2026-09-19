@@ -50,7 +50,7 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 	ctx context.Context, fingerprint string,
 ) (_ *db.User, _ *db.PublicKey, err error) {
 	ctx, span := tracer.Start(ctx, "db.LoadUserByFingerprint")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	var dbKey db.PublicKey
 	err = q.db.WithContext(ctx).Where("fingerprint = ?", fingerprint).
@@ -78,7 +78,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 	ctx context.Context, username, fingerprint string,
 ) (_ *db.User, _ *db.PublicKey, err error) {
 	ctx, span := tracer.Start(ctx, "db.RegisterUserWithKey")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err := db.ValidateUsername(username); err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", db.ErrInvalidUsername, err)
@@ -154,7 +154,7 @@ func (q *gormUserRepository) BestPlayers(
 	ctx context.Context, limit int, gameName string,
 ) (_ []db.Ranking, err error) {
 	ctx, span := tracer.Start(ctx, "db.BestPlayers", trace.WithAttributes(attribute.Int("limit", limit)))
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	limit = max(limit, 0)
 
@@ -209,8 +209,8 @@ func (q *gormUserRepository) BestPlayers(
 
 func (q *gormUserRepository) UserProfile(ctx context.Context, userID uint) (_ *db.User, err error) {
 	ctx, span := tracer.Start(ctx, "db.UserProfile",
-		trace.WithAttributes(attribute.Int64("user_id", int64(userID))))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.Int64("user_id", int64(userID)))) //nolint:gosec // G115: a serial id never nears 2^63
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	var user db.User
 	err = q.db.WithContext(ctx).Preload("PublicKeys").
@@ -231,7 +231,7 @@ func (q *gormUserRepository) UpdateUserActivity(
 	ctx context.Context, user *db.User, key *db.PublicKey,
 ) (err error) {
 	ctx, span := tracer.Start(ctx, "db.UpdateUserActivity")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	// Omit(clause.Associations) on both: user arrives with Rankings and their Games
 	// preloaded and key with its User, and GORM's save hooks upsert every association
@@ -252,8 +252,8 @@ func (q *gormUserRepository) UserMatchHistory(
 	ctx context.Context, userID uint, limit int,
 ) (_ []db.MatchParticipant, err error) {
 	ctx, span := tracer.Start(ctx, "db.UserMatchHistory",
-		trace.WithAttributes(attribute.Int64("user_id", int64(userID)), attribute.Int("limit", limit)))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.Int64("user_id", int64(userID)), attribute.Int("limit", limit))) //nolint:gosec // G115: serial id
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	// GORM reads a negative Limit as "no limit", which would stream the whole history.
 	limit = max(limit, 0)
@@ -277,8 +277,8 @@ func (q *gormUserRepository) UserMatchHistory(
 // those tables, and their history has to keep resolving to a name.
 func (q *gormUserRepository) DeleteAccount(ctx context.Context, userID uint) (err error) {
 	ctx, span := tracer.Start(ctx, "db.DeleteAccount",
-		trace.WithAttributes(attribute.Int64("user_id", int64(userID))))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.Int64("user_id", int64(userID)))) //nolint:gosec // G115: a serial id never nears 2^63
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		return eraseUserLocked(tx, userID)

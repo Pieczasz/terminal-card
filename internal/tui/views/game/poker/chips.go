@@ -2,6 +2,7 @@ package poker
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
@@ -63,7 +64,7 @@ func chipStyle(t styles.Theme, denomIndex int) lg.Style {
 // matching the order the chips are drawn in.
 func chipForKey(key string) (uint, bool) {
 	for i, d := range chipDenoms {
-		if key == fmt.Sprint(i+1) {
+		if key == strconv.Itoa(i+1) {
 			return d.Value, true
 		}
 	}

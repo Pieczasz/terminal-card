@@ -17,6 +17,7 @@ import (
 
 const (
 	keyHintsPlay = "<-/h: left | ->/l: right | enter: play | esc: leave"
+	//nolint:gosec // G101: "Pass" is the card pass, not a credential
 	keyHintsPass = "<-/h: left | ->/l: right | space: toggle | enter: pass 3 | esc: leave"
 	keyHintsOver = "enter: next hand | esc: leave match"
 )

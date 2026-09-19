@@ -148,7 +148,7 @@ func TestRenderHandColorRow_FollowsTheHandItSitsOver(t *testing.T) {
 
 	hand := make([]deck.Card, 7)
 	for i := range hand {
-		hand[i] = deck.Card{Rank: deck.Rank(logic.Zero + deck.Rank(i)), Suit: logic.ColorRed}
+		hand[i] = deck.Card{Rank: logic.Zero + deck.Rank(i), Suit: logic.ColorRed}
 	}
 
 	tests := []struct {

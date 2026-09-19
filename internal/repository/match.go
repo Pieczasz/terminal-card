@@ -23,14 +23,14 @@ import (
 
 var tracer = otel.Tracer("terminal-card/repository")
 
-// endSpan closes a span, marking it failed on error: recording the error without the
-// status leaves the one failed span reading as successful.
-func endSpan(span trace.Span, err error) {
+// recordSpanResult marks a span failed on error: recording the error without the
+// status leaves the one failed span reading as successful. Ending it stays at the
+// call site so the End is visible on every path.
+func recordSpanResult(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
-	span.End()
 }
 
 // A duplicate seat would move that player's rating twice, then collide on the
@@ -90,7 +90,7 @@ func (q *gormMatchRepository) RecordCasualMatch(
 
 	ctx, span := tracer.Start(ctx, "db.RecordCasualMatch",
 		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
 		return fmt.Errorf("record casual match: %w", err)
@@ -120,7 +120,7 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 
 	ctx, span := tracer.Start(ctx, "db.FinalizeRankedMatch",
 		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
 		return fmt.Errorf("finalize ranked match: %w", err)

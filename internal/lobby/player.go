@@ -1,7 +1,7 @@
 package lobby
 
 import (
-	"fmt"
+	"strconv"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -21,7 +21,7 @@ func NewPlayer(u *db.User) *game.Player {
 		}
 	}
 	return &game.Player{
-		ID:      fmt.Sprint(u.ID),
+		ID:      strconv.FormatUint(uint64(u.ID), 10),
 		UserID:  u.ID,
 		Name:    u.Username,
 		Ratings: ratings,

@@ -152,7 +152,10 @@ const (
 
 func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.currentLobby == nil {
-		return m, m.goHome()
+		// Separate statement on purpose: m is returned by value and goHome mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.goHome()
+		return m, cmd
 	}
 	if handled, cmd := views.HandleCommonMsg(msg, &m.global); handled {
 		return m, cmd
@@ -239,7 +242,10 @@ func (m *model) handleLeaveConfirm(key string) (tea.Model, tea.Cmd) {
 	case "y", "Y":
 		m.global.LobbyManager.LeaveLobby(m.selfPlayer())
 		m.unsubscribe()
-		return m, m.goHome()
+		// Separate statement on purpose: m is returned by value and goHome mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.goHome()
+		return m, cmd
 	case "n", "N", "esc":
 		m.showLeaveConfirm = false
 	}
@@ -284,7 +290,10 @@ func (m *model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case lobby.EventLobbyClosed:
 		m.unsubscribe()
-		return m, m.goHome()
+		// Separate statement on purpose: m is returned by value and goHome mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.goHome()
+		return m, cmd
 	case lobby.EventGameStarted:
 		engine, ok := msg.Payload.(*game.Engine)
 		if !ok || engine == nil {
@@ -315,7 +324,10 @@ func (m *model) handleLobbyEvent(msg lobby.Event) (tea.Model, tea.Cmd) {
 			}
 			if !found {
 				m.unsubscribe()
-				return m, m.goHome()
+				// Separate statement on purpose: m is returned by value and goHome mutates it
+				// through the pointer receiver; the order of those two in one return is unspecified.
+				cmd := m.goHome()
+				return m, cmd
 			}
 		}
 		m.isPrivate = m.currentLobby.IsPrivate()
@@ -421,7 +433,7 @@ func (m *model) renderSettings(isLeader bool) string {
 
 	return lg.JoinVertical(lg.Left,
 		"  "+m.global.Theme.SectionHeading.Render("Settings"),
-		fmt.Sprintf("  Lobby Code: %s", m.global.Theme.LobbyCode.Render(m.currentLobby.Code())),
+		"  Lobby Code: "+m.global.Theme.LobbyCode.Render(m.currentLobby.Code()),
 		renderOption(cursorGame, "Game", m.currentLobby.GameName()),
 		renderOption(cursorMaxPlayers, "Max Players", strconv.Itoa(m.maxPlayers)),
 		renderOption(cursorVisibility, "Visibility", fmt.Sprintf("%-7s", vis)),

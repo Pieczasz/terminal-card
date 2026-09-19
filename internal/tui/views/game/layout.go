@@ -304,7 +304,7 @@ func RenderHeroBand(t styles.Theme, actionErr error, rows ...string) string {
 // would grow botHeight and shove the discard pile every time the clock arms.
 func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining time.Duration) string {
 	statusStyle := t.Dim.MarginTop(1).MarginBottom(1)
-	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)
+	statusStr := "Current turn: " + currentPlayer
 	if isMyTurn {
 		statusStyle = statusStyle.Foreground(t.Success).Bold(true)
 		statusStr = "> YOUR TURN <"

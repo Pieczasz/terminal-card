@@ -75,7 +75,7 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 		p.Cards = cards
 	}
 
-	extra.PassDirection = PassDirection((extra.HandNumber - 1) % 4)
+	extra.PassDirection = PassDirection((extra.HandNumber - 1) % 4) //nolint:gosec // G115: a value in 0..3 always fits
 	if extra.PassDirection == PassNone {
 		extra.Stage = StageTrickPlay
 		leader := findTwoOfClubs(state)

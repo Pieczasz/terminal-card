@@ -104,9 +104,13 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		return current.ID, nil, true
 	}
 
-	// armTurnTimerLocked never arms without a TurnTimeoutHandler, and Rules is set once
-	// at construction, so this cannot fail.
-	safe := e.state.Rules.(TurnTimeoutHandler).TimeoutAction(e.state)
+	// armTurnTimerLocked never arms without a TurnTimeoutHandler and Rules is set once
+	// at construction, so a missing handler here is a wiring bug. It falls into the
+	// "no safe move" path below - the seat goes, the table does not panic.
+	var safe Action
+	if handler, ok := e.state.Rules.(TurnTimeoutHandler); ok {
+		safe = handler.TimeoutAction(e.state)
+	}
 	if safe == nil {
 		// No safe move: the seat goes rather than the table waiting. A full set of
 		// misses is what makes that re-checkable in removeIfStillIdle. Reaching this in

@@ -2,6 +2,7 @@ package crazyeight
 
 import (
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -21,7 +22,7 @@ func benchTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
+			ID:     strconv.Itoa(i + 1),
 			UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
 		})
 	}

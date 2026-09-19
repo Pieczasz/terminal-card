@@ -26,7 +26,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	case "left", "h":
 		m.MoveCursor(-1)
 		return m, nil
@@ -68,7 +71,10 @@ func (m *Model) handleSpace() (tea.Model, tea.Cmd) {
 
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.Base.Phase == game.Finished {
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	}
 
 	if m.stage == logic.StageHandOver && !m.matchComplete {

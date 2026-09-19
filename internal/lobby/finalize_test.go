@@ -156,7 +156,7 @@ type syncBuffer struct {
 func (b *syncBuffer) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return b.buf.Write(p) //nolint:wrapcheck // io.Writer contract
+	return b.buf.Write(p)
 }
 
 func (b *syncBuffer) Reset() {

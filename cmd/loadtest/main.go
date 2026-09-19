@@ -140,7 +140,7 @@ func (r *run) openSession(i int) (sess *ssh.Session, connectLatency time.Duratio
 	cfg := &ssh.ClientConfig{
 		User:            fmt.Sprintf("%s_%04d", r.prefix, i),
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: ssh.InsecureIgnoreHostKey(), //nolint:gosec // G106: a load tool against a server we just started
 		Timeout:         30 * time.Second,
 	}
 

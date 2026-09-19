@@ -81,8 +81,7 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		global.Theme = styles.NewTheme(msg.IsDark())
 		return true, nil
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			return true, tea.Quit
 		}
 	}

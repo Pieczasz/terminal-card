@@ -48,7 +48,7 @@ func TestSlidingWindowLimiter_Allow(t *testing.T) {
 			limiter := ratelimit.NewSlidingWindowLimiter(tt.limit, tt.window)
 
 			var last bool
-			for i := 0; i < tt.requests; i++ {
+			for range tt.requests {
 				last = limiter.Allow("1.2.3.4")
 			}
 			assert.Equal(t, tt.wantLast, last)

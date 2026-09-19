@@ -3,6 +3,7 @@ package lobby
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/game"
@@ -47,7 +48,7 @@ func BenchmarkLobbyView_Render(b *testing.B) {
 		lobby.WithCardGame(testGameName))
 	require.NoError(b, err)
 	for i := 2; i <= 4; i++ {
-		g := &game.Player{ID: fmt.Sprint(i), UserID: uint(i), Name: fmt.Sprintf("p%d", i)}
+		g := &game.Player{ID: strconv.Itoa(i), UserID: uint(i), Name: fmt.Sprintf("p%d", i)}
 		require.NoError(b, manager.JoinLobbyByCode(l.Code(), g))
 	}
 

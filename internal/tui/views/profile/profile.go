@@ -196,7 +196,7 @@ func (m model) renderContent(contentHeight int) string {
 		histItems = max(maxItems-3-rankItems, 1)
 	}
 
-	userInfo := fmt.Sprintf("Profile for: %s", m.userProfile.Username)
+	userInfo := "Profile for: " + m.userProfile.Username
 	filters := m.global.Theme.Muted.Render(fmt.Sprintf("Game: %s  Result: %s",
 		styles.PadTruncate(m.gameFilters[m.gameFilterIdx], colGame),
 		styles.PadTruncate(m.resultFilters[m.resultIdx], len(filterLosses)),

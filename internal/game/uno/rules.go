@@ -67,6 +67,8 @@ func (r *Rules) applyOpeningCard(state *game.State, extra *State, card deck.Card
 		// this table has no dealer to measure from. The seat the engine picked keeps
 		// it and only the direction flips.
 		extra.Direction = -1
+	default:
+		// A number card (a Wild cannot open, see OnGameStart): the first seat plays.
 	}
 	state.CurrentTurn = first
 	state.OverrideNextTurn = &first

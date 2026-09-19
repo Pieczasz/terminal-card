@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"path"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -142,7 +143,7 @@ func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*
 	players := make([]*game.Player, 0, seats)
 	for i := range seats {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
+			ID:     strconv.Itoa(i + 1),
 			UserID: uint(i + 1),
 			Name:   fmt.Sprintf("player%d", i+1),
 		})

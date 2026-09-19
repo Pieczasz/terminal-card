@@ -3,6 +3,7 @@ package poker
 import (
 	"fmt"
 	"runtime"
+	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -21,7 +22,7 @@ func benchTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
+			ID:     strconv.Itoa(i + 1),
 			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
@@ -82,7 +83,7 @@ func TestCapacity_FrameBytesAndSessionMemory(t *testing.T) {
 	players := make([]*game.Player, 0, 6)
 	for i := range 6 {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
+			ID:     strconv.Itoa(i + 1),
 			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
@@ -145,7 +146,7 @@ func benchParallelTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
+			ID:     strconv.Itoa(i + 1),
 			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}

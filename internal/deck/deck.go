@@ -25,7 +25,7 @@ func New(cards []Card) *Pile {
 func (p *Pile) Shuffle() {
 	var seed [32]byte
 	_, _ = rand.Read(seed[:])
-	mrand.New(mrand.NewChaCha8(seed)).Shuffle(len(p.cards), func(i, j int) {
+	mrand.New(mrand.NewChaCha8(seed)).Shuffle(len(p.cards), func(i, j int) { //nolint:gosec // G404: seeded from crypto/rand just above
 		p.cards[i], p.cards[j] = p.cards[j], p.cards[i]
 	})
 }

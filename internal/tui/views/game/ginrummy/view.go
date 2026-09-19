@@ -110,7 +110,7 @@ func (m *Model) renderHandResult() string {
 		return lg.NewStyle().Foreground(m.Global.Theme.Warning).Render("WALL - stock exhausted, no score")
 	}
 
-	banner := ""
+	var banner string
 	switch {
 	case r.Gin:
 		banner = m.Global.Theme.SuccessText.Render("GIN!")
