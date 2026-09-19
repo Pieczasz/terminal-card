@@ -1,0 +1,36 @@
+---
+/*
+ * Same arrangement as privacy.astro: the body is the markdown under src/legal/, which
+ * TERMS.md at the repository root also carries.
+ */
+import BackLink from "../components/BackLink.astro";
+import Base from "../layouts/Base.astro";
+import { Content } from "../legal/terms.md";
+
+const UPDATED = "2026-09-19";
+---
+
+<Base
+  title="Terms of Service - tty.cards"
+  description="The terms for playing on tty.cards: a free, open-source, as-is hobby service. Your SSH key is your account, no cheating or rating manipulation, no warranty."
+  path="/terms/"
+>
+  <article class="shell max-w-[82ch] pt-[clamp(5ch,7vw,9ch)]" data-hero>
+    <div
+      class="flex flex-wrap items-center gap-x-panel gap-y-cell text-[0.8rem] tracking-[0.18em] uppercase"
+    >
+      <BackLink href="/" label="home" />
+      <span class="text-dim">updated {UPDATED}</span>
+    </div>
+
+    <h1
+      class="mt-gutter mb-gap text-[clamp(1.4rem,3vw+0.6rem,2.3rem)] leading-[1.25] font-bold text-balance"
+    >
+      Terms of Service
+    </h1>
+
+    <div class="prose">
+      <Content />
+    </div>
+  </article>
+</Base>

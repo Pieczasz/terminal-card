@@ -1,0 +1,83 @@
+---
+/*
+ * The policy body is the markdown under src/legal/, which is also what PRIVACY.md at
+ * the repository root carries - one wording, so the published page and the file in
+ * the repo cannot drift into saying different things about the same database.
+ */
+import BackLink from "../components/BackLink.astro";
+import TerminalWindow from "../components/TerminalWindow.astro";
+import Base from "../layouts/Base.astro";
+import { Content } from "../legal/privacy.md";
+
+const UPDATED = "2026-09-19";
+
+const stored = [
+  [
+    "username",
+    "1-16 characters, chosen by you on your first connection. A pseudonym is fine.",
+  ],
+  [
+    "key fingerprint",
+    "The SHA256 fingerprint of your SSH public key. The key itself is never stored, and your private key never leaves your machine.",
+  ],
+  [
+    "timestamps",
+    "When the account was created, when it was last seen, when each key was last used.",
+  ],
+  [
+    "ratings & matches",
+    "One Elo rating per game, and for each finished match: the game, ranked or casual, your placement, your rating change, the time.",
+  ],
+  [
+    "in memory only",
+    "Your IP address for rate limiting (minutes), and which accounts have a live session right now, so a reconnect finds your seat.",
+  ],
+  [
+    "never",
+    "No email address, no real name, no password, no chat, no payment details, no cookies, no analytics.",
+  ],
+];
+---
+
+<Base
+  title="Privacy Policy - tty.cards"
+  description="What tty.cards stores, why, for how long, and how to get it removed. No cookies, no analytics, no trackers - a plain description of what the open-source code actually does."
+  path="/privacy/"
+>
+  <article class="shell max-w-[82ch] pt-[clamp(5ch,7vw,9ch)]" data-hero>
+    <div
+      class="flex flex-wrap items-center gap-x-panel gap-y-cell text-[0.8rem] tracking-[0.18em] uppercase"
+    >
+      <BackLink href="/" label="home" />
+      <span class="text-dim">updated {UPDATED}</span>
+    </div>
+
+    <h1
+      class="mt-gutter mb-gap text-[clamp(1.4rem,3vw+0.6rem,2.3rem)] leading-[1.25] font-bold text-balance"
+    >
+      Privacy Policy
+    </h1>
+
+    <TerminalWindow
+      title="WHAT WE STORE"
+      meta="the short version"
+      tone="gold"
+      class="mb-[6ch]"
+    >
+      <dl class="grid gap-panel text-[0.95rem]">
+        {
+          stored.map(([term, detail]) => (
+            <div class="grid gap-cell sm:grid-cols-[18ch_1fr] sm:gap-gutter">
+              <dt class="font-bold text-accent">{term}</dt>
+              <dd class="m-0 text-muted text-pretty">{detail}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </TerminalWindow>
+
+    <div class="prose">
+      <Content />
+    </div>
+  </article>
+</Base>
