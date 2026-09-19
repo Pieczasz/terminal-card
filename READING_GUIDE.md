@@ -8,9 +8,11 @@ says “open X”, open that file and skim before moving on.
 
 | Doc | Role |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Contracts, topology, invariants |
+| [`README.md`](README.md) | Run it, play it, the make targets |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Contracts, topology, invariants - **canonical** for package responsibilities (§7) and the invariant list (§10) |
 | [`ONBOARDING.md`](ONBOARDING.md) | Product context, patterns, ops |
-| [`CLAUDE.md`](CLAUDE.md) | Short agent brief (often the freshest operational truth) |
+| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add a game, test and commit norms |
+| [`CLAUDE.md`](CLAUDE.md) | Short agent brief |
 | This file | Ordered walk + “where is X?” + tooling |
 
 **Suggested pace:** Days 1-2 = Parts A-C (spine). Day 3 = Part D (game engine).
@@ -43,8 +45,9 @@ npx gitnexus context DisconnectPlayer
 npx gitnexus query -q "match end persistence" -g "EventGameEnded to MatchRepository"
 ```
 
-[`ARCHITECTURE.md`](ARCHITECTURE.md) §10 was filled from these queries on
-`main@843ff1b` (4.1k nodes / 19k edges). Re-run after the spine moves.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §13 records the two call-graph seams worth
+knowing before you trust any single query result. Re-run `analyze` after the spine
+moves; the index under `.gitnexus/` is local and not committed.
 
 **What it is good for:** call chains, impact before a refactor, finding every
 implementer of `Rules`, spotting that Submit↛Finalize is an async hop.
@@ -76,8 +79,8 @@ callgraph -format digraph ./cmd/server | head
    rules are there for a reason.
 2. Prefer **one vertical slice** (SSH -> lobby -> engine -> finalize) over reading
    every game package first.
-3. When stuck, search for the **type name** (`SessionAPI`, `finalizeRequest`,
-   `disconnectGrace`) not the English phrase.
+3. When stuck, search for the **type name** (`finalizeRequest`, `disconnectGrace`,
+   `trackedSession`) not the English phrase.
 4. Tests are documentation: `internal/lobby/finalize_test.go`,
    `internal/ssh/lifecycle_test.go`, `internal/game/poker/streets_test.go`.
 
@@ -100,7 +103,7 @@ callgraph -format digraph ./cmd/server | head
   wish middleware -> Bubble Tea Router -> View       
                                                  
                                                  
-                lobby.SessionAPI / BoundEngine    
+                lobby.Manager / BoundEngine       
                                                   
   SessionTracker (userID -> generation)             
 
@@ -208,10 +211,17 @@ channel close
 
 ### C1. `internal/tui/app.go` + `internal/tui/router/router.go`
 
-`ModelDependencies.LobbyManager` is `lobby.SessionAPI`. Router owns
-`GlobalContext`, swaps views, closes `Closer`s, idle watchdog.
+`ModelDependencies.LobbyManager` is `*lobby.Manager`. Router owns `GlobalContext`,
+swaps views, closes `Closer`s, idle watchdog.
 
-Open `internal/lobby/session.go` - the exact method list the UI may call.
+The `lobby.SessionAPI` interface that used to sit here is **gone**: one
+implementation, one consumer, and an edit every time a view needed a method. Views
+reach the manager through `GlobalContext.LobbyManager`. What the UI must *not* touch
+is still enforced by what is absent - there is no `MatchRepository` on the context.
+
+Also read `internal/tui/styles/common.go` before any view work: `layoutHeights` /
+`AvailableContentHeight` / `RenderMainLayout` / `TitleHeightBudget` are the fit budget
+every screen is tested against at 64x20, 80x24 and 120x50.
 
 ### C2. Catalog wiring
 
@@ -254,9 +264,9 @@ Tiny state machine: `pending` timers -> `expiring` claim -> `LeaveLobby`.
 
 | Symbol | Role |
 |---|---|
-| `options.cardGame string` | Domain game id |
+| `options.cardGame string` | Domain game id (display name; the slug is resolved at start into `db.GameRef`) |
 | `ToggleReady` / `startGameLocked` | Match birth |
-| `watchGameLocked` / `handleBroadcasterEvents` | Idle leave + finalize |
+| `watchGameLocked` / `handleBroadcasterEvents` | Idle leave + finalize; **takes the finalize snapshot** |
 | `requestFinalize` | Snapshot -> Manager |
 | `releaseFinishedGame` | Back to Waiting |
 
@@ -266,8 +276,12 @@ Tiny state machine: `pending` timers -> `expiring` claim -> `LeaveLobby`.
 Rating gate:
 
 ```text
-rated = isRanked && !shuttingDown && reason != EndReasonRulesError
+rated = isRanked && !shuttingDown &&
+        reason != EndReasonRulesError && reason != EndReasonAbandoned
 ```
+
+`EndReasonForfeit` (last player standing) **is** rated. Read `unratedReason` for the
+one-line justification of each exclusion.
 
 ### D5. `internal/lobby/browse.go`
 
@@ -283,7 +297,8 @@ rated = isRanked && !shuttingDown && reason != EndReasonRulesError
 ```
 Engine finishGameLocked -> EventGameEnded
   -> Lobby.handleBroadcasterEvents
-  -> requestFinalize(finalizeRequest{code, gameName, ranked, startedAt})
+  -> requestFinalize(req)   // finalizeRequest{lobbyCode, game db.GameRef,
+                            //   isRanked, startedAt} - SNAPSHOTTED AT GAME START
   -> Manager.finalizeFinishedGame
       registerFinalizer
       StandingsWithPlaces
@@ -363,7 +378,9 @@ Inside ranked finalize, note:
 - `lockPairing` / `pairingAdvisoryKey`
 - soft-delete revive in `seedRankingRows`
 - provisional `MatchesPlayed`
-- `samePairingCountLast24h` damping
+- `repeatedPairCountLast24h` damping (per **pair**, across games) and
+  `unpaidAgainstProvisional` in `internal/elo` (per **pair**, not per table)
+- `DeleteAccount` / `eraseUserLocked` - the erasure path
 
 ### F2. Elo math
 
@@ -382,34 +399,12 @@ session counts after you understand the code paths.
 
 ---
 
-## Package map (current non-test layout)
+## Package map
 
-```
-cmd/server/main.go composition root, drain
-cmd/loadtest/ SSH concurrency harness
-
-internal/
-  catalog/ single game registration list
-  config/ env + nginx/alloy/prom/grafana assets
-  db/ models, interfaces, errors.go, migrations
-  repository/ GORM UserRepository + MatchRepository
-  ssh/ Wish server, auth, SessionTracker
-  lobby/ Manager, Lobby, browse, grace, finalize, SessionAPI
-  game/ Engine, Rules, BoundEngine, turn clock, shed
-    crazyeight|uno|hearts|ginrummy|poker/
-  deck/ cards + shared hand helpers
-  elo/ rating math
-  broadcaster/ latest-wins fan-out
-  tui/
-    app.go, router/ session root
-    components/ cards, fan, picker, table
-    styles/ theme + pad
-    views/home|lobby|profile|leaderboard|game/...
-  httpapi/ public stats JSON
-  observability/ OTel + metrics
-  ratelimit/ sliding window + NetKey (/64)
-  testutil/ shared test DB (applies migrations)
-```
+The annotated file tree is [`ONBOARDING.md`](ONBOARDING.md) §2 - one line per file,
+kept current. What each package **owns and must not do** is
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §7. Neither is repeated here; use the index below
+to jump straight at a question instead.
 
 ---
 
@@ -428,9 +423,15 @@ internal/
 | TUI reading engine state? | `Session.Sync` -> `BoundEngine.Frame` |
 | Poker double-read bug class? | `views/game/poker/model.go` single Frame |
 | Browse list sorting? | `lobby/browse.go` |
-| Lock order? | Manager then Lobby - `ARCHITECTURE.md` §4.6 |
-| Rate limit keying on IPv6? | `ratelimit/netkey.go` |
+| Lock order? | Manager → Lobby → Engine (State has no lock) - `ARCHITECTURE.md` §4.6 |
+| Rate limit keying on IPv6? | `ratelimit/netkey.go`; fail-closed in `ssh.netKeyFor` |
+| Why can't I register? | `registrationLimit` in `ssh/server.go`; `mapRegisterError` |
 | Add a migration? | `make migrate-create`, files under `db/migrations/` |
+| Why is the game row keyed on a slug? | `db/games.go` `GameRef`, migration `000005` |
+| Why didn't my screen fit? | `styles/common.go` `layoutHeights` / `AvailableContentHeight` |
+| Where does an account get erased? | `repository/user.go` `eraseUserLocked` |
+| Where do poker chips get refunded? | `poker/streets.go` `refundUncalled`, `awardUncontested` |
+| What does a player's connect log record? | `client_net`, the /64 - `ssh/server.go` `clientNet` |
 
 ---
 
@@ -457,9 +458,12 @@ When you change a contract (SessionTracker, finalize ownership, grace, Frame
 signature, catalog shape), update in this order:
 
 1. [`CLAUDE.md`](CLAUDE.md) (agents hit it first)
-2. [`ARCHITECTURE.md`](ARCHITECTURE.md) §3-§8
+2. [`ARCHITECTURE.md`](ARCHITECTURE.md) §3-§11
 3. This file’s Part that covers the path
 4. [`ONBOARDING.md`](ONBOARDING.md) only if the day-one story changed
+5. [`CHANGELOG.md`](CHANGELOG.md) if a player or an operator would notice
 
-Do not leave commit SHAs as the source of truth for long; replace the “current
-as of” line when the spine moves.
+Do not leave commit SHAs as the source of truth for long. When in doubt about which
+document owns a fact: `ARCHITECTURE.md` owns contracts and invariants, `ONBOARDING.md`
+owns the annotated tree and the product story, `README.md` owns commands and
+configuration, this file owns the order you read them in.

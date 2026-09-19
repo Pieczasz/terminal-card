@@ -29,7 +29,7 @@ SSH connection -> wish middleware -> Bubble Tea `Router` -> view -> `game.BoundE
 
 `internal/catalog/catalog.go` `All` is the only place a game is declared, and each entry carries both the rules factory and the TUI view constructor. `cmd/server/main.go` builds the `game.Registry` from it; `internal/tui/app.go` registers routes from it. A game cannot be registered without a view (`catalog_test.go` fails on a missing field or duplicate slug); copying an entry and changing only the rules still compiles, so keep the pair in lockstep by hand.
 
-Two identifiers, two consumers: `Module.Name` (display name) is the registry key and what `db.Game.Name` stores; `Slug` is what the TUI derives routes from (`router.GameRoute(slug)` -> `"game_<slug>"`). `internal/game` deliberately knows nothing about routes.
+Two identifiers, two consumers: `Module.Name` (display name) is the registry key and the lobby option, and `db.Game.Name` stores it for display only; `Slug` is what the TUI derives routes from (`router.GameRoute(slug)` -> `"game_<slug>"`) **and** the persisted game identity, `games.slug` (migration 000005). The pair travels as `db.GameRef{Slug, Name}`, built at game start in `lobby.go`. Changing a slug migrates data; changing a name does not. `internal/game` deliberately knows nothing about routes.
 
 ### Shared helpers, not per-game copies
 
@@ -37,9 +37,12 @@ Two identifiers, two consumers: `Module.Name` (display name) is the registry key
 removal that never aliases), and three distinct rank questions that must not be
 swapped - `RankValue` (Ace high, 14, for poker and Hearts), `RunOrder` (Ace low 1..13,
 courts distinct, for Gin Rummy runs) and `PipValue` (courts count 10, for deadwood).
+All three answer 0 outside Ace..King, Joker included - losing loudly beats tying the ace.
+`IsSuit` is the guard for a named suit (refuses `NoSuit`, the zero value, client garbage).
 Standard ranks are 1-based, so a zero `deck.Card` is detectably empty rather than the
 ace of spades; Uno's extra ranks sit in their own block at 20+. `AllRanks` is what
-makes `Rank`-keyed maps testable for exhaustiveness.
+makes `Rank`-keyed maps testable for exhaustiveness. `Pile.Shuffle()` returns nothing:
+crypto/rand cannot fail on Go 1.24+, so the plumbed error was an unreachable branch.
 
 `game.AnyScoreAtLeast` is the shared match-target check for Hearts and Gin Rummy.
 
@@ -48,7 +51,7 @@ makes `Rank`-keyed maps testable for exhaustiveness.
 - `internal/db` - GORM models **and** the `UserRepository` / `MatchRepository` interfaces. It defines the contract.
 - `internal/repository` - the GORM implementations. Everything else depends on the `db` interfaces, never on this package (except `cmd/server`, which is the composition root, and `internal/ssh` for its error sentinels).
 - `internal/game` - pure rules/engine, no db, no TUI, no routes. Seat identity is the scalars on `game.Player` (`UserID`, `Name`, `Ratings`), not a `*db.User`.
-- `internal/tui` - presentation only; reaches state through `router.GlobalContext`.
+- `internal/tui` - presentation only; reaches state through `router.GlobalContext`, which carries `*lobby.Manager` directly (the one-implementation `lobby.SessionAPI` interface is gone) and never a `MatchRepository`.
 
 ### Engine and Rules contract
 
@@ -60,7 +63,7 @@ Mid-hand disconnects: implement the optional `game.PlayerLeaveHandler` (`OnPlaye
 
 ### Turn clock
 
-`applyNextTurnLocked` also arms a per-turn timer (`DefaultTurnTimeout`, 30s). On expiry the engine plays the move from the optional `game.TurnTimeoutHandler` (`TimeoutAction`) and broadcasts `EventTurnTimedOut`; after `MaxMissedTurns` (3) consecutive expiries it re-checks under the engine lock and only then broadcasts `EventPlayerIdle` and removes the seat. A player's own *accepted* action clears their count - a move the rules reject does not, or spamming garbage would dodge removal forever - so this only fires on someone who stopped playing.
+`applyNextTurnLocked` also arms a per-turn timer (`DefaultTurnTimeout`, 30s). On expiry the engine plays the move from the optional `game.TurnTimeoutHandler` (`TimeoutAction`) and broadcasts `EventTurnTimedOut` on the same lock hold that charged the miss - outside it, a player whose action lands in the gap gets the miss refunded while the "timed out" they disproved still ships; after `MaxMissedTurns` (3) consecutive expiries it re-checks under the engine lock and only then broadcasts `EventPlayerIdle` and removes the seat. A player's own *accepted* action clears their count - a move the rules reject does not, or spamming garbage would dodge removal forever - so this only fires on someone who stopped playing.
 
 Rules opt in: no `TurnTimeoutHandler` means no clock. Poker checks when free, folds when not, and deals between hands (an absent dealer would otherwise freeze the table); crazy eights and uno draw; hearts passes its three lowest cards, plays its first legal card, and deals the next hand; gin rummy draws, sheds its priciest deadwood and deals. `TimeoutAction` must return something `ValidateAction` accepts, or the turn re-arms and the seat is taken on the next expiry instead - gin rummy's `autoDiscard` skips the card the upcard rule forbids for exactly this reason.
 
@@ -96,7 +99,7 @@ Lock order when both are involved is manager (`m.mu`) then lobby (`l.mu`) - see 
 
 ### SSH server
 
-Middleware in `wish.WithMiddleware` runs **last-first**, so `sessionLifecycle` is listed last to be outermost. charm.land/ssh (v0.4.3) recovers on every goroutine it spawns, so `recoverSession` is a second layer - it is what turns a TUI panic into a user-visible message, a metric, and a clean lobby leave, and it must stay a **direct** `defer` (a `recover()` inside a function called *by* a deferred function returns nil). Per-session state (user, model, span) lives in a session-keyed map, never on `s.Context()` - that context is per-**connection** and shared by every channel, and channels are capped per connection. Auth accepts any public key; identity is the SHA256 fingerprint, first connection registers the username. The rate limiter counts *auth attempts* (an ssh-agent offers each key it holds), keyed by `ratelimit.NetKey`.
+Middleware in `wish.WithMiddleware` runs **last-first**, so `sessionLifecycle` is listed last to be outermost. charm.land/ssh (v0.4.3) recovers on every goroutine it spawns, so `recoverSession` is a second layer - a metric and a clean lobby leave - and it must stay a **direct** `defer` (a `recover()` inside a function called *by* a deferred function returns nil). It is not what the player sees, though: nothing panics *out of* bubbletea, so `reportingModel` wraps Init/Update/View and `notifySessionPanic` writes `panicNotice` to `s.Stderr()`. Per-session state (user, model, span) lives in a session-keyed map, never on `s.Context()` - that context is per-**connection** and shared by every channel, and channels are capped per connection. Auth accepts any public key; identity is the SHA256 fingerprint, first connection registers the username. `SessionTracker.Connect` displaces an existing session for the account **and closes its conn**, outside the tracker lock. Two limiters, both keyed by `ratelimit.NetKey` (IPv6 /64): the auth one counts *attempts* (an ssh-agent offers each key it holds), and `registrationLimit`/`registrationWindow` (5/hour) gates only the `user == nil` branch of `LoadOrRegisterUser`. `NetKey` is total; `netKeyFor` is what fails closed on an unkeyable address. `mapRegisterError` folds taken and invalid into one `ErrNameUnavailable` - a distinguishable message is an account-existence oracle. Connect/disconnect log `client_net` (the /64), not `remote_addr`; the session span carries no client address at all.
 
 ### Stats API
 
@@ -119,7 +122,9 @@ prepend its own value.
 Both limiters key on `ratelimit.NetKey`, which collapses IPv6 to its /64. Keying on the
 full address is meaningless there: one customer is routinely handed 2^64 of them.
 
-The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter.
+The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter. Compose publishes 22 and 80 only, plus Grafana on `127.0.0.1:3000`. `otelhttp.WithServerName("stats-api")` keeps the client's `Host` header out of the metric labels.
+
+Retention is explicit and set in three places: Loki 14d (`internal/config/loki/loki.yaml`), Tempo 48h (`internal/config/tempo/tempo.yaml`), Prometheus 30d (`compose.yaml`). Per-field inventory in `internal/observability/DATA.md`.
 
 ## Conventions
 

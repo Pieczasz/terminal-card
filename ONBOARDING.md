@@ -3,10 +3,14 @@
 Single-source-of-truth onboarding for the Go SSH game server. Every name, path and
 number below is taken from the code as it stands; nothing is generic.
 
-**Companion documents.** Read this for product context and patterns; then
-[`READING_GUIDE.md`](READING_GUIDE.md) for the file-by-file / data-flow tour, then
-[`ARCHITECTURE.md`](ARCHITECTURE.md) for contracts and invariants. `CLAUDE.md` is
-the short operational brief (often the first thing agents load).
+**Companion documents.** [`README.md`](README.md) gets it running.
+[`READING_GUIDE.md`](READING_GUIDE.md) is the ordered file-by-file tour.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) is canonical for contracts, package
+responsibilities (§7) and the invariant list (§10) - this document does not restate
+them. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers adding a game and the test norms,
+[`SECURITY.md`](SECURITY.md) the disclosure policy, and `CLAUDE.md` is the short
+operational brief agents load first. Read *this* for product context and the patterns
+behind the code.
 
 **A note on scope.** Several topics in the original brief for this document assume a
 real-time simulation server. This is a **turn-based card game**, so those sections say
@@ -69,7 +73,7 @@ per-session UI scheduling:
 | Turn countdown (adaptive) | 1 s, or **100 ms** under 6 s remaining | `internal/tui/views/game/layout.go` `ClockTickFor` |
 | Lobby-browser refresh | 2 s (`browseRefresh`) | `internal/tui/views/lobby/join.go` |
 | Router idle watchdog | 10 s poll, quits after 5 min idle | `internal/tui/router/router.go` |
-| Engine turn clock | 30 s one-shot (`DefaultTurnTimeout`), re-armed | `internal/game/engine.go` |
+| Engine turn clock | 30 s one-shot (`DefaultTurnTimeout`), re-armed | `internal/game/turnclock.go` |
 
 Nothing animates: the card fan draws the selected card on top rather than moving it,
 so there is no frame loop anywhere in the UI.
@@ -80,7 +84,7 @@ so there is no frame loop anywhere in the UI.
 |---|---|---|
 | **Elm Architecture (MUV)** | every `internal/tui/views/**` model | `Init`/`Update`/`View`, immutable-ish message flow |
 | **Fan-out broadcaster (Observer)** | `internal/broadcaster.Broadcaster[T]` | generic, latest-wins, per-subscriber buffered channel |
-| **Strategy** | `game.Rules` interface, implemented by `crazyeight.Rules` and `poker.Rules` | engine calls rules, never the reverse |
+| **Strategy** | `game.Rules`, implemented by all five rules packages | engine calls rules, never the reverse |
 | **Factory + single registration point** | `internal/catalog.All`, `game.Registry` | one `Entry` carries both the rules factory and the view constructor, so they cannot drift |
 | **Functional options** | `lobby.Option` (`WithCardGame`, `WithMaxPlayers`, `WithPrivate`, `WithRanked`), `game.EngineOption` (`WithTurnTimeout`) | |
 | **Facade** | `game.BoundEngine` via `game.Bind(engine, playerID)` | the default path is safe - `Submit` cannot act as another player, `Hand()` clones only yours, every method is nil-safe. Not a boundary: `Engine()` exposes the whole table for views that must render it |
@@ -93,7 +97,7 @@ so there is no frame loop anywhere in the UI.
 | **Dirty-flag cache invalidation** | `Manager.cacheDirty atomic.Bool` + `publicLobbyCacheTTL` (2 s) | atomic specifically to avoid inverting lock order |
 | **Optional interface (capability probe)** | `game.PlayerLeaveHandler`, `game.TurnTimeoutHandler`, `router.Closer` | rules and views opt in by implementing |
 | **Sentinel errors** | `broadcaster.ErrClosed`/`ErrAtCapacity`, `db.ErrUsernameTaken`…, `ssh.ErrNoPublicKey`… | |
-| **Fan-out log handler** | `observability.NewFanoutHandler` | stderr JSON + OTLP in one `slog.Handler` |
+| **Composite handler** | stdlib `slog.NewMultiHandler` + a local `levelGate` (`cmd/server/main.go`) | stderr JSON + OTLP in one `slog.Handler`; the hand-written fan-out handler it replaced is gone |
 
 ### Idiomatic Go practices
 
@@ -114,8 +118,10 @@ so there is no frame loop anywhere in the UI.
   an order chosen so LIFO unwinding drains match writes *before* closing the DB handle
   and reports errors *before* the OTel logger provider shuts down. Both have comments
   saying so.
-- **Build tags** - `//go:build integration` on the six tests that need Docker.
-- **`goleak`** - `TestMain` guards in six packages.
+- **Build tags** - `//go:build integration` on the tests that need Docker. Note that
+  `internal/systemtest` is mostly *not* tagged: only `persistence_test.go` needs a
+  database, and the rest drives the real components in the ordinary suite.
+- **`goleak`** - `TestMain` guards in 21 packages.
 
 ---
 
@@ -146,14 +152,14 @@ terminal-card/
 │   │   ├── matches.go          Match, MatchParticipant
 │   │   ├── games.go            Game
 │   │   ├── gorm.go             Connect(): pool 10 idle / cfg max / 1h lifetime
-│   │   └── migrations/         000001_init (single schema; squash while pre-prod)
+│   │   └── migrations/         000001_init … 000005_game_slug (up+down each)
 │   ├── deck/                   cards, piles, shuffling (builder.go, card.go, deck.go)
 │   ├── elo/elo.go              Multiplayer Elo, ties 0.5/0.5, headroom-capped deltas
 │   ├── game/                   PURE rules/engine. no db, no tui, no routes
 │   │   ├── engine.go           Engine: locks, broadcast, RemovePlayer
 │   │   ├── turnclock.go        Per-turn timer, idle kick, TurnTimeout/Duration
 │   │   ├── player.go           Seat scalars (UserID, Name, Ratings, Cards)
-│   │   ├── state.go            State + its own mutex
+│   │   ├── state.go            State - no lock of its own; Engine.mu covers it
 │   │   ├── rules.go            Rules + the optional handler interfaces
 │   │   ├── action.go           Action, Event, EventType, StateSnapshot
 │   │   ├── bound.go            BoundEngine - Subscribe/Unsubscribe + Hand/Submit
@@ -165,31 +171,36 @@ terminal-card/
 │   │   └── poker/              rules.go, streets.go, evaluator.go, state.go
 │   ├── httpapi/httpapi.go      read-only JSON: /v1/stats, /v1/leaderboard
 │   ├── lobby/
-│   │   ├── manager.go          lobby registry, codes, join limiter, finalizer drain
-│   │   ├── lobby.go            one table: roster, ready, start, persist result
+│   │   ├── manager.go          lobby registry, codes, join limiter, grace release,
+│   │   │                       finalizer drain
+│   │   ├── lobby.go            one table: roster, ready, start, watcher
+│   │   ├── finalize.go         persist a finished match; the rating gate
+│   │   ├── disconnect.go       the 90s mid-game grace state machine
 │   │   ├── player.go           FromUser → game.Player
 │   │   └── browse.go           BrowseEntry/BrowseFilter/BrowseLobbies - the browser
 │   ├── observability/
 │   │   ├── otel.go             SetupOTel: logs+traces+metrics over OTLP gRPC
-│   │   └── metrics.go          3 atomic counters read by observable instruments
+│   │   └── metrics.go          counters + histograms; metrics_test pins the attrs
 │   ├── ratelimit/
 │   │   ├── limiter.go          sliding window; full table evicts, not refuse
 │   │   └── netkey.go           NetKey: IPv6 → /64, unmaps v4-in-v6
-│   ├── repository/             the GORM implementations (cmd/server + ssh sentinels)
+│   ├── repository/             the GORM implementations (only cmd/server imports it)
 │   │   ├── user.go             Omit("User") on activity; leaderboard cache TTL
 │   │   └── match.go            FinalizeRankedMatch: one tx, SELECT … FOR UPDATE
 │   ├── ssh/
 │   │   ├── server.go           SetupServer, PTY clamp, recoverSession split,
 │   │   │                       SessionTracker, sessionLifecycle
 │   │   └── auth.go             fingerprint auth, LoadOrRegisterUser
-│   ├── systemtest/             cross-package tests only (no production code)
+│   ├── systemtest/             cross-package tests only; only persistence_test.go
+│   │                           is behind //go:build integration
 │   ├── testutil/db.go          testcontainers Postgres + production .up.sql migrations
 │   └── tui/
 │       ├── app.go              Model(): builds GlobalContext, registers every route
 │       ├── router/router.go    Router, GlobalContext, ChangeViewMsg, Closer, idle tick
 │       ├── styles/
 │       │   ├── theme.go        THE only file allowed to name a colour
-│       │   └── common.go       sizing (BoxWidth/InnerWidth/…), PadTruncate, layout
+│       │   └── common.go       layoutHeights/AvailableContentHeight/RenderMainLayout,
+│       │                       TitleHeightBudget, RenderFigureASCII - the fit budget
 │       ├── components/card.go  card glyph rendering
 │       └── views/
 │           ├── common.go       HandleCommonMsg, NavigateOn, RenderCenteredLayout
@@ -197,38 +208,33 @@ terminal-card/
 │           │   │               state.go (BaseState, SyncBaseState)
 │           │   │               session.go (Session - the shared view baseline)
 │           │   ├── poker/      model.go, update.go, view.go, chips.go
-│           │   └── crazyeight/ model.go, update.go, view.go
+│           │   └── crazyeight/ uno/ hearts/ ginrummy/ - same MUV triple each
 │           ├── home/  lobby/  leaderboard/  profile/
 ├── web/                        Astro 7 static site (separate toolchain, pnpm)
 ├── scripts/                    backup.sh (pg_dump+zstd), dev-session.sh (tmux×3)
-├── .github/workflows/test.yml  test · integration · lint · vulncheck
+├── .github/workflows/test.yml  test · integration · lint · vulncheck · image · compose
 ├── compose.yaml                backend, db, migrate, proxy, alloy, loki, tempo,
 │                               prometheus, grafana
 ├── Makefile                    ci = fmt fix lint test build
 ├── .golangci.yml               33 linters
+├── cmd/loadtest/               SSH concurrency harness (prints numbers, asserts none)
 ├── ARCHITECTURE.md             the deep architecture guide
+├── SECURITY.md                 disclosure policy and deployment hardening
 └── CLAUDE.md                   short operational brief
 ```
 
 ### Package responsibilities
 
-| Package | Responsibility | May import |
-|---|---|---|
-| `cmd/server` | wiring and lifecycle only | everything |
-| `internal/broadcaster` | generic fan-out with backpressure policy | stdlib |
-| `internal/catalog` | declare the game list once | game, tui views |
-| `internal/config` | env → validated `Config` | stdlib, godotenv |
-| `internal/db` | models **and** repository interfaces | gorm |
-| `internal/repository` | GORM implementations | db, elo, otel |
-| `internal/game` | rules engine, pure | deck, player, broadcaster |
-| `internal/lobby` | tables, matchmaking-by-browse, result persistence | game, db, elo, broadcaster, ratelimit |
-| `internal/ssh` | transport, auth, session lifecycle | config, db, lobby, tui, ratelimit |
-| `internal/tui` | presentation only | game (via BoundEngine), lobby, router |
-| `internal/httpapi` | read-only public JSON | db, ratelimit |
-| `internal/observability` | OTel setup + counters | config |
+The canonical table lives in [`ARCHITECTURE.md`](ARCHITECTURE.md) §7 - what each
+package owns and what it must not do. Two boundaries are worth restating because they
+are the ones people breach:
 
-**The one deliberate exception:** `internal/ssh` imports `internal/repository` for its
-error sentinels. Everything else depends on the `db` interfaces.
+- **Nothing outside `cmd/server` imports `internal/repository`.** Everything depends on
+  the interfaces in `internal/db`, and the auth sentinels live there too
+  (`internal/db/errors.go`), so `internal/ssh` no longer needs the implementation
+  package for them.
+- **`internal/game` imports no db, no tui, no routes.** Seat identity is the scalars on
+  `game.Player`, not a `*db.User`.
 
 ### Code reading roadmap
 
@@ -243,8 +249,8 @@ Read in this order. Each step is what the previous one hands off to.
 6. **`internal/tui/router/router.go`** - `GlobalContext`, `Update`, `Goto`, `Closer`.
 7. **`internal/tui/views/lobby/create.go`** and **`join.go`** - how a table is opened
    and found.
-8. **`internal/lobby/session.go`**, **`manager.go`**, **`disconnect.go`**, **`lobby.go`** -
-   SessionAPI → `New` / join / grace / `startGameLocked`.
+8. **`internal/lobby/manager.go`**, **`disconnect.go`**, **`lobby.go`**,
+   **`finalize.go`** - `New` / join / grace / `startGameLocked` / the rating gate.
 9. **`internal/game/engine.go`** - `Start`, `SubmitAction`, `Frame`, `applyNextTurnLocked`,
    `RemovePlayer`, `Close`. The heart of the system.
 10. **`internal/game/rules.go`** + **`internal/game/poker/rules.go`** - the contract and
@@ -299,8 +305,13 @@ per-IP limiter.
   connect**. Existing users get `UpdateUserActivity`.
 
 Rate limiting happens in the **public-key auth callback**, before a session exists:
-`NetKey(host)` → `SlidingWindowLimiter.Allow`. Rejection increments
-`RateLimitRejectsTotal` and logs with `remote_addr` + `session_id`.
+`netKeyFor(addr)` → `ratelimit.NetKey` → `SlidingWindowLimiter.Allow`. An address that
+cannot be keyed is refused rather than sharing one bucket with every other unkeyable
+peer. Rejection records a `RateLimitReject` metric and logs at WARN with the full
+`remote_addr` - the routine connect/disconnect records carry only `client_net`, the
+/64. A **second** limiter, `registrationLimit` / `registrationWindow` (5 per hour per
+network), is consulted only on the `user == nil` branch of `LoadOrRegisterUser`, so a
+returning player never spends it.
 
 **Middleware order.** wish runs the slice **last-first**, so the listed order is the
 reverse of execution:
@@ -522,11 +533,12 @@ goroutine and burns a subscriber slot until the engine closes.
 | lobbies by code, player → lobby | `Manager.lobbies`, `Manager.playerLobby` | `Manager.mu sync.RWMutex` |
 | one table's roster, ready set, engine | `Lobby` fields | `Lobby.mu sync.RWMutex` |
 | turn cursor, clock, missed turns | `Engine` fields | `Engine.mu sync.Mutex` |
-| cards, phase, winner, per-game `Extra` | `game.State` | `State.mu sync.RWMutex` |
-| active SSH sessions per user | `SessionTracker.active map[uint]bool` | `SessionTracker.mu sync.Mutex` |
+| cards, phase, winner, per-game `Extra` | `game.State` | **none of its own** - `Engine.mu` covers it |
+| active SSH sessions per user | `SessionTracker.active map[uint]trackedSession` (generation + conn) | `SessionTracker.mu sync.Mutex` |
 | rate-limit windows | `SlidingWindowLimiter.logs` | `limiter.mu sync.Mutex` |
 
-**Documented lock order: manager → lobby → engine → state.** Violating it deadlocks.
+**Documented lock order: manager → lobby → engine.** There is no fourth level: `State`
+has no lock, the engine's single mutex covers it. Violating the order deadlocks.
 Two places show the discipline: `Manager.Stats()` copies the lobby slice under
 `m.mu.RLock`, releases, then takes each `l.mu.RLock` individually rather than nesting;
 and `Manager.cacheDirty` is an `atomic.Bool` rather than `m.mu`-guarded precisely
@@ -570,11 +582,10 @@ There is no physics loop to decouple from rendering. The decoupling that does ex
 **engine mutation from client rendering**, and it is achieved with snapshots rather
 than a second loop:
 
-1. A player's action mutates state under `Engine.mu` + `State.mu`.
+1. A player's action mutates state under `Engine.mu` - the only lock involved.
 2. The engine broadcasts a small `game.Event` - a cue, not a payload.
-3. Each session's parked `Session.Listen` goroutine wakes, and the view calls
-   `syncState()`, which takes `State.mu` briefly to copy out a `StateSnapshot` plus
-   per-game fields.
+3. Each session's parked listener wakes, and the view calls `Session.Sync`, which takes
+   `Engine.mu` briefly to copy out a `StateSnapshot` plus per-game fields in one hold.
 4. `View()` renders from those copied fields with no locks held.
 
 A client that renders slowly delays only its own frame. The engine never waits on it.
@@ -603,7 +614,7 @@ sequenceDiagram
     R->>R: Update() maps key to an Action
     R->>BE: Submit(action)
     BE->>E: SubmitAction(playerID, action)
-    Note over E: takes Engine.mu + State.mu
+    Note over E: takes Engine.mu (the only lock)
     E->>RU: ValidateAction(state, action)
     RU--)E: nil or error
     E->>RU: ApplyAction(state, action)
@@ -746,9 +757,9 @@ closes the engine and the broadcaster **outside** the locks.
 
 ### 6.2 Rules engine
 
-**The contract** (`internal/game/rules.go`). `Engine` holds `e.mu` **and** `state.mu`
-for the whole of `Start`, `SubmitAction` and `RemovePlayer`. Every `Rules` method is
-called with both held, so an implementation:
+**The contract** (`internal/game/rules.go`). `Engine` holds one mutex, `e.mu`, for the
+whole of `Start`, `SubmitAction`, `RemovePlayer` and `Frame`. `State` has none of its
+own. Every `Rules` method is called with `e.mu` held, so an implementation:
 
 - may mutate `*State` freely;
 - must **never** call back into `Engine` - that is an immediate deadlock.
@@ -759,16 +770,18 @@ type Rules interface {
     InitialDeck() []deck.Card; InitialDealCount() int
     OnGameStart(*State) error
     ValidateAction(*State, Action) error
-    ApplyAction(*State, Action)
+    ApplyAction(*State, Action) error
     AfterAction(*State, Action) error
     CheckWinCondition(*State) bool
     Standings(*State) []*player.Player
 }
 ```
 
-Optional, probed with a type assertion: `PlayerLeaveHandler`
-(`OnPlayerLeave` before removal, `AfterPlayerRemoved` after seat indices shift) and
-`TurnTimeoutHandler` (`TimeoutAction`).
+Optional, probed with a type assertion: `PlayerLeaveHandler` (`OnPlayerLeave` before
+removal, `AfterPlayerRemoved` after seat indices shift), `TurnTimeoutHandler`
+(`TimeoutAction`), `TurnDurationHandler` (a longer clock for one phase) and
+`StandingScorer` (equal results share a place instead of breaking the tie by seat
+order).
 
 **Order inside `submitAction`:** phase check → turn check → clear missed-turn count →
 `ValidateAction` → `ApplyAction` → `AfterAction` → broadcast `EventActionApplied` →
@@ -794,8 +807,9 @@ The clamp exists because a leave handler can compute an index against the pre-re
 seat count.
 
 **Per-game state** lives in `State.Extra` - `crazyeight.State`, `poker.State`,
-`uno.State`, `hearts.State` or `ginrummy.State`. A view reads it through
-`Session.WithExtra` and **copies** anything it keeps: the lock is gone by render time.
+`uno.State`, `hearts.State` or `ginrummy.State`. A view reads it through the `extra`
+callback of `Session.Sync` and **copies** anything it keeps: the lock is gone by render
+time.
 
 **Crazy Eights** (`internal/game/crazyeight/rules.go`): match rank or `CurrentSuit`;
 an eight is wild and carries a suit choice inside `ActionPlayCard` - one action, one
@@ -827,8 +841,13 @@ busted players folded so the cursor skips them, posts blinds, and picks the seat
 the gun. `streets.go` owns round completion (`bettingRoundComplete`), actor selection
 (`nextToAct`, `firstToActPostflop`), street advance (`settleAndAdvance`, which runs the
 board out when fewer than two players can still bet), and pot construction
-(`buildSidePots`, which carries dead money forward as `orphan`). `evaluator.go` packs a
-hand into a comparable int: `(rank << 20) | kickers`; **fewer than five cards scores 0**.
+(`buildSidePots`, which carries dead money forward as `orphan` into the last live
+layer). Money that nobody matched goes back first - `refundUncalled` at showdown,
+`awardUncontested` on a fold-out, `refundContributions` for a hand that cannot be
+played out - and `largestCallableBet` refuses a raise past what any opponent could
+call rather than staging it. `checkChipConservation` is the tripwire that logs if the
+sums still do not close. `evaluator.go` packs a hand into a comparable int:
+`(rank << 20) | kickers`; **fewer than five cards scores 0**.
 The match ends on hands exhausted or one funded seat; `Standings` ranks by chips, then
 bust-out hand, then active-before-folded, then hand score, then ID.
 
@@ -868,10 +887,14 @@ turn.
 **Disconnect / hangup.** `releaseSession` runs as a direct `defer` in the outermost
 middleware and, on panic or clean exit:
 
-1. `recover()` - logs `critical panic recovered during ssh session` and shows the user
-   a message, so one session's panic cannot kill the process.
-2. `ctxKeyModel` → `Close()` - releases broadcaster subscriptions; without it a
-   mid-game disconnect parks a listener goroutine and holds a subscriber slot.
+1. `recover()` - records the panic and leaves the lobby, so one session's panic cannot
+   kill the process. What the *player* sees comes from `reportingModel`, which wraps
+   Init/Update/View and writes `panicNotice` to `s.Stderr()`: nothing panics out of
+   bubbletea, so the outer `wish.Fatalf` would never run.
+2. The model from the session-keyed state map → `Close()` - releases broadcaster
+   subscriptions; without it a mid-game disconnect parks a listener goroutine and
+   holds a subscriber slot. (The state lives in that map, never on `s.Context()`,
+   which is per-*connection* and shared by every channel.)
 3. `tracker.Release(userID, gen)` - only if this session still owns the generation.
 4. `LobbyManager.DisconnectPlayer(player)` - mid-game holds the seat for 90s;
    waiting lobby / shutdown leave immediately.
@@ -882,9 +905,11 @@ pending leave, or returns the seat on takeover with no pending leave. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md) §3.4. When the seat is finally given up,
 `OnPlayerLeave` / `AfterPlayerRemoved` run under the engine lock.
 
-**One live slot per account; second session displaces.** `SessionTracker.Connect`
-returns `(gen, nil)` and bumps the generation if the account already has a
-session (half-open TCP otherwise blocks reconnect for the whole grace window).
+**One live slot per account; second session displaces.** `SessionTracker.Connect(userID, conn)`
+returns `(gen, nil)`, bumps the generation if the account already has a session, and
+**closes the displaced connection** - outside the tracker lock, so a wedged peer cannot
+hold every other account's `Connect` behind it. (Half-open TCP otherwise blocks
+reconnect for the whole grace window.)
 Capacity still returns `ErrServerFull`. A displaced teardown must not free the
 slot or leave the seat (`Owns` / `Release`).
 
@@ -904,15 +929,38 @@ below, a loss to the one above; the two ends have a single comparison each. Rati
 stored as `uint32` via `ToUint32` (round + clamp), and the DB enforces it too:
 `CONSTRAINT elo_valid CHECK (elo >= 0 AND elo <= 4000)`.
 
+**The provisional rule is per pair, not per table.** `elo.Player.Provisional` is set by
+the repository from `MatchesPlayed < provisionalMatches` (5); a missing ranking row
+counts as provisional. Inside `Calculate`, `unpaidAgainstProvisional` clamps the
+*established* side's gain to zero on a mixed pair and lets losses through unchanged -
+deliberately breaking zero-sum for that pair. The comment says why both halves are
+needed: a fresh 1500 is free to mint from a free SSH keypair, but if an established
+player could not lose to one either, seating an alt would freeze a rating and the
+anti-farm rule would become a shield.
+
+**The 24h cap counts pairs, across every game.** `repeatedPairCountLast24h` returns the
+highest co-occurrence of any *pair* of players at this table over ranked matches in the
+last day, whatever game they were. At `maxSamePairingPerDay` (3) the table is *damped*:
+`matches_played` still increments (so a provisional account can graduate) but no `elo`
+is written for anyone. `lockPairing` takes a `pg_advisory_xact_lock` **per seat**, in
+user-id order, so two overlapping tables cannot both read an undamped count and cannot
+deadlock.
+
 **Persistence.** The lobby watcher calls `requestFinalize` on `EventGameEnded`;
 `Manager.finalizeFinishedGame` (`internal/lobby/finalize.go`) resolves standings,
 registers with the shutdown drain, and writes under a timeout context:
 
-- **ranked and rated** → `FinalizeRankedMatch(ctx, gameName, userIDs, places)` -
-  pairing advisory lock, revive soft-deleted rankings, Elo + match in one
-  transaction (`SELECT … FOR UPDATE` on rankings). Unrated when shutting down or
-  `EndReasonRulesError` (still recorded, without Elo).
-- **casual / unrated** → `RecordCasualMatch(ctx, gameName, userIDs)` - history only.
+- **ranked and rated** → `FinalizeRankedMatch(ctx, db.GameRef{Slug, Name}, userIDs, places)` -
+  seat advisory locks, revive soft-deleted rankings, Elo + match in one transaction
+  (`SELECT … FOR UPDATE` on rankings). Unrated when shutting down, on
+  `EndReasonRulesError`, or on `EndReasonAbandoned` - every seat left, so the standings
+  are just reverse leave order and rating them would pay the last to quit. Still
+  recorded, without Elo. `EndReasonForfeit` (last player standing) **is** rated.
+- **casual / unrated** → `RecordCasualMatch(ctx, ref, userIDs)` - history only.
+
+The game the row is attached to is resolved by **slug**: `getOrCreateGame` upserts
+`ON CONFLICT (slug)` and refreshes `name` for display. Renaming a game in the catalog
+no longer orphans its ratings (migration `000005_game_slug`).
 
 A subscribe failure logs `cannot watch game for completion; result will not be
 persisted` - loudly, because the match stays playable and the loss is silent otherwise.
@@ -921,7 +969,7 @@ persisted` - loudly, because the match stays playable and the loss is silent oth
 game filter (empty `gameName` = all games) with a
 5-minute TTL that always queries `Limit(100)` and slices to `limit`, returning
 `slices.Clone` copies. Surfaced two ways: the TUI leaderboard view, and
-`GET /v1/leaderboard?limit=N` (default 5, hard max `maxLeaderboardLimit = 25`).
+`GET /v1/leaderboard?limit=N` (default 5, hard max `maxLeaderboardLimit = 200`).
 
 **Live counts.** `GET /v1/stats` returns `players_online` from
 `SessionTracker.Count()` and `hands_in_play` / `tables_open` from `Manager.Stats()`.
@@ -945,11 +993,11 @@ flowchart LR
         UNIX["prometheus.exporter.unix<br/>scraped every 15s"]
     end
     APP -->|logs, traces, metrics| RX
-    RX -->|logs| LOKI["loki:3100<br/>/loki/api/v1/push"]
+    RX -->|logs| LOKI["loki:3100<br/>14d retention"]
     RX -->|traces| TEMPO["tempo:4317<br/>block_retention 48h"]
-    RX -->|metrics| PROM["prometheus:9090<br/>remote-write, 7d retention"]
+    RX -->|metrics| PROM["prometheus:9090<br/>remote-write, 30d retention"]
     UNIX --> PROM
-    LOKI --> GRAF["grafana:11.5.2<br/>anonymous Admin"]
+    LOKI --> GRAF["grafana:11.5.2<br/>anonymous Viewer"]
     TEMPO --> GRAF
     PROM --> GRAF
 ```
@@ -968,47 +1016,62 @@ Alloy does **not** scrape the Go process. The app pushes; nothing pulls.
 
 ### Loki - structured logging
 
-`slog` with a fan-out handler so every record goes to two sinks:
+`slog` with the stdlib composite handler, so every record goes to two sinks:
 
 ```go
-slog.SetDefault(slog.New(observability.NewFanoutHandler(
-    slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}),
-    otelslog.NewHandler("terminal-card"),
+slog.SetDefault(slog.New(slog.NewMultiHandler(
+    slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}),
+    levelGate{Handler: otelslog.NewHandler("terminal-card"), level: level},
 )))
 ```
 
-`fanoutHandler.Handle` clones the record per sink and `errors.Join`s failures, so one
-bad sink cannot hide the others. Contextual keys in use across SSH sessions:
-`remote_addr`, `session_id`, `player_id`, `user`, `lobby`, `game`, `error`,
-`attempts`, `subscriberID`.
+`levelGate` is the only local part: `otelslog`'s handler has no level of its own, so
+without it `LOG_LEVEL` would apply to stderr and not to Loki. The hand-written fan-out
+handler this replaced is gone.
+
+Contextual keys in use across SSH sessions: **`client_net`** (the /64, on every connect
+and disconnect), `client_version`, `session_id`, `player_id`, `user`, `lobby`, `game`,
+`error`, `attempts`, `subscriberID`. `remote_addr` appears only at WARN and above.
 
 The resource service name is **env-prefixed** - `cfg.Env + "-terminal-card-server"` -
 which is why `logs.json` queries `service_name="production-terminal-card-server"`.
 
-**Known gap:** `installLogging()` runs *after* `config.Load()` and `SetupOTel()`, so
-those two steps' logs go to the default handler only and never reach Loki.
+`installLogging()` is now the **first** statement in `run()`, before `config.Load()`
+and `setupOTel()`, so a failure in either is a structured record rather than a
+default-handler line. `LOG_LEVEL` is applied afterwards by setting the shared
+`slog.LevelVar` the handlers were built around.
 
 ### Prometheus - metrics
 
-Three application metrics, exposed as **observable** instruments that read package-level
-atomics in one `RegisterCallback` (meter `"terminal-card"`):
+`internal/observability/metrics.go` (meter `"terminal-card"`) declares a dozen-odd
+counters and four histograms, built through the local `mustCounter` / `mustHistogram`
+helpers:
 
-| Instrument | Kind | Mutated at |
-|---|---|---|
-| `terminalcard.ssh.sessions.active` | `Int64ObservableGauge` | `SessionTracker.Connect` / `.Disconnect` |
-| `terminalcard.games.started` | `Int64ObservableCounter` | `Lobby.startGameLocked` |
-| `terminalcard.ratelimit.rejects` | `Int64ObservableCounter` | `ssh.rateLimitAuth` |
+| Family | Instruments |
+|---|---|
+| SSH | `terminalcard.ssh.sessions`, `…session.duration` (histogram), `…session.panics` |
+| Rate limiting | `terminalcard.ratelimit.rejects` (attribute `limiter`) |
+| Games | `terminalcard.games.started`, `…games.finished`, `…game.duration` (histogram), `…game.turn.timeouts`, `…game.players.idle_removed`, `…game.action.rejected` |
+| Matches | `terminalcard.match.finalize` |
+| Broadcaster | `terminalcard.broadcaster.events.dropped`, `…subscribe.failures` |
+| Lobby | `terminalcard.lobby.joins`, `…lobby.time_to_start` (histogram) |
+| Database pool | `db.client.connections.{used,idle,wait_count}`, observable, from `sql.DBStats` |
 
 Plus `runtime.Start(...)` for the OTel Go runtime metrics - goroutines, heap, GC -
 which is what gives you goroutine-leak and allocation visibility
 (`go_goroutine_count`, `go_memory_used_bytes` on the `tc-app-usage` dashboard).
 Metric export uses `sdkmetric.NewPeriodicReader` at its default 60 s interval.
 
-**Mimir is not deployed.** The metric store is Prometheus' own TSDB, run with
-`--web.enable-remote-write-receiver` and `--storage.tsdb.retention.time=7d`.
+**No personal data, and it is enforced:** `metrics_test.go` collects every instrument
+and fails if any attribute key falls outside a fixed allow-list
+(`{outcome, limiter, game_type, ranked, reason, stream}`).
 
-**Not instrumented:** broadcast latency, frame/render time, per-view timings. There are
-no histograms at all, and no alert or recording rules.
+**Mimir is not deployed.** The metric store is Prometheus' own TSDB, run with
+`--web.enable-remote-write-receiver`, `--storage.tsdb.retention.time=30d` and an 8 GB
+size cap.
+
+**Not instrumented:** frame/render time and per-view timings. There are no alert or
+recording rules.
 
 ### Tempo - tracing
 
@@ -1016,21 +1079,24 @@ no histograms at all, and no alert or recording rules.
 `block_retention: 48h`, local block + WAL storage. Propagator is
 `TraceContext` + `Baggage`.
 
-Exactly **two** tracers, and this is the honest extent of trace coverage:
+Two application tracers, plus `otelhttp` on the stats API. This is the honest extent
+of trace coverage:
 
 | Tracer | Spans |
 |---|---|
-| `terminal-card/ssh` | `ssh.session` - one span per session, attr `remote_addr`, `user` added at end |
-| `terminal-card/repository` | `db.LoadUserByFingerprint`, `db.BestPlayers`, `db.UserProfile`, `db.UserMatchHistory`, `db.FinalizeRankedMatch` (attrs `game`, `players`; `span.RecordError` on failure) |
+| `terminal-card/ssh` | `ssh.session` - one per session. Attributes: `client_version` and the terminal size at start, `user` at the end. **No client address**: the comment in `startSession` says joining an IP to an account for 48h is the record a trace store should not hold |
+| `terminal-card/repository` | nine `db.*` spans - `LoadUserByFingerprint`, `RegisterUserWithKey`, `BestPlayers`, `UserProfile`, `UpdateUserActivity`, `UserMatchHistory`, `DeleteAccount`, `RecordCasualMatch`, `FinalizeRankedMatch` (`span.RecordError` on failure) |
+| `otelhttp` | one server span per stats-API request, named by `routeSpanName` and labelled `otelhttp.WithServerName("stats-api")` so the client's `Host` header cannot blow up cardinality |
 
-**No spans in `game`, `lobby`, `httpapi` or `tui`.** `otelhttp` is an indirect
-dependency only and is not wired into the HTTP server. So a trace shows you a session
-and the database work under it, not the game events between them.
+**No spans in `game`, `lobby` or `tui`.** So a trace shows you a session and the
+database work under it, not the game events between them.
 
 ### Grafana
 
-Anonymous access as Admin with the login form disabled - acceptable only because the
-port is bound to loopback. Datasources are provisioned with correlation wired both
+Anonymous access as **Viewer** (`GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer`) with the login
+form *enabled*, and `GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?...}` - compose
+refuses to start rather than fall back to `admin/admin`. The port is still bound to
+loopback. Datasources are provisioned with correlation wired both
 ways: Prometheus `exemplarTraceIdDestinations` → Tempo, Loki `derivedFields` on
 `trace_id` → Tempo, and Tempo `tracesToLogsV2` → Loki (±1 h,
 `filterByTraceID: true`). Four dashboards: `tc-app-usage`, `tc-host`, `tc-logs`,
@@ -1045,14 +1111,18 @@ ways: Prometheus `exemplarTraceIdDestinations` → Tempo, Loki `derivedFields` o
 and needs Docker. `migrate-create` / `migrate-up` / `migrate-down` use `$DB_DSN`,
 separate from the server's `DB_*` vars.
 
-**Image.** `cmd/server/Dockerfile`, three stages: `golang:1.26-alpine` builder with
-`CGO_ENABLED=0` and cache mounts → `alpine:3.22` for CA bundle, tzdata and a `nonroot`
-(uid 65532) passwd entry → **`FROM scratch`**. `USER nonroot`, no shell, no
-`HEALTHCHECK`.
+**Image.** `cmd/server/Dockerfile`, three stages: a `golang:1.27.1-alpine` builder
+**pinned by digest** (the tag is republished whenever its Alpine base is rebuilt) with
+`CGO_ENABLED=0`, `-trimpath` and cache mounts → `alpine:3.22` for CA bundle, tzdata and
+a `nonroot` (uid 65532) passwd entry → **`FROM scratch`**. `USER nonroot`, no shell.
+The builder runs on `$BUILDPLATFORM` and takes `TARGETOS`/`TARGETARCH` from buildx: a
+cross-build that ignores them ships the builder's architecture and dies with "exec
+format error", which is exactly what happened before CI started building the image.
 
 **Compose.** `backend` runs `read_only: true`, `cap_drop: [ALL]`,
-`no-new-privileges:true`, `stop_grace_period: 50s` - sized for the 30 s SSH `Shutdown`
-plus the 15 s finalizer drain. Postgres is `expose`-only. `migrate/migrate:v4.18.3`
+`no-new-privileges:true`, `stop_grace_period: 80s` - sized for the SSH `Shutdown` plus
+the finalizer drain. It also carries `GOGC=400` and `GOMEMLIMIT=1536MiB` against a
+`mem_limit: 2g`; the comments there explain both numbers. Postgres is `expose`-only. `migrate/migrate:v4.18.3`
 applies migrations on start (the DSN is passed as an argument because the scratch image
 has no shell).
 
@@ -1062,13 +1132,19 @@ has no shell).
 *before* the DB handle they write through closes; the error report happens *before* the
 logger provider goes away.
 
-**CI** - `.github/workflows/test.yml`, independent jobs on Go 1.27: `test`,
-`integration`, `lint` (golangci-lint v2.12.2), `vulncheck` (`govulncheck`). No release,
+**CI** - `.github/workflows/test.yml`, independent jobs on Go 1.27.1: `test`,
+`integration`, `lint` (golangci-lint **v2.13.2**, `install-mode: goinstall` because
+prebuilt binaries lag the module's Go version), `vulncheck` (`govulncheck` v1.8.0,
+pinned), `image` (buildx for linux/amd64 **and** linux/arm64 - the Dockerfile is
+exercised nowhere else), and `compose` (`docker compose config` plus `nginx -t`, and a
+step that asserts compose *refuses* an unset `GRAFANA_ADMIN_PASSWORD`). No release,
 GoReleaser, Dependabot or Renovate config.
 
 **Testing conventions.** Table-driven with named subtests, `t.Parallel()` where safe.
-`pgregory.net/rapid` for property tests (chip conservation across random poker hands),
-`go.uber.org/goleak` `TestMain` in six packages, `testcontainers` Postgres via
+`pgregory.net/rapid` for property tests (Elo's invariants, chip conservation across
+random poker hands, the auto-play move in four of the five games - poker has a
+deterministic equivalent), eight `Fuzz*` targets, 21 benchmarks,
+`go.uber.org/goleak` `TestMain` in 21 packages, `testcontainers` Postgres via
 `testutil.SetupTestDB` (skips when Docker is absent), which applies the **production
 migrations** - so every test runs against the schema that ships, and a broken
 migration fails the suite.
@@ -1096,9 +1172,9 @@ Recorded so nobody searches for code that was never written.
 | **Matchmaking queue** | None. Tables are found by browsing an Elo-proximity-ranked list capped at 20, or by 8-character code. [§6.1](#61-lobby-and-finding-a-table). |
 | **Collision detection** | Not applicable - a card game. Move legality is `Rules.ValidateAction`. |
 | **Reconnection window / grace period** | Mid-game: 90s `DisconnectGrace` + `ResumePlayer`. Waiting lobby still leaves immediately. Idle seats also use `MaxMissedTurns = 3`. [§6.3](#63-disconnects-timeouts-and-edge-cases), [`READING_GUIDE.md`](READING_GUIDE.md) Part D. |
-| **Mimir** | Not deployed. Metrics land in Prometheus' TSDB via remote-write, 7-day retention. |
+| **Mimir** | Not deployed. Metrics land in Prometheus' TSDB via remote-write, 30-day retention. |
 | **Alloy scraping the SSH process** | Inverted: the app **pushes** OTLP to Alloy. Alloy scrapes only the host via `prometheus.exporter.unix`. |
-| **Broadcast latency / frame-render-time metrics** | Not instrumented. Three application counters and OTel runtime metrics only; no histograms. |
-| **Tracing across game events and state broadcasts** | Only `ssh.session` and five `db.*` spans exist. `game`, `lobby` and `httpapi` are untraced. |
+| **Frame-render-time metrics** | Not instrumented. There are counters and four histograms (session duration, game duration, lobby time-to-start), but nothing times a render. |
+| **Tracing across game events and state broadcasts** | Only `ssh.session`, nine `db.*` spans and the stats API's `otelhttp` spans exist. `game`, `lobby` and `tui` are untraced. |
 | **`tea.Every` subscription loops** | Not used. Periodic work is self-rescheduling `tea.Tick`, which is what lets the countdown change rate mid-turn. |
 | **WebSocket/HTTP handlers being replaced** | There was never an HTTP game path to replace. `internal/httpapi` is a read-only stats feed for the marketing site, not a game API. |
