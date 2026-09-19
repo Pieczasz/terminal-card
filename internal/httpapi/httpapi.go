@@ -102,6 +102,10 @@ func Handler(deps Deps) http.Handler {
 		withCORS(deps.AllowOrigin, withRateLimit(limiter, clientAddr, mux)),
 		"stats-api",
 		otelhttp.WithSpanNameFormatter(routeSpanName),
+		// Without this, otelhttp labels every request metric with the client's own
+		// Host header - the same unbounded-cardinality hole routeSpanName closes
+		// for span names.
+		otelhttp.WithServerName("stats-api"),
 	)
 }
 
