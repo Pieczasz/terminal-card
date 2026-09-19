@@ -1,12 +1,12 @@
-# terminal-card — onboarding technical document
+# terminal-card - onboarding technical document
 
 Single-source-of-truth onboarding for the Go SSH game server. Every name, path and
 number below is taken from the code as it stands; nothing is generic.
 
-**Companion documents.** `ARCHITECTURE.md` (751 lines) is the narrative architecture
-guide and goes deeper on the five internal contracts and the reasoning behind them.
-`CLAUDE.md` is the short operational brief. This document is the onboarding entry
-point: read it first, then `ARCHITECTURE.md` §4 when you need the contracts in detail.
+**Companion documents.** Read this for product context and patterns; then
+[`READING_GUIDE.md`](READING_GUIDE.md) for the file-by-file / data-flow tour, then
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for contracts and invariants. `CLAUDE.md` is
+the short operational brief (often the first thing agents load).
 
 **A note on scope.** Several topics in the original brief for this document assume a
 real-time simulation server. This is a **turn-based card game**, so those sections say
@@ -18,6 +18,7 @@ do not go looking for code that was never written.
 
 ## Table of contents
 
+0. **Start here for code reading:** [`READING_GUIDE.md`](READING_GUIDE.md)
 1. [Executive summary & core architectural patterns](#1-executive-summary--core-architectural-patterns)
 2. [Directory tree & package map](#2-directory-tree--package-map)
 3. [SSH transport, TUI rendering (Bubble Tea & Lip Gloss)](#3-ssh-transport-tui-rendering-bubble-tea--lip-gloss)
@@ -41,7 +42,7 @@ over the SSH channel. Five games ship: **Crazy Eights**, **No-Limit Texas Hold'e
 (a 10-hand match), **Uno**, **Hearts** and **Gin Rummy**.
 
 An Astro static marketing site lives in `web/` and is served by the same nginx, but it
-is not part of the Go module — it consumes the read-only JSON in `internal/httpapi`.
+is not part of the Go module - it consumes the read-only JSON in `internal/httpapi`.
 
 ### Design philosophy
 
@@ -91,30 +92,30 @@ so there is no frame loop anywhere in the UI.
 | **Double-checked locking with TTL** | `repository.gormUserRepository.BestPlayers` (5 min) | |
 | **Dirty-flag cache invalidation** | `Manager.cacheDirty atomic.Bool` + `publicLobbyCacheTTL` (2 s) | atomic specifically to avoid inverting lock order |
 | **Optional interface (capability probe)** | `game.PlayerLeaveHandler`, `game.TurnTimeoutHandler`, `router.Closer` | rules and views opt in by implementing |
-| **Sentinel errors** | `broadcaster.ErrClosed`/`ErrAtCapacity`, `repository.ErrUsernameTaken`…, `ssh.ErrNoPublicKey`… | |
+| **Sentinel errors** | `broadcaster.ErrClosed`/`ErrAtCapacity`, `db.ErrUsernameTaken`…, `ssh.ErrNoPublicKey`… | |
 | **Fan-out log handler** | `observability.NewFanoutHandler` | stderr JSON + OTLP in one `slog.Handler` |
 
 ### Idiomatic Go practices
 
-- **Context propagation** — `context.Context` first parameter through every repository
+- **Context propagation** - `context.Context` first parameter through every repository
   method; `router.GlobalContext.SessionCtx` is cancelled when the SSH session ends;
   `Manager.appCtx` is the parent of every ranked-finalize write.
-- **Error wrapping** — `%w` throughout, lowercase messages, checked by the `wrapcheck`
+- **Error wrapping** - `%w` throughout, lowercase messages, checked by the `wrapcheck`
   linter. Sentinels preserved through `mapRegisterError` so `errors.Is` still matches.
-- **Non-blocking channel sends** — `Broadcast` uses `select`/`default` and never blocks
+- **Non-blocking channel sends** - `Broadcast` uses `select`/`default` and never blocks
   on a slow SSH client.
-- **Interfaces defined by the consumer** — `httpapi.SessionCounter` and
+- **Interfaces defined by the consumer** - `httpapi.SessionCounter` and
   `httpapi.LobbyCounter` exist so `httpapi` need not import `ssh` or `lobby`.
-- **Atomics where a lock would invert an order** — `Manager.cacheDirty`,
+- **Atomics where a lock would invert an order** - `Manager.cacheDirty`,
   `observability.SSHSessionsActive`.
-- **Generics** — `Broadcaster[T]` is the only generic type; used at `Event` and
+- **Generics** - `Broadcaster[T]` is the only generic type; used at `Event` and
   `lobby.Event`.
-- **`defer` ordering as a correctness tool** — `cmd/server/main.go` registers defers in
+- **`defer` ordering as a correctness tool** - `cmd/server/main.go` registers defers in
   an order chosen so LIFO unwinding drains match writes *before* closing the DB handle
   and reports errors *before* the OTel logger provider shuts down. Both have comments
   saying so.
-- **Build tags** — `//go:build integration` on the six tests that need Docker.
-- **`goleak`** — `TestMain` guards in six packages.
+- **Build tags** - `//go:build integration` on the six tests that need Docker.
+- **`goleak`** - `TestMain` guards in six packages.
 
 ---
 
@@ -130,7 +131,7 @@ terminal-card/
 │   ├── broadcaster/            generic fan-out. THE real-time primitive
 │   │   └── broadcaster.go      Broadcaster[T], latest-wins, ErrClosed/ErrAtCapacity
 │   ├── catalog/
-│   │   └── catalog.go          `All` — the ONLY place a game is declared
+│   │   └── catalog.go          `All` - the ONLY place a game is declared
 │   ├── config/
 │   │   ├── config.go           env loading, Validate(), DSN(), String() (redacts pw)
 │   │   ├── alloy/config.alloy         Grafana Alloy pipeline (OTLP in, LGTM out)
@@ -155,7 +156,7 @@ terminal-card/
 │   │   ├── state.go            State + its own mutex
 │   │   ├── rules.go            Rules + the optional handler interfaces
 │   │   ├── action.go           Action, Event, EventType, StateSnapshot
-│   │   ├── bound.go            BoundEngine — Subscribe/Unsubscribe + Hand/Submit
+│   │   ├── bound.go            BoundEngine - Subscribe/Unsubscribe + Hand/Submit
 │   │   ├── registry.go         name → Module lookup
 │   │   ├── crazyeight/         rules.go, state.go
 │   │   ├── uno/                rules.go, state.go, deck.go
@@ -167,7 +168,7 @@ terminal-card/
 │   │   ├── manager.go          lobby registry, codes, join limiter, finalizer drain
 │   │   ├── lobby.go            one table: roster, ready, start, persist result
 │   │   ├── player.go           FromUser → game.Player
-│   │   └── browse.go           BrowseEntry/BrowseFilter/BrowseLobbies — the browser
+│   │   └── browse.go           BrowseEntry/BrowseFilter/BrowseLobbies - the browser
 │   ├── observability/
 │   │   ├── otel.go             SetupOTel: logs+traces+metrics over OTLP gRPC
 │   │   └── metrics.go          3 atomic counters read by observable instruments
@@ -194,7 +195,7 @@ terminal-card/
 │           ├── common.go       HandleCommonMsg, NavigateOn, RenderCenteredLayout
 │           ├── game/           layout.go (shared table furniture + turn clock),
 │           │   │               state.go (BaseState, SyncBaseState)
-│           │   │               session.go (Session — the shared view baseline)
+│           │   │               session.go (Session - the shared view baseline)
 │           │   ├── poker/      model.go, update.go, view.go, chips.go
 │           │   └── crazyeight/ model.go, update.go, view.go
 │           ├── home/  lobby/  leaderboard/  profile/
@@ -233,27 +234,29 @@ error sentinels. Everything else depends on the `db` interfaces.
 
 Read in this order. Each step is what the previous one hands off to.
 
-1. **`cmd/server/main.go`** — `run()`. The whole startup order and every `defer`.
-2. **`internal/config/config.go`** — every knob the process has.
-3. **`internal/ssh/server.go`** — `SetupServer`, then the middleware slice (remember it
+1. **`cmd/server/main.go`** - `run()`. The whole startup order and every `defer`.
+2. **`internal/config/config.go`** - every knob the process has.
+3. **`internal/ssh/server.go`** - `SetupServer`, then the middleware slice (remember it
    executes **last-first**), then `sessionModel` and `releaseSession`.
-4. **`internal/ssh/auth.go`** — how a public key becomes a `db.User`.
-5. **`internal/tui/app.go`** — the route table; this is the map of the UI.
-6. **`internal/tui/router/router.go`** — `GlobalContext`, `Update`, `Goto`, `Closer`.
-7. **`internal/tui/views/lobby/create.go`** and **`join.go`** — how a table is opened
+4. **`internal/ssh/auth.go`** - how a public key becomes a `db.User`.
+5. **`internal/tui/app.go`** - the route table; this is the map of the UI.
+6. **`internal/tui/router/router.go`** - `GlobalContext`, `Update`, `Goto`, `Closer`.
+7. **`internal/tui/views/lobby/create.go`** and **`join.go`** - how a table is opened
    and found.
-8. **`internal/lobby/manager.go`**, then **`lobby.go`** — `New` → `JoinLobbyByCode` →
-   `ToggleReady` → `startGameLocked`.
-9. **`internal/game/engine.go`** — `Start`, `SubmitAction`, `applyNextTurnLocked`,
+8. **`internal/lobby/session.go`**, **`manager.go`**, **`disconnect.go`**, **`lobby.go`** -
+   SessionAPI → `New` / join / grace / `startGameLocked`.
+9. **`internal/game/engine.go`** - `Start`, `SubmitAction`, `Frame`, `applyNextTurnLocked`,
    `RemovePlayer`, `Close`. The heart of the system.
-10. **`internal/game/rules.go`** + **`internal/game/poker/rules.go`** — the contract and
+10. **`internal/game/rules.go`** + **`internal/game/poker/rules.go`** - the contract and
     its most demanding implementation.
-11. **`internal/game/bound.go`** — the capability boundary views actually use.
-12. **`internal/tui/views/game/poker/{model,update,view}.go`** — a complete MUV triple.
-13. **`internal/broadcaster/broadcaster.go`** — small, and the reason disconnects are
-    safe.
-14. **`internal/lobby/lobby.go` `finalizeFinishedGame`** → **`internal/repository/match.go`**
-    — how a finished hand becomes rows.
+11. **`internal/game/bound.go`** - the per-player façade views actually use.
+12. **`internal/tui/views/game/session.go`** then **`poker/{model,update,view}.go`** -
+    shared Session + a complete MUV triple.
+13. **`internal/broadcaster/broadcaster.go`** - latest-wins fan-out.
+14. **`internal/lobby/finalize.go`** → **`internal/repository/match.go`** - how a finished
+    hand becomes rows.
+
+Prefer the full ordered tour in [`READING_GUIDE.md`](READING_GUIDE.md) over this short list.
 
 ---
 
@@ -274,7 +277,7 @@ net.ListenConfig{}.Listen(ctx, "tcp", host:6969)
 
 nginx terminates :22 in a `stream {}` block, applies `limit_conn ssh_addr 8` per source
 address, and forwards to `backend:6969` with `proxy_protocol on`. **Port 6969 is never
-published** — `compose.yaml` carries an explicit warning, because a directly reachable
+published** - `compose.yaml` carries an explicit warning, because a directly reachable
 PROXY-protocol listener lets any peer forge its source address and walk past the
 per-IP limiter.
 
@@ -287,12 +290,12 @@ per-IP limiter.
 | PROXY header read | 10 s | |
 
 **Authentication.** `wish.WithPublicKeyAuth(rateLimitAuth(..., func(...) bool { return true }))`
-— **any** public key is accepted. Identity is the SHA256 fingerprint
+- **any** public key is accepted. Identity is the SHA256 fingerprint
 (`cryptossh.FingerprintSHA256`), resolved in `auth.go`:
 
 - `AuthenticateSession(s)` → fingerprint, or `ErrNoPublicKey`.
 - `LoadOrRegisterUser(ctx, repo, sshUsername, fingerprint)` → load by fingerprint; if
-  absent, `RegisterUserWithKey` — **the SSH login name becomes the username on first
+  absent, `RegisterUserWithKey` - **the SSH login name becomes the username on first
   connect**. Existing users get `UpdateUserActivity`.
 
 Rate limiting happens in the **public-key auth callback**, before a session exists:
@@ -345,26 +348,26 @@ Navigation is a message, not a call: a view returns
 performs the swap in `Goto`, closing the outgoing view if it implements
 `router.Closer`.
 
-**`Init()`** — a game view returns `tea.Batch(m.Listen(), gameview.ClockTick())`:
+**`Init()`** - a game view returns `tea.Batch(m.Listen(), gameview.ClockTick())`:
 one blocking read on the engine feed plus the countdown tick. The lobby browser returns
 `tea.Batch(textinput.Blink, refreshTick())`.
 
-**`Update(msg)`** — the shared preamble is `views.HandleCommonMsg`, which handles
+**`Update(msg)`** - the shared preamble is `views.HandleCommonMsg`, which handles
 `tea.WindowSizeMsg`, `tea.BackgroundColorMsg` (theme) and `ctrl+c`. Then each view
 switches on its own messages. The poker view's set is representative:
 
 | Message | Handling |
 |---|---|
 | `gameview.EventMsg` (wraps `game.Event`) | if `m.IdleRemoved(ev)` (our own `EventPlayerIdle`) → `tea.Quit`; else `syncState()` and re-arm `m.Listen()` |
-| `gameview.ClockTickMsg` | `syncState()`, then `ClockTickFor(remaining)` — stops rescheduling once the phase is not `Playing` |
+| `gameview.ClockTickMsg` | `syncState()`, then `ClockTickFor(remaining)` - stops rescheduling once the phase is not `Playing` |
 | `tea.KeyPressMsg` | action keys → `m.submit(action)` |
 
-**`View() string`** — pure. It reads the model's snapshot fields and never touches the
+**`View() string`** - pure. It reads the model's snapshot fields and never touches the
 engine, which is what makes rendering lock-free.
 
 **Custom commands and subscriptions.** There is no `tea.Every`. Two idioms are used:
 
-- **Self-rescheduling `tea.Tick`** — each handler returns the next tick. This is how
+- **Self-rescheduling `tea.Tick`** - each handler returns the next tick. This is how
   the countdown changes rate mid-turn:
 
   ```go
@@ -378,7 +381,7 @@ engine, which is what makes rendering lock-free.
   }
   ```
 
-- **Blocking-read command as a subscription** — `Session.Listen()` returns a
+- **Blocking-read command as a subscription** - `Session.Listen()` returns a
   `tea.Cmd` that blocks on `<-ch` and yields one message. Bubble Tea runs each command
   in its own goroutine, so this is one parked reader per subscribed feed per session.
   Releasing it is exactly what `router.Closer` and `releaseSession` are for. `Listen`
@@ -409,10 +412,10 @@ true there would flash the resize prompt on every connection. `MinWidth`/`MinHei
 are 64×20. `PadTruncate` fits a string to exactly N cells counting **runes**, so a
 multi-byte username never splits mid-character and columns stay aligned.
 
-**Theme resolution — per session, not global.** Two players can have opposite terminal
+**Theme resolution - per session, not global.** Two players can have opposite terminal
 backgrounds, so a shared palette would leave one reading white on white.
 
-1. `router.New` defaults to `styles.NewTheme(true)` (dark) — a terminal that never
+1. `router.New` defaults to `styles.NewTheme(true)` (dark) - a terminal that never
    answers must still be legible.
 2. `Router.Init` issues `tea.RequestBackgroundColor`.
 3. On `tea.BackgroundColorMsg`, both the router and the mounted view rebuild the theme
@@ -431,8 +434,8 @@ TextDim:   pick(lg.Color("#5F5F5F"), lg.Color("#B4B4B4")),
 
 Contrast is a test, not a review comment. `theme_test.go` asserts every text token at
 **WCAG AA 4.5:1** and every object token at 3.0:1 against seven real terminal
-backgrounds — black, VS Code dark, Solarized dark, One Dark, Nord, Cobalt and a deep
-blue — plus the light set. The blue backgrounds are in the list because blue
+backgrounds - black, VS Code dark, Solarized dark, One Dark, Nord, Cobalt and a deep
+blue - plus the light set. The blue backgrounds are in the list because blue
 contributes only 7% of the WCAG luminance sum, so a "dark" navy can be twice as bright
 as `#282C34`; a grey-only background set lets dim text pass the floor and still be
 unreadable on navy.
@@ -441,7 +444,7 @@ unreadable on navy.
 on the `Theme` struct (`Box`, `Title`, `Muted`, `Dim`, `TurnName`, …). Views render
 through those stored styles rather than constructing styles per frame. Colour
 downsampling to the client's profile is handled by `colorprofile.Env(s.Environ())`,
-which the wish bridge passes to `tea.WithColorProfile` — so True Color, ANSI256 and
+which the wish bridge passes to `tea.WithColorProfile` - so True Color, ANSI256 and
 ANSI 16 all work from the same hex tokens.
 
 ---
@@ -450,7 +453,7 @@ ANSI 16 all work from the same hex tokens.
 
 ### 4.1 Broadcaster architecture
 
-`internal/broadcaster/broadcaster.go` — about 130 lines, and the only real-time
+`internal/broadcaster/broadcaster.go` - about 130 lines, and the only real-time
 primitive in the codebase.
 
 ```go
@@ -465,7 +468,7 @@ const subscriberBuffer = 256      // events a slow subscriber may fall behind
 const defaultMaxSubscribers = 64  // used when New() is given a non-positive cap
 ```
 
-**Fan-out and the backpressure policy.** `Broadcast` takes only `RLock` — the sends are
+**Fan-out and the backpressure policy.** `Broadcast` takes only `RLock` - the sends are
 non-blocking, so concurrent broadcasts are allowed. The policy is **latest-wins**, not a
 ring buffer:
 
@@ -530,7 +533,7 @@ and `Manager.cacheDirty` is an `atomic.Bool` rather than `m.mu`-guarded precisel
 because a `Lobby` sets it while holding its own lock, where reaching for the manager
 lock would invert the order.
 
-**Caches — all in-process, all per-node:**
+**Caches - all in-process, all per-node:**
 
 | Cache | TTL | Invalidation |
 |---|---|---|
@@ -538,7 +541,7 @@ lock would invert the order.
 | `gormUserRepository.bestPlayersCache` | 5 min | time only; always queries `Limit(100)` and slices |
 | `/v1/stats`, `/v1/leaderboard` | `Cache-Control: public, max-age=15` | client-side |
 
-**The Redis/Valkey boundary does not exist as code — deliberately.** There is no cache
+**The Redis/Valkey boundary does not exist as code - deliberately.** There is no cache
 interface, no pub/sub abstraction, no storage seam waiting for a second
 implementation. The only mention in the entire repo is the design note at
 `broadcaster.go:32`:
@@ -550,10 +553,10 @@ implementation. The only mention in the entire repo is the design note at
 The two seams that *would* be the extension points if that day came, and what each
 would need:
 
-1. **`broadcaster.Broadcaster[T]`** — already an interface-shaped type used at two
+1. **`broadcaster.Broadcaster[T]`** - already an interface-shaped type used at two
    sites. A distributed implementation would have to preserve the latest-wins
    semantics and the `ErrClosed`/`ErrAtCapacity` contract.
-2. **`Manager.lobbies` / `Manager.playerLobby`** — a node-local map today. Anything
+2. **`Manager.lobbies` / `Manager.playerLobby`** - a node-local map today. Anything
    shared would have to move the lock order guarantees across the network, which is
    the actual hard part, not the storage.
 
@@ -568,7 +571,7 @@ There is no physics loop to decouple from rendering. The decoupling that does ex
 than a second loop:
 
 1. A player's action mutates state under `Engine.mu` + `State.mu`.
-2. The engine broadcasts a small `game.Event` — a cue, not a payload.
+2. The engine broadcasts a small `game.Event` - a cue, not a payload.
 3. Each session's parked `Session.Listen` goroutine wakes, and the view calls
    `syncState()`, which takes `State.mu` briefly to copy out a `StateSnapshot` plus
    per-game fields.
@@ -619,7 +622,7 @@ sequenceDiagram
 The error path matters: if `AfterAction` fails, the rules could not reach a consistent
 state, so `finishGameLocked` runs and `EventGameEnded` is broadcast **without**
 `EventActionApplied`. A half-applied move never reaches a client, but the game still
-ends visibly — otherwise every other player sits on a frame that will never update and
+ends visibly - otherwise every other player sits on a frame that will never update and
 the lobby never records the match.
 
 ### 5.2 Lobby ↔ manager ↔ game session
@@ -644,12 +647,12 @@ stateDiagram-v2
 ```
 
 Every state assignment goes through `Lobby.setStateLocked`, which also flips
-`Manager.cacheDirty` — that is what makes a table vanish from the browser the moment it
+`Manager.cacheDirty` - that is what makes a table vanish from the browser the moment it
 starts playing.
 
 ### 5.3 Message and event payloads
 
-**`game.Event`** — `internal/game/action.go`. Deliberately thin: `PlayerID` and
+**`game.Event`** - `internal/game/action.go`. Deliberately thin: `PlayerID` and
 `Action` are context for a log line or a "who idled" check, never the state itself.
 
 ```go
@@ -668,9 +671,9 @@ type Event struct {
 | `EventTurnTimedOut` | `onTurnTimeout` | re-sync; the engine has played a safe move |
 | `EventPlayerIdle` | `onTurnTimeout` at `MaxMissedTurns` | **the named player's own view quits its program**, which ends the SSH session through the ordinary `releaseSession` path |
 | `EventGameEnded` | `finishGameLocked` | views show the result; the lobby's watcher persists it |
-| `EventUnknown` | — | zero value, never sent |
+| `EventUnknown` | - | zero value, never sent |
 
-**`lobby.Event`** — `internal/lobby/lobby.go`. `Payload` is used by exactly one type.
+**`lobby.Event`** - `internal/lobby/lobby.go`. `Payload` is used by exactly one type.
 
 ```go
 type Event struct { Type string; Payload any }
@@ -682,7 +685,7 @@ const (
 )
 ```
 
-**`game.StateSnapshot`** — the redaction boundary. Hand *sizes*, never hand contents:
+**`game.StateSnapshot`** - the redaction boundary. Hand *sizes*, never hand contents:
 
 ```go
 type StateSnapshot struct {
@@ -712,8 +715,8 @@ cleans stale entries), then generates a code: 8 chars from
 `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789` via `crypto/rand`, retried up to 10 times
 against collisions. `ValidLobbyCode` is `^[A-Z0-9]{8}$`.
 
-**Joining** is rate-limited per player — `joinRateLimitCount = 10` per
-`joinRateLimitWindow = 1s`, keyed `"join:"+p.ID` — because the code space is
+**Joining** is rate-limited per player - `joinRateLimitCount = 10` per
+`joinRateLimitWindow = 1s`, keyed `"join:"+p.ID` - because the code space is
 guessable-adjacent and this is a trust boundary. `FuzzJoinLobbyByCode` fuzzes it.
 
 **There is no matchmaking queue.** Finding a table is a **browse**, in
@@ -724,7 +727,7 @@ func (m *Manager) BrowseLobbies(p *player.Player, f BrowseFilter) []BrowseEntry
 ```
 
 1. Take the cached public set (public **and** `Waiting` only).
-2. Snapshot each lobby into a `BrowseEntry` under **one** `l.mu.RLock` — code, game,
+2. Snapshot each lobby into a `BrowseEntry` under **one** `l.mu.RLock` - code, game,
    players, max, ranked, average Elo.
 3. Apply `BrowseFilter{GameName, Mode (any/ranked/casual), OnlyWithRoom, Limit}`.
 4. Score each by `abs(entry.AvgElo - ratingFor(p, entry.GameName))`, where an unrated
@@ -748,7 +751,7 @@ for the whole of `Start`, `SubmitAction` and `RemovePlayer`. Every `Rules` metho
 called with both held, so an implementation:
 
 - may mutate `*State` freely;
-- must **never** call back into `Engine` — that is an immediate deadlock.
+- must **never** call back into `Engine` - that is an immediate deadlock.
 
 ```go
 type Rules interface {
@@ -773,7 +776,7 @@ Optional, probed with a type assertion: `PlayerLeaveHandler`
 Because an `AfterAction` error finishes the game, **anything checkable up front belongs
 in `ValidateAction`.**
 
-**Turn resolution — `applyNextTurnLocked`.** Three-way precedence, then clamp:
+**Turn resolution - `applyNextTurnLocked`.** Three-way precedence, then clamp:
 
 ```go
 switch {
@@ -790,17 +793,17 @@ e.armTurnTimerLocked()
 The clamp exists because a leave handler can compute an index against the pre-removal
 seat count.
 
-**Per-game state** lives in `State.Extra` — `crazyeight.State`, `poker.State`,
+**Per-game state** lives in `State.Extra` - `crazyeight.State`, `poker.State`,
 `uno.State`, `hearts.State` or `ginrummy.State`. A view reads it through
 `Session.WithExtra` and **copies** anything it keeps: the lock is gone by render time.
 
 **Crazy Eights** (`internal/game/crazyeight/rules.go`): match rank or `CurrentSuit`;
-an eight is wild and carries a suit choice inside `ActionPlayCard` — one action, one
+an eight is wild and carries a suit choice inside `ActionPlayCard` - one action, one
 state change; `ActionDrawCard` is always legal so an exhausted board cannot soft-lock
 the turn loop. Win: an empty hand, or every seat passing in succession
 (`Passes >= len(Players)`), ranked by fewest cards.
 
-**Uno** (`internal/game/uno/`): 2–10 players, 7 cards. Colour/number/symbol matching
+**Uno** (`internal/game/uno/`): 2-10 players, 7 cards. Colour/number/symbol matching
 over a 108-card deck whose extra ranks are additive on `deck.Rank`. Skip, Reverse and
 the draw cards all set `OverrideNextTurn` explicitly so a reversed table honours
 `Direction` rather than the engine's default +1 step.
@@ -808,7 +811,7 @@ the draw cards all set `OverrideNextTurn` explicitly so a reversed table honours
 **Hearts** (`internal/game/hearts/`): exactly 4 players, 13 cards. Sequential pass
 phase cycling left/right/across/none, 2♣ leads, follow suit, no points on trick one,
 hearts must be broken before being led. Shooting the moon scores the shooter 0 and
-charges everyone else 26. Any disconnect ends the match — the rules are only defined
+charges everyone else 26. Any disconnect ends the match - the rules are only defined
 at four hands.
 
 **Gin Rummy** (`internal/game/ginrummy/`): exactly 2 players, 10 cards, draw then
@@ -829,13 +832,13 @@ hand into a comparable int: `(rank << 20) | kickers`; **fewer than five cards sc
 The match ends on hands exhausted or one funded seat; `Standings` ranks by chips, then
 bust-out hand, then active-before-folded, then hand score, then ID.
 
-**No collision detection or spatial logic** — see [§9](#9-premises-that-do-not-hold).
+**No collision detection or spatial logic** - see [§9](#9-premises-that-do-not-hold).
 
 ### 6.3 Disconnects, timeouts and edge cases
 
 **The turn clock.** `DefaultTurnTimeout = 30s`, armed by `applyNextTurnLocked` whenever
 the cursor settles, but only if the phase is `Playing`, seats exist, and the rules
-implement `TurnTimeoutHandler`. No handler means no clock — there is nothing safe to
+implement `TurnTimeoutHandler`. No handler means no clock - there is nothing safe to
 play on an absent player's behalf, so they get no clock rather than a silent removal.
 
 On expiry the engine plays `TimeoutAction(state)` and broadcasts `EventTurnTimedOut`.
@@ -843,7 +846,7 @@ After `MaxMissedTurns = 3` **consecutive** expiries it broadcasts `EventPlayerId
 calls `RemovePlayer`. A player's own action clears their count, so this only ever fires
 on someone who stopped playing.
 
-Poker checks when free and folds when not, and **deals between hands** — an absent
+Poker checks when free and folds when not, and **deals between hands** - an absent
 dealer would otherwise freeze the table for everyone. Crazy Eights draws.
 `TimeoutAction` must return something `ValidateAction` accepts, or the turn re-arms and
 the seat is taken on the next expiry instead.
@@ -855,7 +858,7 @@ acted in the instant before their clock expired is never charged a miss.
 `Close`.
 
 **Countdown display.** The clock is rendered on the seat that owes an action, not in a
-status line — `RenderTurnClock` + `AttachTurnClock`, placed below seats along the top
+status line - `RenderTurnClock` + `AttachTurnClock`, placed below seats along the top
 and bottom and alongside those stacked down the sides. Above 6 s it reads `m:ss`; below,
 tenths (`5.5`, `5.4`, …). Both round **up**, so the display never claims less time than
 the player has and never reads zero while they can still act. The tick rate follows the
@@ -865,26 +868,29 @@ turn.
 **Disconnect / hangup.** `releaseSession` runs as a direct `defer` in the outermost
 middleware and, on panic or clean exit:
 
-1. `recover()` — logs `critical panic recovered during ssh session` and shows the user
+1. `recover()` - logs `critical panic recovered during ssh session` and shows the user
    a message, so one session's panic cannot kill the process.
-2. `ctxKeyModel` → `Close()` — releases broadcaster subscriptions; without it a
+2. `ctxKeyModel` → `Close()` - releases broadcaster subscriptions; without it a
    mid-game disconnect parks a listener goroutine and holds a subscriber slot.
-3. `tracker.Disconnect(userID)`.
-4. `LobbyManager.LeaveLobby(player)` → `Lobby.RemovePlayer` → `Engine.RemovePlayer`.
+3. `tracker.Release(userID, gen)` - only if this session still owns the generation.
+4. `LobbyManager.DisconnectPlayer(player)` - mid-game holds the seat for 90s;
+   waiting lobby / shutdown leave immediately.
 
-**There is no reconnection window and no grace period.** A dropped connection leaves
-the lobby and the hand immediately. Mid-hand, `OnPlayerLeave` folds the departing player
-and `AfterPlayerRemoved` reindexes button/blinds and re-picks the actor against
-post-removal seats. If one active player remains, they take the pot uncontested. The
-"reconnect overlap" mentioned in the broadcaster sizing comment is about two
-subscriptions briefly coexisting, not a grace period.
+**Mid-game reconnect grace.** `DisconnectPlayer` arms `DisconnectGrace` (90s) via
+`disconnectGrace` (`internal/lobby/disconnect.go`). `ResumePlayer` cancels a
+pending leave, or returns the seat on takeover with no pending leave. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §3.4. When the seat is finally given up,
+`OnPlayerLeave` / `AfterPlayerRemoved` run under the engine lock.
 
-**One session per account.** `SessionTracker.Connect(userID)` returns false if the user
-already has a session.
+**One live slot per account; second session displaces.** `SessionTracker.Connect`
+returns `(gen, nil)` and bumps the generation if the account already has a
+session (half-open TCP otherwise blocks reconnect for the whole grace window).
+Capacity still returns `ErrServerFull`. A displaced teardown must not free the
+slot or leave the seat (`Owns` / `Release`).
 
 ### 6.4 Leaderboards, stats and rankings
 
-**Elo — Simple Multiplayer Elo** (`internal/elo/elo.go`), `KFactor = 32`,
+**Elo - Simple Multiplayer Elo** (`internal/elo/elo.go`), `KFactor = 32`,
 `DefaultRating = 1500`, clamped to `[100, 4000]` (`MinRating`/`MaxRating`; a `NaN`
 input is logged and reset to the default).
 
@@ -893,26 +899,23 @@ func ExpectedScore(a, b float64) float64 { return 1.0 / (1.0 + math.Pow(10.0, (b
 ```
 
 `Calculate(players []Player)` requires the slice **sorted first place to last** and
-scores each player against their **immediate neighbours only** — a win over the one
+scores each player against their **immediate neighbours only** - a win over the one
 below, a loss to the one above; the two ends have a single comparison each. Ratings are
 stored as `uint32` via `ToUint32` (round + clamp), and the DB enforces it too:
 `CONSTRAINT elo_valid CHECK (elo >= 0 AND elo <= 4000)`.
 
-**Persistence.** `Lobby.startGameLocked` spawns one watcher goroutine per started game
-that ranges the engine's event channel and calls `finalizeFinishedGame` on
-`EventGameEnded`. That function resolves standings to `db.User` IDs, refuses to
-finalize if any standing player lacks one, registers with the shutdown drain
-(`registerFinalizer`), and writes under a `rankedFinalizeTimeout = 15s` context:
+**Persistence.** The lobby watcher calls `requestFinalize` on `EventGameEnded`;
+`Manager.finalizeFinishedGame` (`internal/lobby/finalize.go`) resolves standings,
+registers with the shutdown drain, and writes under a timeout context:
 
-- **ranked** → `MatchRepository.FinalizeRankedMatch(ctx, gameName, orderedUserIDs)` —
-  game resolve + Elo update + match record in **one transaction**, with
-  `clause.Locking{Strength: "UPDATE"}` (`SELECT … FOR UPDATE`) on the rankings to
-  serialize concurrent writers.
-- **casual** → `GetOrCreateGame` then `RecordMatch(..., nil, false)` — history only,
-  **no Elo deltas**. A casual result must not move ratings.
+- **ranked and rated** → `FinalizeRankedMatch(ctx, gameName, userIDs, places)` -
+  pairing advisory lock, revive soft-deleted rankings, Elo + match in one
+  transaction (`SELECT … FOR UPDATE` on rankings). Unrated when shutting down or
+  `EndReasonRulesError` (still recorded, without Elo).
+- **casual / unrated** → `RecordCasualMatch(ctx, gameName, userIDs)` - history only.
 
 A subscribe failure logs `cannot watch game for completion; result will not be
-persisted` — loudly, because the match stays playable and the loss is silent otherwise.
+persisted` - loudly, because the match stays playable and the loss is silent otherwise.
 
 **Leaderboard reads.** `BestPlayers(ctx, limit, gameName)` is a double-checked-lock cache keyed by
 game filter (empty `gameName` = all games) with a
@@ -923,7 +926,7 @@ game filter (empty `gameName` = all games) with a
 **Live counts.** `GET /v1/stats` returns `players_online` from
 `SessionTracker.Count()` and `hands_in_play` / `tables_open` from `Manager.Stats()`.
 The endpoint is read-only, unauthenticated and exposes nothing the TUI leaderboard does
-not already show any visitor — that is what makes it safe. It is reached only through
+not already show any visitor - that is what makes it safe. It is reached only through
 nginx's `/api/` location; `API_PORT` is never published.
 
 ---
@@ -931,7 +934,7 @@ nginx's `/api/` location; `API_PORT` is never published.
 ## 7. Observability & diagnostics
 
 Full LGTM stack in `compose.yaml`, all ports bound to `127.0.0.1`. **The app speaks
-only OTLP** — there is no Prometheus client library in `go.mod`, no `/metrics`
+only OTLP** - there is no Prometheus client library in `go.mod`, no `/metrics`
 endpoint, and no pprof endpoint.
 
 ```mermaid
@@ -951,19 +954,19 @@ flowchart LR
     PROM --> GRAF
 ```
 
-### Grafana Alloy — the collector
+### Grafana Alloy - the collector
 
 `internal/config/alloy/config.alloy`. `otelcol.receiver.otlp` listens on
 `0.0.0.0:4317` (gRPC) and `0.0.0.0:4318` (HTTP) and fans the three signals out:
 `otelcol.exporter.loki` → `loki.write`, `otelcol.exporter.otlp` → `tempo:4317` (TLS
 insecure, internal network), `otelcol.exporter.prometheus` →
-`prometheus.remote_write`. It also runs `prometheus.exporter.unix "host"` — the
-node-exporter equivalent — scraped by `prometheus.scrape` at `scrape_interval = "15s"`.
+`prometheus.remote_write`. It also runs `prometheus.exporter.unix "host"` - the
+node-exporter equivalent - scraped by `prometheus.scrape` at `scrape_interval = "15s"`.
 Alloy's own UI is on `:12345`.
 
 Alloy does **not** scrape the Go process. The app pushes; nothing pulls.
 
-### Loki — structured logging
+### Loki - structured logging
 
 `slog` with a fan-out handler so every record goes to two sinks:
 
@@ -979,13 +982,13 @@ bad sink cannot hide the others. Contextual keys in use across SSH sessions:
 `remote_addr`, `session_id`, `player_id`, `user`, `lobby`, `game`, `error`,
 `attempts`, `subscriberID`.
 
-The resource service name is **env-prefixed** — `cfg.Env + "-terminal-card-server"` —
+The resource service name is **env-prefixed** - `cfg.Env + "-terminal-card-server"` -
 which is why `logs.json` queries `service_name="production-terminal-card-server"`.
 
 **Known gap:** `installLogging()` runs *after* `config.Load()` and `SetupOTel()`, so
 those two steps' logs go to the default handler only and never reach Loki.
 
-### Prometheus — metrics
+### Prometheus - metrics
 
 Three application metrics, exposed as **observable** instruments that read package-level
 atomics in one `RegisterCallback` (meter `"terminal-card"`):
@@ -996,7 +999,7 @@ atomics in one `RegisterCallback` (meter `"terminal-card"`):
 | `terminalcard.games.started` | `Int64ObservableCounter` | `Lobby.startGameLocked` |
 | `terminalcard.ratelimit.rejects` | `Int64ObservableCounter` | `ssh.rateLimitAuth` |
 
-Plus `runtime.Start(...)` for the OTel Go runtime metrics — goroutines, heap, GC —
+Plus `runtime.Start(...)` for the OTel Go runtime metrics - goroutines, heap, GC -
 which is what gives you goroutine-leak and allocation visibility
 (`go_goroutine_count`, `go_memory_used_bytes` on the `tc-app-usage` dashboard).
 Metric export uses `sdkmetric.NewPeriodicReader` at its default 60 s interval.
@@ -1007,7 +1010,7 @@ Metric export uses `sdkmetric.NewPeriodicReader` at its default 60 s interval.
 **Not instrumented:** broadcast latency, frame/render time, per-view timings. There are
 no histograms at all, and no alert or recording rules.
 
-### Tempo — tracing
+### Tempo - tracing
 
 `internal/config/tempo/tempo.yaml`: OTLP on 4317/4318, HTTP 3200,
 `block_retention: 48h`, local block + WAL storage. Propagator is
@@ -1017,7 +1020,7 @@ Exactly **two** tracers, and this is the honest extent of trace coverage:
 
 | Tracer | Spans |
 |---|---|
-| `terminal-card/ssh` | `ssh.session` — one span per session, attr `remote_addr`, `user` added at end |
+| `terminal-card/ssh` | `ssh.session` - one span per session, attr `remote_addr`, `user` added at end |
 | `terminal-card/repository` | `db.LoadUserByFingerprint`, `db.BestPlayers`, `db.UserProfile`, `db.UserMatchHistory`, `db.FinalizeRankedMatch` (attrs `game`, `players`; `span.RecordError` on failure) |
 
 **No spans in `game`, `lobby`, `httpapi` or `tui`.** `otelhttp` is an indirect
@@ -1026,7 +1029,7 @@ and the database work under it, not the game events between them.
 
 ### Grafana
 
-Anonymous access as Admin with the login form disabled — acceptable only because the
+Anonymous access as Admin with the login form disabled - acceptable only because the
 port is bound to loopback. Datasources are provisioned with correlation wired both
 ways: Prometheus `exemplarTraceIdDestinations` → Tempo, Loki `derivedFields` on
 `trace_id` → Tempo, and Tempo `tracesToLogsV2` → Loki (±1 h,
@@ -1048,18 +1051,18 @@ separate from the server's `DB_*` vars.
 `HEALTHCHECK`.
 
 **Compose.** `backend` runs `read_only: true`, `cap_drop: [ALL]`,
-`no-new-privileges:true`, `stop_grace_period: 50s` — sized for the 30 s SSH `Shutdown`
+`no-new-privileges:true`, `stop_grace_period: 50s` - sized for the 30 s SSH `Shutdown`
 plus the 15 s finalizer drain. Postgres is `expose`-only. `migrate/migrate:v4.18.3`
 applies migrations on start (the DSN is passed as an argument because the scratch image
 has no shell).
 
-**Shutdown order** — LIFO unwinding of `run()`, and the order is deliberate:
+**Shutdown order** - LIFO unwinding of `run()`, and the order is deliberate:
 `waitForFinalizers` (15 s, then unbounded with a warning) → stats API `Shutdown` (5 s)
 → `sqlDB.Close()` → error report → OTel shutdown (5 s) → `cancel()`. Match writes drain
 *before* the DB handle they write through closes; the error report happens *before* the
 logger provider goes away.
 
-**CI** — `.github/workflows/test.yml`, four independent jobs on Go 1.26: `test`,
+**CI** - `.github/workflows/test.yml`, independent jobs on Go 1.27: `test`,
 `integration`, `lint` (golangci-lint v2.12.2), `vulncheck` (`govulncheck`). No release,
 GoReleaser, Dependabot or Renovate config.
 
@@ -1086,13 +1089,13 @@ Recorded so nobody searches for code that was never written.
 
 | Topic in the brief | Reality |
 |---|---|
-| **Target tick rate / FPS, 30–60 Hz logic loop decoupled from render** | No game loop and no frame loop exist. The engine is event-driven: it advances on `SubmitAction` or a turn timer, and the UI redraws on input, a broadcast or the turn countdown. See [§1](#not-tick-driven). |
+| **Target tick rate / FPS, 30-60 Hz logic loop decoupled from render** | No game loop and no frame loop exist. The engine is event-driven: it advances on `SubmitAction` or a turn timer, and the UI redraws on input, a broadcast or the turn countdown. See [§1](#not-tick-driven). |
 | **Worker pool** | None. No `errgroup`, no semaphore, no job queue. Exactly four explicit `go func` sites; concurrency is bounded by `netutil.LimitListener(MaxConnections)` and nginx `limit_conn ssh_addr 8`. |
-| **Ring buffer / dropped-frame handling** | The policy is latest-wins on a 256-deep buffered channel per subscriber, not a ring buffer. Same effect, different mechanism — [§4.1](#41-broadcaster-architecture). |
+| **Ring buffer / dropped-frame handling** | The policy is latest-wins on a 256-deep buffered channel per subscriber, not a ring buffer. Same effect, different mechanism - [§4.1](#41-broadcaster-architecture). |
 | **Redis/Valkey scaling boundary, storage abstraction to swap or complement** | Absent by design. No cache interface, no pub/sub abstraction. The nearest thing is a comment naming Watermill-over-Redis as the upgrade path. [§4.2](#42-in-memory-store-and-the-scaling-boundary) documents the two seams and what they would each require. |
 | **Matchmaking queue** | None. Tables are found by browsing an Elo-proximity-ranked list capped at 20, or by 8-character code. [§6.1](#61-lobby-and-finding-a-table). |
-| **Collision detection** | Not applicable — a card game. Move legality is `Rules.ValidateAction`. |
-| **Reconnection window / grace period** | None. Disconnect leaves the lobby and the hand immediately. The nearest mechanism is the turn clock's `MaxMissedTurns = 3`, which covers a player who stops responding while still connected. [§6.3](#63-disconnects-timeouts-and-edge-cases). |
+| **Collision detection** | Not applicable - a card game. Move legality is `Rules.ValidateAction`. |
+| **Reconnection window / grace period** | Mid-game: 90s `DisconnectGrace` + `ResumePlayer`. Waiting lobby still leaves immediately. Idle seats also use `MaxMissedTurns = 3`. [§6.3](#63-disconnects-timeouts-and-edge-cases), [`READING_GUIDE.md`](READING_GUIDE.md) Part D. |
 | **Mimir** | Not deployed. Metrics land in Prometheus' TSDB via remote-write, 7-day retention. |
 | **Alloy scraping the SSH process** | Inverted: the app **pushes** OTLP to Alloy. Alloy scrapes only the host via `prometheus.exporter.unix`. |
 | **Broadcast latency / frame-render-time metrics** | Not instrumented. Three application counters and OTel runtime metrics only; no histograms. |

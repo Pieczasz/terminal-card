@@ -84,9 +84,9 @@ Crazy Eights and Poker (NLHE) are registered reference implementations under `in
 
    `internal/catalog` fails its own tests if an entry is missing a name, slug, rules factory or view, or if a slug is duplicated.
 4. **Tests** - unit-test rules (and engine interactions if needed).
-5. **Games table** – match recording calls `GetOrCreateGame` / `FinalizeRankedMatch` lazily; you do not need to seed a `games` row manually for development.
+5. **Games table** - match recording calls `GetOrCreateGame` / `FinalizeRankedMatch` lazily; you do not need to seed a `games` row manually for development.
 
-Lobby create options and route names (`game_<slug>`) are derived from the registry – you should not hardcode game lists.
+Lobby create options and route names (`game_<slug>`) are derived from the registry - you should not hardcode game lists.
 
 > **Note:** Both production and the integration suite build their schema from the SQL migrations under `internal/db/migrations/`; nothing relies on GORM AutoMigrate.
 
