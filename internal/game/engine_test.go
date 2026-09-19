@@ -698,3 +698,31 @@ func TestEngine_ConcurrentOperations(t *testing.T) {
 	})
 	require.NotPanics(t, func() { _ = engine.CurrentPlayerID() })
 }
+
+// tiedScorer reports the same standing score for everyone, which is what every seat
+// looks like before the first hand is scored.
+type tiedScorer struct{ *MockRules }
+
+func (tiedScorer) StandingScore(*State, *Player) int { return 0 }
+
+// A player who walked out must never share a place with a seated one: finalize feeds
+// places straight into Elo, and an equal place is recorded as a draw. Hearts reaches
+// this on any hand-1 disconnect, where every CumulativeScore is still zero.
+func TestEngine_Places_LeaverNeverTiesASeatedPlayer(t *testing.T) {
+	t.Parallel()
+	stayed := &Player{ID: "p1"}
+	alsoStayed := &Player{ID: "p2"}
+	quitter := &Player{ID: "p3"}
+
+	m := setupMockRules()
+	m.On("Standings", mock.Anything).Return([]*Player{stayed, alsoStayed})
+	engine := NewEngine(tiedScorer{m}, []*Player{stayed, alsoStayed}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+	engine.WithState(func(state *State) { state.LeftPlayers = []*Player{quitter} })
+
+	standings, places := engine.StandingsWithPlaces()
+
+	require.Len(t, places, 3)
+	assert.Equal(t, []string{"p1", "p2", "p3"}, []string{standings[0].ID, standings[1].ID, standings[2].ID})
+	assert.Equal(t, []int{1, 1, 3}, places, "the two who played tie; the quitter places last")
+}

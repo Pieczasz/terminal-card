@@ -162,13 +162,24 @@ func (e *Engine) StandingsWithPlaces() ([]*Player, []int) {
 }
 
 func (e *Engine) placesLocked(standings []*Player) []int {
+	// standingsLocked appends LeftPlayers after the seats the rules placed, so a
+	// leaver's StandingScore was measured against a state they are no longer in -
+	// tying it with a seated player turns a rage-quit into a rated draw. They rank
+	// strictly below everyone still at the table.
+	left := make(map[string]bool, len(e.state.LeftPlayers))
+	for _, p := range e.state.LeftPlayers {
+		if p != nil {
+			left[p.ID] = true
+		}
+	}
+
 	places := make([]int, len(standings))
 	scorer, ok := e.state.Rules.(StandingScorer)
 	for i, p := range standings {
 		switch {
 		case i == 0:
 			places[i] = 1
-		case ok && p != nil && standings[i-1] != nil &&
+		case ok && p != nil && !left[p.ID] && standings[i-1] != nil &&
 			scorer.StandingScore(e.state, p) == scorer.StandingScore(e.state, standings[i-1]):
 			places[i] = places[i-1]
 		default:
