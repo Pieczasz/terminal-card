@@ -41,6 +41,13 @@ func Model(deps ModelDependencies) *router.Router {
 	r := router.New(global)
 
 	r.Register(router.RouteHome, func(g router.GlobalContext, _ any) tea.Model {
+		// Navigating away from a lobby unsubscribes but keeps the seat, so a player
+		// who reached home from one would never see the game start - the engine
+		// would auto-play their turns until the idle timer took the seat. Create and
+		// join already bounce a seated player back for the same reason.
+		if l := g.LobbyManager.FindLobbyByPlayer(views.SessionPlayer(g)); l != nil {
+			return lobby.New(g, l)
+		}
 		return home.New(g)
 	})
 
