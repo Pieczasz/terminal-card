@@ -298,14 +298,30 @@ func lastMatchDeltas(t *testing.T, gormDB *gorm.DB) map[uint]int {
 }
 
 // Minting an account is free, so beating a fresh one must pay nothing - while the
-// fresh account's own rating still converges.
+// fresh account's own rating still converges. The rule is per pair, not per table:
+// an established seat that lost to the fresh account still pays, or seating an alt
+// would freeze a rating in place, and seats that never faced it are rated as usual.
 func TestFinalizeRankedMatchProvisionalOpponentPaysNothing(t *testing.T) {
 	tests := []struct {
 		name  string
 		seats []seat
+		moves []bool // whether each seat's rating changes at all
 	}{
-		{"heads up against a fresh account", []seat{{1500, 10}, {1500, 0}}},
-		{"one fresh account at a table of four", []seat{{1500, 10}, {1450, 0}, {1300, 12}, {1100, 7}}},
+		{
+			"heads up, established beats fresh: only the fresh account moves",
+			[]seat{{1500, 10}, {1500, 0}},
+			[]bool{false, true},
+		},
+		{
+			"heads up, fresh beats established: the loss still costs",
+			[]seat{{1500, 0}, {1500, 10}},
+			[]bool{true, true},
+		},
+		{
+			"one fresh account at a table of four: only its beaten neighbour is unpaid",
+			[]seat{{1500, 10}, {1450, 0}, {1300, 12}, {1100, 7}},
+			[]bool{false, true, true, true},
+		},
 	}
 
 	for _, tt := range tests {
@@ -324,12 +340,12 @@ func TestFinalizeRankedMatchProvisionalOpponentPaysNothing(t *testing.T) {
 				r := rankingOf(t, gormDB, userIDs[i], gameID)
 				assert.Equal(t, s.played+1, r.MatchesPlayed, "seat %d has played another match", i)
 
-				if s.played < 5 {
-					assert.NotEqual(t, s.elo, r.Elo, "the provisional seat %d still converges", i)
-					assert.NotZero(t, deltas[userIDs[i]], "and its own history records the move")
+				if tt.moves[i] {
+					assert.NotEqual(t, s.elo, r.Elo, "seat %d is rated", i)
+					assert.NotZero(t, deltas[userIDs[i]], "and its history records the move")
 					continue
 				}
-				assert.Equal(t, s.elo, r.Elo, "established seat %d must not be paid by a provisional", i)
+				assert.Equal(t, s.elo, r.Elo, "seat %d must not be paid by a provisional", i)
 				assert.Zero(t, deltas[userIDs[i]], "and its history delta is zeroed too")
 			}
 		})

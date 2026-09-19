@@ -505,3 +505,54 @@ func TestCalculate_DuplicateIDsCollapse(t *testing.T) {
 	assert.Contains(t, logged.String(), "duplicate player id",
 		"a lost rating change has to be visible somewhere")
 }
+
+// A fresh account is free to mint, so beating one pays nothing - but losing to one
+// still costs, or seating an alt would freeze a rating in place. The rule is per
+// pair: the rest of the table is rated normally.
+func TestCalculate_ProvisionalIsUnpaidPerPairNotPerTable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("established winner gains nothing from a provisional loser", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "vet", Rating: 1500},
+			{ID: "new", Rating: 1500, Provisional: true},
+		})
+		assert.InDelta(t, 1500, out["vet"], 1e-9, "no gain from the fresh account")
+		assert.Less(t, out["new"], 1500.0, "the fresh account still converges")
+	})
+
+	t.Run("established loser still pays a provisional winner", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "new", Rating: 1500, Provisional: true},
+			{ID: "vet", Rating: 1500},
+		})
+		assert.Less(t, out["vet"], 1500.0, "a loss to an alt is not free")
+		assert.Greater(t, out["new"], 1500.0)
+	})
+
+	t.Run("seats not paired with the provisional are rated normally", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "a", Rating: 1500},
+			{ID: "new", Rating: 1450, Provisional: true},
+			{ID: "c", Rating: 1300},
+			{ID: "d", Rating: 1100},
+		})
+		assert.InDelta(t, 1500, out["a"], 1e-9, "a only faces the provisional, so a gains nothing")
+		assert.Less(t, out["c"], 1300.0, "c lost to the provisional and to nobody else it beat pays")
+		assert.Less(t, out["d"], 1100.0, "d lost to c - an ordinary pair, rated as usual")
+		assert.Greater(t, out["c"], out["c"]-KFactor, "c's loss is bounded by one pair")
+	})
+
+	t.Run("two provisionals play each other normally", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "p", Rating: 1500, Provisional: true},
+			{ID: "q", Rating: 1500, Provisional: true},
+		})
+		assert.Greater(t, out["p"], 1500.0)
+		assert.Less(t, out["q"], 1500.0)
+	})
+}

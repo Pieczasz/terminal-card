@@ -145,13 +145,17 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 // Soft-deleted rankings are revived first: DO NOTHING leaves them invisible to the
 // default scope, and a missing row used to abort the whole table's finalize.
 func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
+	// Sorted for the same reason fetchRankings orders: an UPDATE locks the rows its
+	// IN list yields, so two finalizes over overlapping seats would otherwise take
+	// the revived rows in opposite orders and Postgres would abort one.
+	sorted := slices.Sorted(slices.Values(userIDs))
 	if err := tx.Unscoped().Model(&db.Ranking{}).
-		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", userIDs, gameID).
+		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", sorted, gameID).
 		Update("deleted_at", nil).Error; err != nil {
 		return fmt.Errorf("revive rankings: %w", err)
 	}
 	seeds := make([]db.Ranking, 0, len(userIDs))
-	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
+	for _, userID := range sorted {
 		seeds = append(seeds, db.Ranking{UserID: userID, GameID: gameID, Elo: elo.ToUint32(elo.DefaultRating)})
 	}
 	if err := tx.Clauses(clause.OnConflict{
@@ -181,7 +185,7 @@ func (q *gormMatchRepository) updateRankingsTx(
 	ctx context.Context, tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
 ) (map[uint]int, error) {
 	// Serialize same-pairing finalizes across every game: ranking row locks are
-	// per (user, game), so A–B farming Poker and Hearts concurrently would both
+	// per (user, game), so A-B farming Poker and Hearts concurrently would both
 	// see an undamped count without this.
 	if err := lockPairing(tx, orderedUserIDs); err != nil {
 		return nil, err
@@ -207,7 +211,6 @@ func (q *gormMatchRepository) updateRankingsTx(
 	}
 
 	newRatings := q.calculateNewElos(orderedUserIDs, places, rankingMap)
-	provisional := anyProvisional(orderedUserIDs, rankingMap)
 
 	deltas := make(map[uint]int, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
@@ -227,10 +230,9 @@ func (q *gormMatchRepository) updateRankingsTx(
 		// match played, and it is what lets a provisional account graduate.
 		update := map[string]any{"matches_played": gorm.Expr("matches_played + 1")}
 
-		// A provisional player's own rating still converges; only the established
-		// players around them go unpaid. This deliberately breaks conservation - the
-		// zero-sum property of Elo is worth less than an unfarmable ladder.
-		if !damped && (!provisional || r.MatchesPlayed < provisionalMatches) {
+		// Who gets paid against a provisional seat is elo.Calculate's decision, per
+		// pair; here a damped table is the only reason a rating stays put.
+		if !damped {
 			stored := elo.ToUint32(newRating)
 			update["elo"] = stored
 			deltas[userID] = int(stored) - int(r.Elo)
@@ -240,15 +242,6 @@ func (q *gormMatchRepository) updateRankingsTx(
 		}
 	}
 	return deltas, nil
-}
-
-func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool {
-	for _, userID := range orderedUserIDs {
-		if r, ok := rankingMap[userID]; ok && r.MatchesPlayed < provisionalMatches {
-			return true
-		}
-	}
-	return false
 }
 
 // samePairingCountLast24h counts recent ranked matches whose participant set is
@@ -359,14 +352,16 @@ func (q *gormMatchRepository) calculateNewElos(
 ) map[string]float64 {
 	players := make([]elo.Player, 0, len(orderedUserIDs))
 	for i, userID := range orderedUserIDs {
-		rating := elo.DefaultRating
+		rating, provisional := elo.DefaultRating, true
 		if r, ok := rankingMap[userID]; ok {
 			rating = float64(r.Elo)
+			provisional = r.MatchesPlayed < provisionalMatches
 		}
 		players = append(players, elo.Player{
-			ID:     strconv.FormatUint(uint64(userID), 10),
-			Rating: rating,
-			Place:  placeAt(places, i),
+			ID:          strconv.FormatUint(uint64(userID), 10),
+			Rating:      rating,
+			Place:       placeAt(places, i),
+			Provisional: provisional,
 		})
 	}
 	return elo.Calculate(players)
