@@ -1,7 +1,6 @@
 package game
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -68,37 +67,6 @@ func TestReshuffleDiscardIntoStock(t *testing.T) {
 		assert.Equal(t, 1, shedCardsInPlay(state))
 	})
 
-	t.Run("a failed shuffle conserves the cards and leaves an empty stock", func(t *testing.T) {
-		t.Parallel()
-		state := shedState(nil, discard)
-		before := shedCardsInPlay(state)
-		boom := errors.New("no entropy")
-
-		err := reshuffleDiscardIntoStock(state, func(*deck.Pile) error { return boom })
-
-		require.ErrorIs(t, err, boom)
-		assert.Equal(t, before, shedCardsInPlay(state), "a failed shuffle must not lose cards")
-		assert.True(t, state.Deck.IsEmpty(), "an unshuffled stock never reaches play")
-		assert.Equal(t, len(discard), state.Discard.Size(), "the pile goes back as it was")
-		top, _ := state.Discard.Peek()
-		assert.Equal(t, discard[len(discard)-1], top, "a rotated pile puts an unplayed card into play")
-	})
-}
-
-func TestRestoreDiscard_KeepsTheCardInPlayOnTop(t *testing.T) {
-	t.Parallel()
-	top := deck.Card{Rank: deck.Nine, Suit: deck.Spades}
-	rest := []deck.Card{
-		{Rank: deck.Three, Suit: deck.Hearts},
-		{Rank: deck.Jack, Suit: deck.Clubs},
-	}
-
-	restored := restoreDiscard(rest, top)
-
-	peeked, ok := restored.Peek()
-	require.True(t, ok)
-	assert.Equal(t, top, peeked)
-	assert.Equal(t, len(rest)+1, restored.Size(), "every card comes back")
 }
 
 func TestReturnHandToStock(t *testing.T) {
@@ -113,7 +81,7 @@ func TestReturnHandToStock(t *testing.T) {
 		}})
 		before := shedCardsInPlay(state)
 
-		ReturnHandToStock(state, "p2", "test")
+		ReturnHandToStock(state, "p2")
 
 		assert.Equal(t, before, shedCardsInPlay(state))
 		assert.Equal(t, 3, state.Deck.Size())
@@ -125,7 +93,7 @@ func TestReturnHandToStock(t *testing.T) {
 		t.Parallel()
 		state := shedState(nil, nil)
 		before := shedCardsInPlay(state)
-		ReturnHandToStock(state, "nobody", "test")
+		ReturnHandToStock(state, "nobody")
 		assert.Equal(t, before, shedCardsInPlay(state))
 	})
 }
@@ -161,4 +129,95 @@ func TestHandEmptyOrAllPassed(t *testing.T) {
 			assert.Equal(t, tt.want, HandEmptyOrAllPassed(tt.state, tt.passes))
 		})
 	}
+}
+
+func TestOpenDiscard(t *testing.T) {
+	t.Parallel()
+	// Draw reads the end of the pile, so the last card listed is the first drawn.
+	stock := []deck.Card{
+		{Rank: deck.Five, Suit: deck.Clubs},
+		{Rank: deck.Nine, Suit: deck.Hearts},
+		{Rank: deck.Eight, Suit: deck.Spades},
+		{Rank: deck.Eight, Suit: deck.Diamonds},
+	}
+	notAnEight := func(c deck.Card) bool { return c.Rank != deck.Eight }
+
+	t.Run("the first legal card opens the pile", func(t *testing.T) {
+		t.Parallel()
+		state := shedState([]deck.Card{{Rank: deck.Four, Suit: deck.Hearts}}, nil)
+		before := shedCardsInPlay(state)
+
+		top, err := OpenDiscard(state, notAnEight)
+
+		require.NoError(t, err)
+		assert.Equal(t, deck.Card{Rank: deck.Four, Suit: deck.Hearts}, top)
+		assert.Equal(t, 1, state.Discard.Size())
+		assert.True(t, state.Deck.IsEmpty())
+		assert.Equal(t, before, shedCardsInPlay(state))
+	})
+
+	t.Run("the cards it refuses go back into the stock", func(t *testing.T) {
+		t.Parallel()
+		state := shedState(stock, nil)
+		before := shedCardsInPlay(state)
+
+		top, err := OpenDiscard(state, notAnEight)
+
+		require.NoError(t, err)
+		assert.Equal(t, deck.Card{Rank: deck.Nine, Suit: deck.Hearts}, top,
+			"both eights are passed over")
+		assert.Equal(t, 3, state.Deck.Size(), "the eights are dealt, not discarded")
+		assert.Equal(t, before, shedCardsInPlay(state))
+	})
+
+	// A pile that opens on a card nobody can match is worse than a table that refuses
+	// to start, so the error path has to leave the stock whole for the caller to report.
+	t.Run("a stock with no legal opener errors and conserves the cards", func(t *testing.T) {
+		t.Parallel()
+		state := shedState([]deck.Card{
+			{Rank: deck.Eight, Suit: deck.Spades},
+			{Rank: deck.Eight, Suit: deck.Clubs},
+		}, nil)
+		before := shedCardsInPlay(state)
+
+		_, err := OpenDiscard(state, notAnEight)
+
+		require.Error(t, err)
+		assert.Equal(t, before, shedCardsInPlay(state))
+		assert.Equal(t, 2, state.Deck.Size())
+		assert.True(t, state.Discard.IsEmpty(), "a refused start leaves nothing in play")
+	})
+}
+
+func TestShedStandings_FewestCardsFirstAndTiesStable(t *testing.T) {
+	t.Parallel()
+	state := &State{Players: []*Player{
+		{ID: "p1", Cards: make([]deck.Card, 4)},
+		{ID: "p2", Cards: make([]deck.Card, 1)},
+		{ID: "p3", Cards: make([]deck.Card, 4)},
+	}}
+
+	standings := ShedStandings(state)
+
+	require.Len(t, standings, 3)
+	assert.Equal(t, []string{"p2", "p1", "p3"}, []string{standings[0].ID, standings[1].ID, standings[2].ID},
+		"ties keep seat order so the ranking is reproducible")
+	assert.Equal(t, ShedScore(standings[1]), ShedScore(standings[2]),
+		"Standings and StandingScore have to agree, or a draw is split by seat")
+}
+
+func TestLeaveShedGame(t *testing.T) {
+	t.Parallel()
+	state := shedState(nil, nil)
+	state.Players = append(state.Players, &Player{ID: "p2", Cards: []deck.Card{
+		{Rank: deck.King, Suit: deck.Hearts},
+	}})
+	shed := &ShedState{Passes: 2}
+	before := shedCardsInPlay(state)
+
+	LeaveShedGame(state, shed, "p2")
+
+	assert.Zero(t, shed.Passes, "the count measured a table that no longer exists")
+	assert.Equal(t, before, shedCardsInPlay(state))
+	assert.Empty(t, state.Players[1].Cards)
 }

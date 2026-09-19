@@ -9,6 +9,11 @@ import (
 // State is guarded by the owning Engine's mutex: every Rules method and every
 // WithState callback runs with it held, which is why neither may call back into
 // the Engine.
+//
+// Players and LeftPlayers never hold a nil seat - Engine.Start deals into every
+// player, so a nil would panic there before any of this is reachable - and the
+// engine reads them unguarded. Rules.Standings is the rules' own slice, so the
+// engine does guard that one.
 type State struct {
 	Players          []*Player
 	LeftPlayers      []*Player

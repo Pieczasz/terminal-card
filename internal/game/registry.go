@@ -47,11 +47,11 @@ func (r *Registry) Module(name string) (Module, bool) {
 	return m, ok
 }
 
+// Create builds a fresh Rules for a registered game. The factory runs after the
+// registry lock is dropped: it is caller-supplied code, and holding a lock across it
+// would let a factory that touched the registry deadlock every other reader.
 func (r *Registry) Create(name string) (Rules, error) {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-
-	m, ok := r.modules[name]
+	m, ok := r.Module(name)
 	if !ok {
 		return nil, errors.New("game not found in registry")
 	}

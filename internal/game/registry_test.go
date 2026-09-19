@@ -51,3 +51,41 @@ func TestRegistry_RegisterModule(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "crazy_eights", mod.Slug)
 }
+
+// A half-declared module is a wiring bug, and a registry that accepted one would fail
+// later as a missing route or a nil factory panic at the moment somebody starts a
+// table. catalog_test.go leans on this being loud.
+func TestRegistry_RegisterModuleRejectsAHalfDeclaredGame(t *testing.T) {
+	t.Parallel()
+
+	factory := func() Rules { return &MockRules{} }
+	tests := []struct {
+		name   string
+		module Module
+	}{
+		{name: "no display name", module: Module{Slug: "s", Factory: factory}},
+		{name: "no slug", module: Module{Name: "N", Factory: factory}},
+		{name: "no factory", module: Module{Name: "N", Slug: "s"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Panics(t, func() { NewRegistry().RegisterModule(tt.module) })
+		})
+	}
+}
+
+// Re-registering a name replaces the module without listing it twice: GameNames drives
+// the menu, and a duplicate row is a game the player can pick and never reach.
+func TestRegistry_ReRegisterKeepsOneEntry(t *testing.T) {
+	t.Parallel()
+	r := NewRegistry()
+	r.RegisterModule(Module{Name: "Poker", Slug: "old", Factory: func() Rules { return &MockRules{} }})
+	r.RegisterModule(Module{Name: "Poker", Slug: "new", Factory: func() Rules { return &MockRules{} }})
+
+	assert.Equal(t, []string{"Poker"}, r.GameNames())
+	mod, ok := r.Module("Poker")
+	require.True(t, ok)
+	assert.Equal(t, "new", mod.Slug)
+}

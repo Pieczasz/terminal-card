@@ -4,6 +4,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/broadcaster"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 
 	"github.com/stretchr/testify/assert"
@@ -35,6 +36,7 @@ func TestBoundEngine_HandIsClonedAndScoped(t *testing.T) {
 	p1 := &Player{ID: "1"}
 	p2 := &Player{ID: "2"}
 	engine := NewEngine(bindRules{}, []*Player{p1, p2}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
 
 	bound := Bind(engine, "1")
@@ -83,6 +85,7 @@ func TestBoundEngine_SubmitRequiresBoundPlayer(t *testing.T) {
 	p1 := &Player{ID: "1"}
 	p2 := &Player{ID: "2"}
 	engine := NewEngine(bindRules{}, []*Player{p1, p2}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
 
 	current := engine.CurrentPlayerID()
@@ -118,4 +121,76 @@ func TestBoundEngine_SubscribeAndUnsubscribe(t *testing.T) {
 	_, err = unbound.Subscribe()
 	require.Error(t, err, "a view with no engine is told so rather than handed a nil channel")
 	assert.NotPanics(t, func() { unbound.Unsubscribe(nil) })
+}
+
+// A view can hold a nil BoundEngine: Bind refuses a nil engine, and the session
+// keeps whatever it got. Every method has to answer rather than panic, because the
+// view calls them from its render loop before it knows it has no game.
+func TestBoundEngine_NilIsInert(t *testing.T) {
+	t.Parallel()
+
+	assert.Nil(t, Bind(nil, "1"), "there is no seat without an engine")
+
+	var unbound *BoundEngine
+	assert.Nil(t, unbound.Engine())
+	assert.Empty(t, unbound.PlayerID())
+	require.ErrorContains(t, unbound.Submit(noopAction{}), "no active game")
+
+	snap, hand, remaining := unbound.Frame(func(*State) { t.Fatal("there is no state to read") })
+	assert.Equal(t, StateSnapshot{}, snap)
+	assert.Nil(t, hand)
+	assert.Zero(t, remaining)
+}
+
+// The escape hatch has to reach the same engine the view was bound to - poker renders
+// every seat through it - and the bound ID is what scopes everything else.
+func TestBoundEngine_ExposesItsEngineAndSeat(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(bindRules{}, []*Player{{ID: "1"}, {ID: "2"}}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+
+	bound := Bind(engine, "1")
+	assert.Same(t, engine, bound.Engine())
+	assert.Equal(t, "1", bound.PlayerID())
+}
+
+// Frame is one lock hold: the callback sees the same state the snapshot and hand were
+// taken from, or a view can render a hand against a table that has already moved on.
+func TestBoundEngine_FrameCallbackSeesTheSnapshottedState(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(bindRules{}, []*Player{{ID: "1"}, {ID: "2"}}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+	require.NoError(t, engine.Start())
+
+	bound := Bind(engine, "1")
+	var seenPhase Phase
+	var seenHand int
+	snap, hand, _ := bound.Frame(func(state *State) {
+		seenPhase = state.Phase
+		seenHand = len(state.Players[0].Cards)
+	})
+
+	assert.Equal(t, snap.Phase, seenPhase)
+	assert.Len(t, hand, seenHand)
+}
+
+// A subscriber slot is finite, so a view that fails to get one has to be told why
+// rather than handed a channel that never delivers.
+func TestBoundEngine_SubscribeReportsCapacity(t *testing.T) {
+	t.Parallel()
+
+	engine := NewEngine(bindRules{}, []*Player{{ID: "1"}, {ID: "2"}}, deck.StandardDeck())
+	t.Cleanup(engine.Close)
+	bound := Bind(engine, "1")
+
+	for range 2 + 8 {
+		_, err := bound.Subscribe()
+		require.NoError(t, err)
+	}
+
+	_, err := bound.Subscribe()
+	require.ErrorIs(t, err, broadcaster.ErrAtCapacity)
+	assert.ErrorContains(t, err, "subscribe to game events", "the view shows this line verbatim")
 }
