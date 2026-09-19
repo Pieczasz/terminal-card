@@ -120,3 +120,47 @@ func stripANSI(s string) string {
 	}
 	return out.String()
 }
+
+// The profile is a full-screen view, so it has to fit the screen at every size the
+// app claims to support - a view taller than the terminal is handed to the terminal
+// to wrap, and one wrapped row shifts every row under it.
+func TestView_FitsTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	user := alice()
+	user.Rankings = make([]db.Ranking, 0, 5)
+	for _, g := range []string{"Poker", "Hearts", "Uno", "Gin Rummy", "Crazy Eights"} {
+		user.Rankings = append(user.Rankings, db.Ranking{Elo: 1600, Game: db.Game{Name: g}})
+	}
+	history := make([]db.MatchParticipant, 0, 50)
+	for i := range 50 {
+		history = append(history, db.MatchParticipant{
+			Placement: (i % 4) + 1,
+			Match:     db.Match{Game: db.Game{Name: "Poker"}, Ranked: true},
+		})
+	}
+
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"the declared minimum", styles.MinWidth, styles.MinHeight},
+		{"a stock terminal", 80, 24},
+		{"a tall terminal", 120, 50},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			t.Parallel()
+			global := router.GlobalContext{
+				Theme: styles.NewTheme(true), Width: size.w, Height: size.h,
+			}
+			updated, _ := New(global).Update(profileLoadedMsg{user: user, history: history})
+			m, ok := updated.(model)
+			require.True(t, ok)
+
+			out := m.View().Content
+
+			assert.LessOrEqual(t, lg.Height(out), size.h, "taller than the terminal")
+			assert.LessOrEqual(t, lg.Width(out), size.w, "wider than the terminal")
+		})
+	}
+}

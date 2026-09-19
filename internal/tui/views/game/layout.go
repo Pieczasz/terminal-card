@@ -367,7 +367,7 @@ func ClockTick() tea.Cmd { return ClockTickFor(0, false) }
 
 func RenderWaitingScreen(g router.GlobalContext, phase game.Phase, winner string) string {
 	innerWidth := styles.InnerWidth(g.Width)
-	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
+	titleFig := styles.RenderFigureASCII("Active Game", innerWidth, styles.TitleHeightBudget(g.Height))
 	header := g.Theme.Title.Render(titleFig)
 	footer := g.Theme.RenderActionFooter(styles.GlobalActions)
 

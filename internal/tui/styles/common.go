@@ -63,14 +63,40 @@ func InnerWidth(screenWidth int) int {
 	return max(BoxWidth(screenWidth)-6, 0)
 }
 
-func AvailableContentHeight(screenHeight int, header, footer string) int {
-	boxHeight := BoxHeight(screenHeight)
-	innerHeight := boxHeight - 4
+// opticalPadding is the two blank lines RenderMainLayout appends to content. They are
+// part of the content area, so a view that is told it may use the whole area and then
+// fills it overflows the box by exactly this much.
+const opticalPadding = 2
 
+// layoutHeights is the arithmetic RenderMainLayout and AvailableContentHeight must
+// agree on. They used to disagree twice over: the header and footer were measured
+// unwrapped here but wrapped there - a footer that wraps to two lines is a line the
+// content cannot have - and opticalPadding was never deducted. Either one alone makes
+// a full-screen view a row taller than the terminal, which the frame then hands to
+// the terminal to wrap, shifting every row under it.
+func layoutHeights(screenWidth, screenHeight int, header, footer string) (
+	innerWidth, hHeader, hFooter, hContent int,
+) {
+	innerWidth = max(BoxWidth(screenWidth)-6, 0)
+	innerHeight := max(BoxHeight(screenHeight)-4, 0)
+
+	// go-figure leaves trailing newlines that inflate the measured height.
 	header = strings.TrimRight(header, "\r\n")
 	footer = strings.TrimRight(footer, "\r\n")
 
-	return max(innerHeight-lg.Height(header)-lg.Height(footer), 0)
+	// Wrap before measuring, or lg.Height reports the unwrapped height.
+	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(header)
+	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(footer)
+
+	hHeader, hFooter = lg.Height(header), lg.Height(footer)
+	return innerWidth, hHeader, hFooter, max(innerHeight-hHeader-hFooter, 0)
+}
+
+// AvailableContentHeight is how many lines of content a full-screen view may render
+// at this size without the frame outgrowing the terminal.
+func AvailableContentHeight(screenWidth, screenHeight int, header, footer string) int {
+	_, _, _, hContent := layoutHeights(screenWidth, screenHeight, header, footer)
+	return max(hContent-opticalPadding, 0)
 }
 
 // PadTruncate fits s into exactly width cells, padding short values and eliding
@@ -91,11 +117,21 @@ func PadTruncate(s string, width int) string {
 	return string(runes[:width-3]) + "..."
 }
 
-// figureKey is a title at a terminal width. Widths are bounded by maxBoxWidth and the
-// titles are a fixed handful, so the cache cannot grow without limit.
+// figureKey is a title at a terminal size. Widths are bounded by maxBoxWidth, heights
+// by maxBoxHeight, and the titles are a fixed handful, so the cache cannot grow
+// without limit.
 type figureKey struct {
-	text     string
-	maxWidth int
+	text      string
+	maxWidth  int
+	maxHeight int
+}
+
+// TitleHeightBudget is how many lines a screen may spend on its figlet title: a fifth
+// of the box interior. On a 20-row terminal that is two, so the title falls back to
+// plain text and the content gets those lines back - the banner is decoration, and
+// three lines of it in a fourteen-line box left some screens no room for a single row.
+func TitleHeightBudget(screenHeight int) int {
+	return max((BoxHeight(screenHeight)-4)/5, 1)
 }
 
 // figureCache memoises rendered banners. go-figure re-reads and re-parses the whole
@@ -112,14 +148,16 @@ var (
 	maxFigureKeys = int64(512)
 )
 
-func RenderFigureASCII(text string, maxWidth int) string {
-	key := figureKey{text: text, maxWidth: maxWidth}
+// RenderFigureASCII is text as the largest figlet banner that fits both bounds, or
+// the text itself when none does.
+func RenderFigureASCII(text string, maxWidth, maxHeight int) string {
+	key := figureKey{text: text, maxWidth: maxWidth, maxHeight: maxHeight}
 	if cached, ok := figureCache.Load(key); ok {
 		banner, _ := cached.(string)
 		return banner
 	}
 
-	banner := renderFigureASCII(text, maxWidth)
+	banner := renderFigureASCII(text, maxWidth, maxHeight)
 	if figureCached.Load() < maxFigureKeys {
 		if _, loaded := figureCache.LoadOrStore(key, banner); !loaded {
 			figureCached.Add(1)
@@ -128,11 +166,11 @@ func RenderFigureASCII(text string, maxWidth int) string {
 	return banner
 }
 
-func renderFigureASCII(text string, maxWidth int) string {
+func renderFigureASCII(text string, maxWidth, maxHeight int) string {
 	fonts := []string{"slant", "small", "mini"}
 	for _, font := range fonts {
-		fig := figure.NewFigure(text, font, true).String()
-		if lg.Width(fig) <= maxWidth {
+		fig := strings.TrimRight(figure.NewFigure(text, font, true).String(), "\r\n")
+		if lg.Width(fig) <= maxWidth && lg.Height(fig) <= maxHeight {
 			return fig
 		}
 	}
@@ -143,21 +181,13 @@ func (t Theme) RenderMainLayout(width, height int, header, content, footer strin
 	boxWidth := BoxWidth(width)
 	boxHeight := BoxHeight(height)
 
-	innerWidth := max(boxWidth-6, 0)
-	innerHeight := max(boxHeight-4, 0)
+	innerWidth, hHeader, hFooter, hContent := layoutHeights(width, height, header, footer)
 
-	// go-figure leaves trailing newlines that inflate the measured height below.
-	header = strings.TrimRight(header, "\r\n")
-	footer = strings.TrimRight(footer, "\r\n")
-
-	// Wrap before measuring, or lg.Height reports the unwrapped height.
-	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(header)
-	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).Render(footer)
-
-	hHeader := lg.Height(header)
-	hFooter := lg.Height(footer)
-
-	hContent := max(innerHeight-hHeader-hFooter, 0)
+	// Re-render at the measured width so the placed areas match what was measured.
+	header = lg.NewStyle().Width(innerWidth).Align(lg.Center).
+		Render(strings.TrimRight(header, "\r\n"))
+	footer = lg.NewStyle().Width(innerWidth).Align(lg.Center).
+		Render(strings.TrimRight(footer, "\r\n"))
 
 	// Optical centering: two trailing blank lines push the visible text one line up,
 	// which reads as centered where true centering reads as slightly low.

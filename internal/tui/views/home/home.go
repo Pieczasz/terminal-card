@@ -51,9 +51,10 @@ func (m model) View() tea.View {
 		welcomeName = m.global.User.Username
 	}
 
-	return tea.NewView(views.RenderScreen(m.global, "Terminal Cards", nil, func(int) string {
+	return tea.NewView(views.RenderScreen(m.global, "Terminal Cards", nil, func(height int) string {
+		// The welcome banner is the whole content, so it may use every line it is handed.
 		welcomeFig := styles.RenderFigureASCII(
-			fmt.Sprintf("Welcome %s", welcomeName), styles.InnerWidth(m.global.Width))
+			fmt.Sprintf("Welcome %s", welcomeName), styles.InnerWidth(m.global.Width), height)
 		return m.global.Theme.Welcome.Render(welcomeFig)
 	}))
 }

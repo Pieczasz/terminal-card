@@ -31,6 +31,13 @@ const (
 	colElo    = 4
 	colPlace  = 10 // "1st place"
 	colResult = 14 // "Elo change: +99" / "casual game"
+	// tableGap is the space between the two tables when they sit side by side, and
+	// what the fit check has to account for when deciding whether they can.
+	tableGap = 4
+	// twoTableMinHeight is what a stacked pair costs at its smallest: the two label
+	// lines, two spacers, two 2-line table headers, a row each, and the gap between
+	// them. Below it one table has to go.
+	twoTableMinHeight = 11
 )
 
 type model struct {
@@ -133,20 +140,50 @@ func (m model) renderContent(contentHeight int) string {
 		return "Loading profile..."
 	}
 
-	const extraVerticalLines = 5 // userInfo, spacer, filter, spacer, headers
+	// userInfo, spacer, filter, spacer, and the table header - which is two lines,
+	// its titles and the rule under them.
+	const extraVerticalLines = 6
 	maxItems := max(contentHeight-extraVerticalLines, 1)
 
-	rankingsCol := lg.NewStyle().Align(lg.Left).Width(rankingsTable.Width()).MarginRight(4).
-		Render(lg.JoinVertical(lg.Left, m.rankingRows(maxItems)...))
-	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTable.Width()).
-		Render(lg.JoinVertical(lg.Left, m.historyRows(maxItems)...))
-	tables := lg.JoinHorizontal(lg.Top, rankingsCol, historyCol)
+	// The two tables are fixed-width, so below a certain terminal they do not fit
+	// beside each other and lipgloss word-wraps the columns into confetti rather
+	// than shrinking them. Stacking is what renderForm does for the same reason.
+	stacked := rankingsTable.Width()+tableGap+historyTable.Width() > styles.InnerWidth(m.global.Width)
+	rankItems, histItems := maxItems, maxItems
+	if stacked {
+		// Both tables now spend height instead of sharing it: two headers and the
+		// spacer between them come out of the same budget.
+		rankItems = max((maxItems-3)/2, 1)
+		histItems = max(maxItems-3-rankItems, 1)
+	}
 
 	userInfo := fmt.Sprintf("Profile for: %s", m.userProfile.Username)
 	filters := m.global.Theme.Muted.Render(fmt.Sprintf("Game: %s  Result: %s",
 		styles.PadTruncate(m.gameFilters[m.gameFilterIdx], colGame),
 		styles.PadTruncate(m.resultFilters[m.resultIdx], len(filterLosses)),
 	))
+
+	// At the declared 64x20 minimum the title and footer leave six lines, fewer than
+	// two stacked tables need at their smallest. The rankings summary gives way to
+	// the match history, which is what a player opens this screen for.
+	if stacked && contentHeight < twoTableMinHeight {
+		items := max(contentHeight-4, 1) // the two labels and the 2-line header
+		return lg.JoinVertical(lg.Left, userInfo, filters,
+			lg.JoinVertical(lg.Left, m.historyRows(items)...))
+	}
+
+	rankingsStyle := lg.NewStyle().Align(lg.Left).Width(rankingsTable.Width())
+	if !stacked {
+		rankingsStyle = rankingsStyle.MarginRight(tableGap)
+	}
+	rankingsCol := rankingsStyle.Render(lg.JoinVertical(lg.Left, m.rankingRows(rankItems)...))
+	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTable.Width()).
+		Render(lg.JoinVertical(lg.Left, m.historyRows(histItems)...))
+
+	tables := lg.JoinHorizontal(lg.Top, rankingsCol, historyCol)
+	if stacked {
+		tables = lg.JoinVertical(lg.Left, rankingsCol, "", historyCol)
+	}
 
 	return lg.JoinVertical(lg.Left, userInfo, "", filters, "", tables)
 }
@@ -164,16 +201,27 @@ var (
 	}}
 )
 
+// limitRows splits n items into what fits and whether to say so. The "... and more"
+// line comes *out* of the budget rather than being appended past it, or a truncated
+// table is one line taller than the space it was given.
+func limitRows(n, maxItems int) (show int, more bool) {
+	if n <= maxItems {
+		return n, false
+	}
+	return max(maxItems-1, 0), true
+}
+
 func (m model) rankingRows(maxItems int) []string {
 	rows := []string{rankingsTable.Header(m.global.Theme)}
 	if len(m.userProfile.Rankings) == 0 {
 		return append(rows, styles.PadTruncate("No games yet.", rankingsTable.Width()))
 	}
-	for i, r := range m.userProfile.Rankings {
-		if i >= maxItems {
-			return append(rows, "... and more")
-		}
+	show, more := limitRows(len(m.userProfile.Rankings), maxItems)
+	for _, r := range m.userProfile.Rankings[:show] {
 		rows = append(rows, rankingsTable.Cells(r.Game.Name, strconv.FormatUint(uint64(r.Elo), 10)))
+	}
+	if more {
+		rows = append(rows, "... and more")
 	}
 	return rows
 }
@@ -211,12 +259,13 @@ func (m model) historyRows(maxItems int) []string {
 	if len(filtered) == 0 {
 		return append(rows, styles.PadTruncate("No matches for this filter.", historyTable.Width()))
 	}
-	for i, h := range filtered {
-		if i >= maxItems {
-			return append(rows, "... and more")
-		}
+	show, more := limitRows(len(filtered), maxItems)
+	for _, h := range filtered[:show] {
 		rows = append(rows, historyTable.Cells(
 			h.Match.Game.Name, placementPlain(h.Placement), resultPlain(h)))
+	}
+	if more {
+		rows = append(rows, "... and more")
 	}
 	return rows
 }

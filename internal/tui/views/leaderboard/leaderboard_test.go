@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
+	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -36,9 +37,16 @@ func board(t *testing.T, n int) model {
 	}
 }
 
+// boardRows is the page size board() produces, so tests page by what it draws
+// instead of assuming the cap.
+func boardRows(t *testing.T) int {
+	t.Helper()
+	return board(t, 0).rowsPerPage()
+}
+
 func TestCycleFilter_AdvancesAndClearsRows(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize)
+	m := board(t, boardRows(t))
 	m.filterIndex = 0
 
 	next, cmd := m.cycleFilter(1)
@@ -53,7 +61,7 @@ func TestCycleFilter_AdvancesAndClearsRows(t *testing.T) {
 
 func TestGoPage_StaysInsideLoadedPages(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize*2+3) // 3 pages, last short
+	m := board(t, boardRows(t)*2+3) // 3 pages, last short
 
 	next, cmd := m.goPage(1)
 	require.Nil(t, cmd, "page 2 is already loaded")
@@ -72,18 +80,19 @@ func TestGoPage_StaysInsideLoadedPages(t *testing.T) {
 
 func TestGoPage_FetchesWhenTheNextPageIsMissing(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize) // only page 1 loaded
+	rows := boardRows(t)
+	m := board(t, rows) // only page 1 loaded
 
 	next, cmd := m.goPage(1)
 	nm := next.(model)
 	assert.True(t, nm.loading)
 	assert.NotNil(t, cmd, "moving past the loaded window must request more rows")
-	assert.Equal(t, pageSize*2, nm.needsFetch(1))
+	assert.Equal(t, rows*2, nm.needsFetch(1))
 }
 
 func TestGoPage_DoesNotRefetchAShortLastPage(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize*2+3) // pages 0-2 already held; last page short
+	m := board(t, boardRows(t)*2+3) // pages 0-2 already held; last page short
 	m.page = 1
 
 	next, cmd := m.goPage(1)
@@ -97,7 +106,7 @@ func TestGoPage_DoesNotRefetchAShortLastPage(t *testing.T) {
 
 func TestGoPage_StopsWhenExhausted(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize)
+	m := board(t, boardRows(t))
 	m.exhausted = true
 
 	next, cmd := m.goPage(1)
@@ -105,21 +114,24 @@ func TestGoPage_StopsWhenExhausted(t *testing.T) {
 	assert.Equal(t, 0, next.(model).page)
 }
 
-func TestRenderRankings_FixedPageSize(t *testing.T) {
+// A page shows exactly rowsPerPage ranks and no more: a window that drew fewer than
+// it paged by would skip the difference on every page turn.
+func TestRenderRankings_DrawsExactlyOnePage(t *testing.T) {
 	t.Parallel()
-	m := board(t, pageSize+5)
+	rows := boardRows(t)
+	m := board(t, rows+5)
 	m.page = 0
 
 	out := stripANSI(m.renderRankings(80))
 	assert.Contains(t, out, "player01")
-	assert.Contains(t, out, fmt.Sprintf("player%02d", pageSize))
-	assert.NotContains(t, out, fmt.Sprintf("player%02d", pageSize+1),
+	assert.Contains(t, out, fmt.Sprintf("player%02d", rows))
+	assert.NotContains(t, out, fmt.Sprintf("player%02d", rows+1),
 		"page 1 must not spill into page 2")
 	assert.Contains(t, out, "page 1/")
 
 	m.page = 1
 	out = stripANSI(m.renderRankings(80))
-	assert.Contains(t, out, fmt.Sprintf("player%02d", pageSize+1))
+	assert.Contains(t, out, fmt.Sprintf("player%02d", rows+1))
 	assert.NotContains(t, out, "player01")
 	assert.Contains(t, out, "page 2/")
 }
@@ -127,7 +139,7 @@ func TestRenderRankings_FixedPageSize(t *testing.T) {
 func TestNeedsFetch_CapsAtMax(t *testing.T) {
 	t.Parallel()
 	m := board(t, maxLeaderboardPlayers)
-	assert.Equal(t, 0, m.needsFetch(maxLeaderboardPlayers/pageSize),
+	assert.Equal(t, 0, m.needsFetch(maxLeaderboardPlayers/maxRowsPerPage),
 		"a full window does not ask the repository again")
 }
 
@@ -145,4 +157,57 @@ func stripANSI(s string) string {
 		}
 	}
 	return out.String()
+}
+
+// The board is a full-screen view, so it has to fit the screen. It used to force
+// twenty rows plus chrome at every size, which overran a stock 80x24 terminal - and
+// TooSmall reports 80x24 as perfectly fine, so nothing anywhere caught it.
+func TestView_FitsTheTerminalAtEverySupportedSize(t *testing.T) {
+	t.Parallel()
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"the declared minimum", styles.MinWidth, styles.MinHeight},
+		{"a stock terminal", 80, 24},
+		{"a tall terminal", 120, 50},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			t.Parallel()
+			m := model{
+				global:   router.GlobalContext{Theme: styles.NewTheme(true), Width: size.w, Height: size.h},
+				rankings: rankings(maxLeaderboardPlayers),
+				filters:  []string{filterAll, "Poker"},
+			}
+
+			out := m.View().Content
+
+			assert.LessOrEqual(t, lg.Height(out), size.h, "the board is taller than the terminal")
+			assert.LessOrEqual(t, lg.Width(out), size.w, "the board is wider than the terminal")
+		})
+	}
+}
+
+// Paging must move by exactly what is drawn: a page that steps twenty while showing
+// six silently skips fourteen players.
+func TestRowsPerPage_PagesByWhatItDraws(t *testing.T) {
+	t.Parallel()
+	short := model{
+		global:   router.GlobalContext{Theme: styles.NewTheme(true), Width: 80, Height: 24},
+		rankings: rankings(maxLeaderboardPlayers),
+		filters:  []string{filterAll},
+	}
+	tall := short
+	tall.global.Height = 50
+
+	shortRows, tallRows := short.rowsPerPage(), tall.rowsPerPage()
+	assert.Less(t, shortRows, maxRowsPerPage, "a stock terminal cannot hold a full page")
+	assert.GreaterOrEqual(t, shortRows, minRowsPerPage)
+	assert.Equal(t, maxRowsPerPage, tallRows, "a tall terminal still gets the full page")
+
+	// Page 2 starts where page 1 stopped drawing, at both sizes.
+	next, _ := short.goPage(1)
+	assert.Equal(t, 1, next.(model).page)
+	assert.Contains(t, next.(model).renderRankings(styles.InnerWidth(80)),
+		fmt.Sprintf("ranks %d-%d", shortRows+1, shortRows*2))
 }

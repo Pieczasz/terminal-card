@@ -2,14 +2,17 @@ package lobby
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -284,4 +287,45 @@ func stripANSI(s string) string {
 		}
 	}
 	return out.String()
+}
+
+func manyTables(n int) []lobby.BrowseEntry {
+	out := make([]lobby.BrowseEntry, 0, n)
+	for i := range n {
+		out = append(out, lobby.BrowseEntry{
+			Code: fmt.Sprintf("T%03d", i), GameName: "Poker", Players: 1 + i%3, MaxPlayers: 4,
+			Ranked: i%2 == 0, AvgElo: uint32(1500 + i),
+		})
+	}
+	return out
+}
+
+// The browser is a full-screen view, so it has to fit the screen at every size the
+// app claims to support: a fixed ten rows plus their chrome overran a stock 80x24
+// terminal, and the frame handed the overflow to the terminal to wrap.
+func TestJoin_ViewFitsTheTerminal(t *testing.T) {
+	t.Parallel()
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"the declared minimum", styles.MinWidth, styles.MinHeight},
+		{"a stock terminal", 80, 24},
+		{"a tall terminal", 120, 50},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			t.Parallel()
+			m := newJoinModel(t, lobby.NewManager(context.Background(), nil))
+			m.global.Width, m.global.Height = size.w, size.h
+			m.entries = manyTables(30)
+			m.cursor = 25 // deep in the list, so the window has to scroll
+
+			out := m.View().Content
+
+			assert.LessOrEqual(t, lg.Height(out), size.h, "taller than the terminal")
+			assert.LessOrEqual(t, lg.Width(out), size.w, "wider than the terminal")
+			assert.Contains(t, stripANSI(out), ">Poker", "the cursor row is on screen")
+			assert.Contains(t, stripANSI(out), "1525", "and it is the 26th table, not the first screenful")
+		})
+	}
 }
