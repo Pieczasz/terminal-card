@@ -2,8 +2,7 @@ package deck
 
 import (
 	"crypto/rand"
-	"fmt"
-	"math/big"
+	mrand "math/rand/v2"
 	"slices"
 )
 
@@ -18,17 +17,17 @@ func New(cards []Card) *Pile {
 }
 
 // Shuffle uses crypto/rand for unpredictable deal order in ranked play.
-func (p *Pile) Shuffle() error {
-	n := len(p.cards)
-	for i := n - 1; i > 0; i-- {
-		jBig, err := rand.Int(rand.Reader, big.NewInt(int64(i+1)))
-		if err != nil {
-			return fmt.Errorf("crypto/rand shuffle: %w", err)
-		}
-		j := int(jBig.Int64())
+// Shuffle is a uniform permutation from a stdlib shuffle seeded once per call from
+// crypto/rand, so the order is unpredictable to a player who has seen every previous
+// deal. It cannot fail: since Go 1.24 crypto/rand.Read never returns an error (it
+// aborts the process on an OS failure), so the error every caller used to plumb
+// through was an unreachable branch dressed as resilience.
+func (p *Pile) Shuffle() {
+	var seed [32]byte
+	_, _ = rand.Read(seed[:])
+	mrand.New(mrand.NewChaCha8(seed)).Shuffle(len(p.cards), func(i, j int) {
 		p.cards[i], p.cards[j] = p.cards[j], p.cards[i]
-	}
-	return nil
+	})
 }
 
 func (p *Pile) Peek() (Card, bool) {
@@ -76,8 +75,4 @@ func (p *Pile) IsEmpty() bool {
 
 func (p *Pile) Cards() []Card {
 	return slices.Clone(p.cards)
-}
-
-func (p *Pile) Contains(card Card) bool {
-	return slices.Contains(p.cards, card)
 }

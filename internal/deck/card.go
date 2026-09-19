@@ -55,17 +55,25 @@ const (
 
 // AllRanks is every defined Rank, in ascending order. It exists so exhaustiveness can
 // be tested: a map keyed by Rank has no compiler check, unlike a switch.
+//
+// It is a package-level slice, so it is writable; nothing writes it, and nothing
+// should. A function returning a fresh copy would make that unforgeable, at the cost
+// of an allocation in every caller of what is a compile-time constant list.
 var AllRanks = []Rank{
 	Ace, Two, Three, Four, Five, Six, Seven, Eight, Nine, Ten, Jack, Queen, King, Joker,
 	Zero, One, Skip, Reverse, DrawTwo, Wild, WildDrawFour,
 }
 
 // RankValue is a standard playing-card rank's comparison value, Ace high at 14.
+// Anything outside Ace..King - the Uno block, the zero Rank, the Joker - has no
+// comparison value and answers 0, the same as RunOrder and PipValue. No deck here
+// deals jokers; ranking one alongside the standard cards would only decide a trick
+// by accident, and 0 loses loudly instead of quietly tying the ace.
 func RankValue(r Rank) int {
 	switch {
 	case r == Ace:
 		return 14
-	case r >= Two && r <= Joker:
+	case r >= Two && r <= King:
 		return int(r)
 	default:
 		return 0
@@ -99,4 +107,16 @@ func RemoveEach(hand []Card, cards []Card) []Card {
 		}
 	}
 	return out
+}
+
+// IsSuit reports whether s names one of the four real suits. A card that lets the
+// player choose - an Eight, a Wild - is only playable once a suit is named, and NoSuit,
+// a zero value and a garbage value from a client all have to be refused.
+func IsSuit(s Suit) bool {
+	switch s {
+	case Spades, Hearts, Diamonds, Clubs:
+		return true
+	default:
+		return false
+	}
 }

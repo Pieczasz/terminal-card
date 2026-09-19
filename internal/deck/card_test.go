@@ -63,7 +63,7 @@ func TestRankValue(t *testing.T) {
 		{name: "ten", rank: Ten, want: 10},
 		{name: "jack", rank: Jack, want: 11},
 		{name: "king", rank: King, want: 13},
-		{name: "joker ties the ace", rank: Joker, want: 14},
+		{name: "the joker does not rank", rank: Joker, want: 0},
 		{name: "uno zero has no ordering", rank: Zero, want: 0},
 		{name: "uno one has no ordering", rank: One, want: 0},
 		{name: "wild draw four has no ordering", rank: WildDrawFour, want: 0},
@@ -73,6 +73,23 @@ func TestRankValue(t *testing.T) {
 			t.Parallel()
 			assert.Equal(t, tt.want, RankValue(tt.rank))
 		})
+	}
+}
+
+// The three rank scales exist because they answer different questions, and the one
+// thing they must agree on is which ranks they have no answer for: a rank no scale
+// places is a card no game deals.
+func TestRankScalesAgreeOnWhatIsNotAStandardCard(t *testing.T) {
+	t.Parallel()
+
+	for _, rank := range AllRanks {
+		if rank >= Ace && rank <= King {
+			assert.Positivef(t, RankValue(rank), "%d is a standard card", rank)
+			continue
+		}
+		assert.Zerof(t, RankValue(rank), "RankValue(%d)", rank)
+		assert.Zerof(t, RunOrder(rank), "RunOrder(%d)", rank)
+		assert.Zerof(t, PipValue(rank), "PipValue(%d)", rank)
 	}
 }
 

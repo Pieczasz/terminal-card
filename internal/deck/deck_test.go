@@ -17,7 +17,7 @@ func TestPile_Shuffle_IsAPermutation(t *testing.T) {
 	cards := StandardDeck()
 	p := New(cards)
 
-	require.NoError(t, p.Shuffle())
+	p.Shuffle()
 
 	got := p.Cards()
 	require.Len(t, got, len(cards))
@@ -45,7 +45,7 @@ func TestPile_Shuffle_HitsEveryPermutation(t *testing.T) {
 	counts := map[string]int{}
 	for range rounds {
 		p := New(cards)
-		require.NoError(t, p.Shuffle())
+		p.Shuffle()
 		key := fmt.Sprint(p.Cards())
 		counts[key]++
 	}
@@ -111,11 +111,51 @@ func TestPile_DrawNCards(t *testing.T) {
 
 func TestPile_AddCard(t *testing.T) {
 	t.Parallel()
-	p := &Pile{}
-	p.AddCard(Card{Rank: Ace, Suit: Spades})
+	ace := Card{Rank: Ace, Suit: Spades}
+	king := Card{Rank: King, Suit: Hearts}
 
-	assert.Equal(t, 1, p.Size())
-	assert.True(t, p.Contains(Card{Rank: Ace, Suit: Spades}))
+	p := &Pile{}
+	p.AddCard(ace)
+	p.AddCard(king, ace)
+
+	assert.Equal(t, []Card{ace, king, ace}, p.Cards(),
+		"cards go on top in the order they were added, duplicates and all")
+}
+
+// Size and IsEmpty are what the shedding rules read to decide whether to reshuffle the
+// discard back in, so an empty pile has to agree with itself both ways.
+func TestPile_IsEmptyTracksSize(t *testing.T) {
+	t.Parallel()
+
+	p := New(nil)
+	assert.True(t, p.IsEmpty())
+	assert.Zero(t, p.Size())
+
+	p.AddCard(Card{Rank: Ace, Suit: Spades})
+	assert.False(t, p.IsEmpty())
+
+	_, ok := p.Draw()
+	require.True(t, ok)
+	assert.True(t, p.IsEmpty(), "drawing the last card empties the pile")
+}
+
+// New and Cards are the seams the engine hands piles across; both must copy, or a
+// rules set shuffling the deck would reorder the slice its caller still holds.
+func TestPile_DoesNotAliasTheCallersSlice(t *testing.T) {
+	t.Parallel()
+	ace := Card{Rank: Ace, Suit: Spades}
+	cards := []Card{ace, {Rank: King, Suit: Hearts}}
+
+	p := New(cards)
+	p.AddCard(Card{Rank: Two, Suit: Clubs})
+	assert.Len(t, cards, 2, "New must copy")
+
+	out := p.Cards()
+	out[0] = Card{}
+	got, ok := p.Draw()
+	require.True(t, ok)
+	assert.Equal(t, Card{Rank: Two, Suit: Clubs}, got)
+	assert.Equal(t, []Card{ace, {Rank: King, Suit: Hearts}}, p.Cards(), "Cards must copy")
 }
 
 func FuzzPile_DrawNCards(f *testing.F) {
@@ -128,9 +168,11 @@ func FuzzPile_DrawNCards(f *testing.F) {
 		if size < 0 || size > 512 {
 			t.Skip()
 		}
+		// Real ranks only: the zero Rank is deliberately nobody's card, so dealing
+		// it would test a pile of cards no deck can hold.
 		cards := make([]Card, 0, size)
 		for i := range size {
-			cards = append(cards, Card{Rank: Rank(i % 14), Suit: Suit(i % 4)})
+			cards = append(cards, Card{Rank: AllRanks[i%len(AllRanks)], Suit: Suit(i%4) + Spades})
 		}
 		p := New(cards)
 
