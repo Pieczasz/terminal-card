@@ -311,7 +311,21 @@ func handScores(players []*game.Player, extra *State) map[string]int {
 	return scores
 }
 
+// awardUncontested pays the last live player when everyone else folded or left. A
+// player can only win from an opponent what they risked themselves, so anything
+// nobody matched goes back first - buildSidePots already refunds on the showdown
+// path, and without this the fold-out path pays the winner chips no one called.
 func awardUncontested(extra *State, winner *game.Player) {
+	matched := extra.TotalContributed[winner.ID]
+	for id, contributed := range extra.TotalContributed {
+		if id == winner.ID || contributed <= matched {
+			continue
+		}
+		uncalled := contributed - matched
+		extra.PlayerChips[id] += uncalled
+		extra.MainPool -= uncalled
+	}
+
 	extra.PlayerChips[winner.ID] += extra.MainPool
 	extra.MainPool = 0
 	extra.Pots = nil
@@ -342,12 +356,24 @@ func rankPlayers(state *game.State, extra *State) []*game.Player {
 	return slices.Concat(seated, left)
 }
 
-// resultOrder compares two players by: chips desc, bust-out hand desc, active
-// before folded, hand score desc, ID asc. Chips lead because a match is decided by
-// the stack a player walks away with; everyone who busted is level on chips, so how
-// long they lasted is what separates them. The hand-level keys only matter for
-// players who finished holding equal stacks.
+// resultOrder is resultLevel with the ID as a final tiebreak, so Standings is a total
+// order and a chop renders in a stable sequence.
 func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
+	level := resultLevel(state, extra)
+	return func(a, b *game.Player) int {
+		if c := level(a, b); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	}
+}
+
+// resultLevel compares two players by what they actually did: chips desc, bust-out
+// hand desc, active before folded, hand score desc. Chips lead because a match is
+// decided by the stack a player walks away with; everyone who busted is level on
+// chips, so how long they lasted is what separates them. The hand-level keys only
+// matter for players who finished holding equal stacks. Zero is a genuine draw.
+func resultLevel(state *game.State, extra *State) func(a, b *game.Player) int {
 	scores := handScores(slices.Concat(state.Players, state.LeftPlayers), extra)
 	return func(a, b *game.Player) int {
 		if c := cmp.Compare(extra.PlayerChips[b.ID], extra.PlayerChips[a.ID]); c != 0 {
@@ -364,10 +390,8 @@ func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
 			return -1
 		}
 		if !fa && len(extra.Table) >= 3 {
-			if c := cmp.Compare(scores[b.ID], scores[a.ID]); c != 0 {
-				return c
-			}
+			return cmp.Compare(scores[b.ID], scores[a.ID])
 		}
-		return cmp.Compare(a.ID, b.ID)
+		return 0
 	}
 }

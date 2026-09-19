@@ -826,3 +826,86 @@ func TestRunOutBoard_FillsTheBoardFromAnyStreet(t *testing.T) {
 		})
 	}
 }
+
+// The fold-out path has to return an uncalled bet just as buildSidePots does on the
+// showdown path. A short all-in that the big blind never had to match is the cheapest
+// way to reach it: the button risked 10, so 40 of the blind's 50 was never called.
+func TestAwardUncontested_ReturnsWhatNobodyMatched(t *testing.T) {
+	t.Parallel()
+	button := &game.Player{ID: "button"}
+	extra := &State{
+		PlayerChips:      map[string]uint{"button": 0, "bb": 950},
+		TotalContributed: map[string]uint{"button": 10, "bb": 50},
+		MainPool:         60,
+	}
+
+	awardUncontested(extra, button)
+
+	assert.Equal(t, uint(20), extra.PlayerChips["button"], "wins only the 10 it was matched for, plus its own")
+	assert.Equal(t, uint(990), extra.PlayerChips["bb"], "the uncalled 40 comes back")
+	assert.Zero(t, extra.MainPool, "the pool is emptied")
+}
+
+// A winner who out-bet everyone still collects the whole pool: there is no excess
+// over their own contribution to refund.
+func TestAwardUncontested_NoRefundWhenWinnerRiskedMost(t *testing.T) {
+	t.Parallel()
+	bettor := &game.Player{ID: "bettor"}
+	extra := &State{
+		PlayerChips:      map[string]uint{"bettor": 0, "folder": 0},
+		TotalContributed: map[string]uint{"bettor": 500, "folder": 100},
+		MainPool:         600,
+	}
+
+	awardUncontested(extra, bettor)
+
+	assert.Equal(t, uint(600), extra.PlayerChips["bettor"])
+	assert.Zero(t, extra.PlayerChips["folder"])
+	assert.Zero(t, extra.MainPool)
+}
+
+// Standings is a total order for rendering, but the engine reads StandingScore to
+// tell a genuine draw from a tiebreak by ID - and a draw split into places i and i+1
+// moves Elo from one seat to the other for nothing.
+func TestStandingScore_DrawsShareAGroup(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	t.Run("a board that plays is a three-way draw", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.Table = []deck.Card{
+			{Rank: deck.Ace, Suit: deck.Spades}, {Rank: deck.King, Suit: deck.Spades},
+			{Rank: deck.Queen, Suit: deck.Spades}, {Rank: deck.Jack, Suit: deck.Spades},
+			{Rank: deck.Nine, Suit: deck.Hearts},
+		}
+		state.Players[0].Cards = []deck.Card{{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Clubs}}
+		state.Players[1].Cards = []deck.Card{{Rank: deck.Four, Suit: deck.Clubs}, {Rank: deck.Five, Suit: deck.Clubs}}
+		state.Players[2].Cards = []deck.Card{{Rank: deck.Six, Suit: deck.Clubs}, {Rank: deck.Seven, Suit: deck.Clubs}}
+		for _, id := range []string{"p1", "p2", "p3"} {
+			extra.PlayerChips[id] = 1000
+		}
+
+		s1, s2, s3 := rules.StandingScore(state, state.Players[0]),
+			rules.StandingScore(state, state.Players[1]), rules.StandingScore(state, state.Players[2])
+		assert.Equal(t, s1, s2)
+		assert.Equal(t, s2, s3, "identical stacks and identical hands are one place")
+	})
+
+	t.Run("busting on the same hand is a draw, on different hands is not", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.PlayerChips = map[string]uint{"p1": 3000, "p2": 0, "p3": 0}
+		extra.BustedAtHand = map[string]int{"p2": 4, "p3": 4}
+
+		assert.Equal(t, rules.StandingScore(state, state.Players[1]), rules.StandingScore(state, state.Players[2]),
+			"both went out on hand 4 - chips alone would call this a tie, and so should we")
+		assert.NotEqual(t, rules.StandingScore(state, state.Players[0]), rules.StandingScore(state, state.Players[1]))
+
+		extra.BustedAtHand["p3"] = 7
+		assert.NotEqual(t, rules.StandingScore(state, state.Players[1]), rules.StandingScore(state, state.Players[2]),
+			"p3 lasted three hands longer: equal chips, but not a draw")
+	})
+}

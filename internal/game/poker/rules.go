@@ -351,6 +351,29 @@ func (r *Rules) Standings(state *game.State) []*game.Player {
 	return rankPlayers(state, extra)
 }
 
+// StandingScore is the group a player lands in once resultLevel stops separating
+// them - two players who busted on the same hand are a draw, not places i and i+1
+// split by whose ID sorts first. Only equality is read, so the group index is enough;
+// chips alone would not be, since it would tie two busts from different hands.
+func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return 0
+	}
+	ranked := rankPlayers(state, extra)
+	level := resultLevel(state, extra)
+	group := 0
+	for i, q := range ranked {
+		if i > 0 && level(ranked[i-1], q) != 0 {
+			group++
+		}
+		if q.ID == p.ID {
+			return group
+		}
+	}
+	return group
+}
+
 // OnPlayerLeave folds the departing player. Turn and seat resolution runs in
 // AfterPlayerRemoved, once the seats have actually shifted.
 //
