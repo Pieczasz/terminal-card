@@ -72,5 +72,57 @@ jobs:
 
     # Reachability-based, so it fails only on advisories our call graph can actually
     # reach. Clean today; this is what keeps it clean.
+    #
+    # Pinned, not @latest: @latest makes every run depend on whatever was published
+    # that morning, so a release that changes the exit codes or drops a Go version
+    # turns a green pipeline red on a commit that touched nothing. Bump deliberately.
     - name: govulncheck
-      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  # The Dockerfile is not exercised by any test, and it was wrong for months without
+  # anything noticing: it built one file instead of the package, and cross-built for
+  # the wrong architecture. Building it here is the only thing that catches that.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Build the server image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/server/Dockerfile
+        # linux/arm64 as well as the runner's own arch, because the deployment target
+        # may be either and TARGETOS/TARGETARCH handling is exactly what broke before.
+        platforms: linux/amd64,linux/arm64
+        push: false
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # Interpolation happens at parse time, so `docker compose config` is a real check
+    # on every ${VAR} in the file - including the ones that must have no default.
+    - name: Validate compose and the proxy config
+      env:
+        DB_PASSWORD: ci
+        GRAFANA_ADMIN_PASSWORD: ci
+      run: |
+        docker compose config --quiet
+        docker run --rm --add-host backend:127.0.0.1 \
+          -v "$PWD/internal/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
+          nginx:1.27-alpine nginx -t
+
+    - name: Refuse a Grafana admin password default
+      env:
+        DB_PASSWORD: ci
+      run: |
+        if docker compose config --quiet 2>/dev/null; then
+          echo "compose accepted an unset GRAFANA_ADMIN_PASSWORD" >&2
+          exit 1
+        fi

@@ -58,7 +58,7 @@ func newRankedFinalizeRecorder() *rankedFinalizeRecorder {
 
 func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 	ctx context.Context,
-	gameName string,
+	ref db.GameRef,
 	orderedUserIDs []uint,
 	_ []int,
 ) error {
@@ -68,7 +68,7 @@ func (r *rankedFinalizeRecorder) FinalizeRankedMatch(
 
 	r.mu.Lock()
 	r.finalized = append(r.finalized, finalizedMatch{
-		gameName: gameName,
+		gameName: ref.Name,
 		userIDs:  append([]uint(nil), orderedUserIDs...),
 	})
 	r.mu.Unlock()

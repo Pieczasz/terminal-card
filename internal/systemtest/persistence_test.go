@@ -19,6 +19,7 @@ import (
 )
 
 func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
+	t.Parallel()
 	gormDB := testutil.SetupTestDB(t)
 
 	ctx := context.Background()
@@ -88,6 +89,7 @@ func TestSystemRankedResultReachesLeaderboardAndProfile(t *testing.T) {
 // A casual lobby records the result in match history but must not touch Elo:
 // players still want to see what they played, ratings stay for ranked lobbies.
 func TestSystemCasualGameRecordsHistoryWithoutElo(t *testing.T) {
+	t.Parallel()
 	gormDB := testutil.SetupTestDB(t)
 
 	ctx := context.Background()
@@ -156,9 +158,9 @@ func newSignallingMatchRepo(inner db.MatchRepository) *signallingMatchRepo {
 }
 
 func (s *signallingMatchRepo) FinalizeRankedMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uint, places []int,
 ) error {
-	err := s.MatchRepository.FinalizeRankedMatch(ctx, gameName, orderedUserIDs, places)
+	err := s.MatchRepository.FinalizeRankedMatch(ctx, ref, orderedUserIDs, places)
 	s.fire()
 	return err
 }

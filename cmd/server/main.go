@@ -73,6 +73,16 @@ func healthcheck() int {
 func run() (err error) {
 	logLevel := installLogging()
 
+	// Installed here, not in serve, and released only when run returns. Everything
+	// below this line is deferred shutdown work - draining sessions, finalizing
+	// matches, closing the database, flushing telemetry - and it can take the better
+	// part of a minute. Releasing the handler when serve returns restored the default
+	// disposition mid-drain, so a second Ctrl-C during a redeploy killed the process
+	// while a ranked match was still being written.
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(done)
+
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("load configuration: %w", err)
@@ -129,6 +139,7 @@ func run() (err error) {
 		config:     cfg,
 		sshServer:  server,
 		apiErr:     apiErr,
+		signals:    done,
 		onShutdown: lobbyManager.BeginShutdown,
 	})
 }
@@ -172,7 +183,24 @@ func setupOTel(ctx context.Context, cfg *config.Config) (func(), error) {
 	}, nil
 }
 
-// TODO: is this a valid way to to this? WAL or some other shit?
+// waitForFinalizers is the last thing between a finished ranked match and losing it:
+// the finalizers write asynchronously, so shutdown has to outlive them.
+//
+// Two bounded windows rather than a durable queue, deliberately. The alternative is an
+// outbox table written at game end and drained on boot, which buys nothing here that
+// the grace period does not: the write it protects is a single short transaction
+// against a database in the same compose project. What it costs is a schema, a drain
+// path, and a second way for a match to be recorded.
+//
+// Two things make that trade honest, and both must hold:
+//   - compose's stop_grace_period must exceed the whole sequential drain (30s ssh +
+//     5s api + 2x15s here + 5s otel = 70s), or the runtime SIGKILLs us mid-write and
+//     the windows below never get to expire. It is set to 80s.
+//   - the give-up below is not silent: it logs at ERROR and the finalizer path counts
+//     observability.MatchFinalize(outcome="dropped"), which is alertable.
+//
+// So the residual risk is stated rather than removed: a match that finishes in the
+// last seconds of a deploy, whose write then blocks for 30s, is lost from history.
 func waitForFinalizers(lobbyManager *lobby.Manager) {
 	if lobbyManager.WaitForFinalizers(finalizeDrainTimeout) {
 		return
@@ -262,9 +290,11 @@ type sshServer interface {
 }
 
 type serveDeps struct {
-	config     *config.Config
-	sshServer  sshServer
-	apiErr     <-chan error
+	config    *config.Config
+	sshServer sshServer
+	apiErr    <-chan error
+	// signals is owned by run, which keeps it armed across the whole shutdown drain.
+	signals    <-chan os.Signal
 	onShutdown func()
 }
 
@@ -289,10 +319,6 @@ func serve(ctx context.Context, d serveDeps) error {
 			slog.WarnContext(ctx, "failed to close listener", "error", err)
 		}
 	}()
-
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-	defer signal.Stop(done)
 
 	slog.InfoContext(ctx, "starting ssh server",
 		"address", addr,
@@ -321,7 +347,7 @@ func serve(ctx context.Context, d serveDeps) error {
 		// must not be rated either.
 		drainServer(d.onShutdown, server)
 		return err
-	case <-done:
+	case <-d.signals:
 	}
 
 	drainServer(d.onShutdown, server)
