@@ -22,8 +22,31 @@ unnoticed for so long.
 - **Explicit data retention.** Logs 14 days, traces 48 hours, metrics 30 days. It
   used to be "until the disk fills".
 - Terms of Service and a Privacy Policy, in the repo and on the site
-  (`PRIVACY.md`, `TERMS.md`).
-- A security policy with a private disclosure channel (`SECURITY.md`).
+  (`docs/privacy.md`, `docs/terms.md`).
+- A security policy with a private disclosure channel (`docs/SECURITY.md`).
+
+### Documentation
+
+- **Every document except `README.md`, `LICENSE`, `CLAUDE.md` and `AGENTS.md` now
+  lives in [`docs/`](README.md)**, with `docs/README.md` as the index.
+  `ARCHITECTURE.md` is `docs/architecture.md`, `READING_GUIDE.md` is
+  `docs/reading-guide.md`, `ONBOARDING.md` is `docs/onboarding.md`,
+  `CHANGELOG.md` is `docs/changelog.md`, `PRIVACY.md` and `TERMS.md` are
+  `docs/privacy.md` and `docs/terms.md`, and
+  `internal/observability/DATA.md` is `docs/data-inventory.md`.
+  `docs/CONTRIBUTING.md` and `docs/SECURITY.md` keep their upper-case names so
+  GitHub's own UI still links them.
+- **New: [`docs/decisions.md`](decisions.md)** - one record per non-obvious
+  choice, with context, consequences and the code it lives in. Thirty-seven of
+  them, from "one mutex per engine" to "the odd chip goes to the lowest-sorted
+  player id".
+- The reading guide is now a **bottom-up** walk: leaves first, so every later
+  file only uses what you already know. Per step it names the files and their
+  size, the invariant to check, and the one test that teaches it.
+- `docs/architecture.md` is the canonical design document and is readable top to
+  bottom by someone who has never seen the code. `docs/onboarding.md` keeps the
+  product story, the annotated tree and local development, and links out for
+  everything else instead of repeating it.
 
 ### Changed - identity
 
@@ -140,7 +163,7 @@ unnoticed for so long.
   nobody matched", and the auto-play move in four of the five games; poker has a
   deterministic equivalent.
 - Eight fuzz targets, including `FuzzBestMeldSplit` and `FuzzClassifyHand`.
-- `goleak` in 21 packages, fit tests per screen, and `-race` tests pinning that
+- `goleak` in 22 packages, fit tests per screen, and `-race` tests pinning that
   hand manipulation never aliases the pile.
 - CI additionally builds the Docker image for amd64 and arm64 and validates
   `compose.yaml` and `nginx.conf`. Lint is pinned to golangci-lint v2.13.2.

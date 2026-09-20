@@ -123,8 +123,8 @@ land there and are deployed from there.
 
 ## See also
 
-- [`PRIVACY.md`](PRIVACY.md) - what is stored about a player and for how long
-- [`internal/observability/DATA.md`](internal/observability/DATA.md) - the same
+- [`privacy.md`](privacy.md) - what is stored about a player and for how long
+- [`data-inventory.md`](data-inventory.md) - the same
   question answered per file, for auditors
-- [`ARCHITECTURE.md`](ARCHITECTURE.md) §2 - the layered limits and where each one
+- [`architecture.md`](architecture.md) §2 - the layered limits and where each one
   is enforced

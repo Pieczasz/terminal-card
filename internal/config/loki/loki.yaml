@@ -1,6 +1,6 @@
 # Replaces the image's local-config.yaml, which ships no retention at all: logs there
 # are kept forever. That is the wrong default anywhere, and illegal here - these logs
-# carry client IP addresses and player IDs (see internal/observability/DATA.md), and
+# carry client IP addresses and player IDs (see docs/data-inventory.md), and
 # GDPR storage limitation means a stated, enforced period.
 auth_enabled: false
 

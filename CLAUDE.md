@@ -124,7 +124,7 @@ full address is meaningless there: one customer is routinely handed 2^64 of them
 
 The backend listens on `:6969` behind nginx speaking PROXY protocol. Publishing that port lets clients spoof source IPs and defeat the per-IP rate limiter. Compose publishes 22 and 80 only, plus Grafana on `127.0.0.1:3000`. `otelhttp.WithServerName("stats-api")` keeps the client's `Host` header out of the metric labels.
 
-Retention is explicit and set in three places: Loki 14d (`internal/config/loki/loki.yaml`), Tempo 48h (`internal/config/tempo/tempo.yaml`), Prometheus 30d (`compose.yaml`). Per-field inventory in `internal/observability/DATA.md`.
+Retention is explicit and set in three places: Loki 14d (`internal/config/loki/loki.yaml`), Tempo 48h (`internal/config/tempo/tempo.yaml`), Prometheus 30d (`compose.yaml`). Per-field inventory in `docs/data-inventory.md`.
 
 ## Conventions
 

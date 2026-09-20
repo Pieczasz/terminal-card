@@ -4,9 +4,9 @@ The project is open source so it can outlive whoever is currently maintaining it
 That goal drives most of the rules below: every one of them exists so the next
 person can change the code without reading all of it first.
 
-Start with [`README.md`](README.md) to run it, then
-[`READING_GUIDE.md`](READING_GUIDE.md) to learn it, then
-[`ARCHITECTURE.md`](ARCHITECTURE.md) for the contracts you must not break.
+Start with [`README.md`](../README.md) to run it, then
+[`reading-guide.md`](reading-guide.md) to learn it, then
+[`architecture.md`](architecture.md) for the contracts you must not break.
 
 Security bugs do **not** go in an issue - see [`SECURITY.md`](SECURITY.md).
 
@@ -127,7 +127,7 @@ data migration, not a rename. The display `Name` is free to change.
 - **A fit test.** `TestView_FitsTheTerminal`-style, at 64x20, 80x24 and 120x50 -
   `{styles.MinWidth, styles.MinHeight}`, `{80, 24}`, `{120, 50}`. Copy
   `internal/tui/views/game/uno/view_test.go`.
-- **`goleak_test.go`** with `goleak.VerifyTestMain(m)` in both new packages. 21
+- **`goleak_test.go`** with `goleak.VerifyTestMain(m)` in both new packages. 22
   packages have one; a view that subscribes and forgets to `Close` is exactly
   what it catches.
 
@@ -220,14 +220,15 @@ Schema changes are SQL files in `internal/db/migrations/`, applied with
   Docker image build (amd64 + arm64), and `docker compose config`.
 - If you changed a contract - `SessionTracker`, finalize ownership, the grace
   state machine, the `Frame` signature, the catalog shape, a repository interface
-  - update the docs in this order: `CLAUDE.md`, `ARCHITECTURE.md`, the
-  `READING_GUIDE.md` part that covers the path, `ONBOARDING.md` only if the
-  day-one story changed.
+  - update the docs in this order: `CLAUDE.md`, `docs/architecture.md`,
+  `docs/decisions.md` if the *reason* changed, the `docs/reading-guide.md` step
+  that covers the path, and `docs/onboarding.md` only if the day-one story
+  changed.
 
 ## Reporting bugs and suggesting features
 
 Issues: what you did, what you expected, what happened, plus terminal emulator,
 OS and SSH client. For a feature, say who it helps - a player or an operator -
-and which of the invariants in `ARCHITECTURE.md` §10 it would touch.
+and which of the invariants in `docs/architecture.md` §12 it would touch.
 
 Happy coding.

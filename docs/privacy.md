@@ -1,7 +1,8 @@
 # Privacy Policy
 
-> This file mirrors <https://www.tty.cards/privacy/>. If the two ever disagree, the
-> web page is the published version.
+> This file mirrors <https://www.tty.cards/privacy/>. The body below is identical
+> to `web/src/legal/privacy.md`, which is what the web page imports. If the two
+> ever disagree, the web page is the published version.
 
 **Last updated: 19 September 2026**
 

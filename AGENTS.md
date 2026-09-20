@@ -8,9 +8,11 @@ first; it is the canonical short form and this file does not repeat it.
 | You need | Read |
 |---|---|
 | The rules you must not break | [`CLAUDE.md`](CLAUDE.md) |
-| Contracts, topology, the invariant list | [`ARCHITECTURE.md`](ARCHITECTURE.md) |
-| Where to start reading, in order | [`READING_GUIDE.md`](READING_GUIDE.md) |
-| How to add a game, test and commit norms | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| What every document is for, and the order | [`docs/README.md`](docs/README.md) |
+| Contracts, topology, the invariant list | [`docs/architecture.md`](docs/architecture.md) |
+| Why a non-obvious thing is the way it is | [`docs/decisions.md`](docs/decisions.md) |
+| Where to start reading, in order | [`docs/reading-guide.md`](docs/reading-guide.md) |
+| How to add a game, test and commit norms | [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) |
 | Commands, ports, configuration | [`README.md`](README.md) |
 
 Three habits that matter more here than the average repo:

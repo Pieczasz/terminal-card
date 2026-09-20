@@ -1,7 +1,8 @@
 # Terms of Service
 
-> This file mirrors <https://www.tty.cards/terms/>. If the two ever disagree, the web
-> page is the published version.
+> This file mirrors <https://www.tty.cards/terms/>. The body below is identical to
+> `web/src/legal/terms.md`, which is what the web page imports. If the two ever
+> disagree, the web page is the published version.
 
 **Last updated: 19 September 2026**
 
