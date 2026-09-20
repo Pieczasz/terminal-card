@@ -1,18 +1,17 @@
 package repository
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
 	"log/slog"
 	"slices"
 	"time"
+	"uuid"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
 
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -157,7 +156,7 @@ func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uuid.UUID) error {
 	// the revived rows in opposite orders and Postgres would abort one.
 	sorted := sortedUserIDs(userIDs)
 	if err := tx.Unscoped().Model(&db.Ranking{}).
-		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", sorted, gameID).
+		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", uuidStrings(sorted), gameID).
 		Update("deleted_at", nil).Error; err != nil {
 		return fmt.Errorf("revive rankings: %w", err)
 	}
@@ -276,7 +275,7 @@ func repeatedPairCountLast24h(tx *gorm.DB, userIDs []uuid.UUID) (int, error) {
 		Joins("JOIN matches ON matches.id = match_participants.match_id").
 		Where(`match_participants.user_id IN ? AND matches.ranked
 			AND matches.deleted_at IS NULL AND matches.created_at > ?`,
-			userIDs, time.Now().Add(-24*time.Hour)).
+			uuidStrings(userIDs), time.Now().Add(-24*time.Hour)).
 		Distinct().
 		Pluck("match_participants.match_id", &matchIDs).Error; err != nil {
 		return 0, fmt.Errorf("query recent pairings: %w", err)
@@ -310,7 +309,7 @@ func worstPairCount(seats map[uint][]uuid.UUID) int {
 	counts := make(map[[2]uuid.UUID]int, len(seats))
 	worst := 0
 	for _, shared := range seats {
-		slices.SortFunc(shared, compareUUID)
+		slices.SortFunc(shared, uuid.UUID.Compare)
 		for i, a := range shared {
 			for _, b := range shared[i+1:] {
 				counts[[2]uuid.UUID{a, b}]++
@@ -338,12 +337,17 @@ func lockPairing(tx *gorm.DB, userIDs []uuid.UUID) error {
 
 func sortedUserIDs(userIDs []uuid.UUID) []uuid.UUID {
 	out := slices.Clone(userIDs)
-	slices.SortFunc(out, compareUUID)
+	slices.SortFunc(out, uuid.UUID.Compare)
 	return out
 }
 
-func compareUUID(a, b uuid.UUID) int {
-	return bytes.Compare(a[:], b[:])
+func uuidStrings(ids []uuid.UUID) []string {
+	// Stdlib uuid.UUID has no database/sql Valuer; pgx will not encode it as uuid.
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
+	}
+	return out
 }
 
 func seatAdvisoryKey(userID uuid.UUID) int64 {
@@ -388,7 +392,7 @@ func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []
 	// fixed order two finalizes over overlapping seats can lock in opposite orders.
 	// Postgres then aborts one, and that match is lost from history and Elo.
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id IN ? AND game_id = ?", userIDs, gameID).
+		Where("user_id IN ? AND game_id = ?", uuidStrings(userIDs), gameID).
 		Order("user_id").Find(&rankings).Error; err != nil {
 		return nil, fmt.Errorf("query rankings: %w", err)
 	}

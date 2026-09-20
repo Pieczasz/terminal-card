@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
@@ -93,7 +94,7 @@ func TestValidateUsername_RejectsAnonymisedPrefix(t *testing.T) {
 func TestAnonymisedUsername(t *testing.T) {
 	t.Parallel()
 
-	ids := []uuid.UUID{uuid.Nil, uuid.MustParse("00000000-0000-4000-8000-00000000002a"), uuid.New(), uuid.New()}
+	ids := []uuid.UUID{uuid.Nil(), uuid.MustParse("00000000-0000-4000-8000-00000000002a"), uuid.New(), uuid.New()}
 	for _, id := range ids {
 		name := AnonymisedUsername(id)
 		assert.Len(t, name, anonymisedUsernameLength, "id %s produced %q", id, name)

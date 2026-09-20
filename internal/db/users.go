@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"gorm.io/gorm"
 )
 
@@ -19,7 +20,7 @@ import (
 // uses to build queries. TestSchemaNullabilityMatchesStructs derives what the SQL must
 // guarantee from these structs, so the drift is caught by CI rather than by a tag.
 type User struct {
-	ID         uuid.UUID `gorm:"type:uuid;primaryKey;default:gen_random_uuid()"`
+	ID         uuid.UUID `gorm:"type:uuid;primaryKey;serializer:stduuid;default:uuidv7()"`
 	CreatedAt  time.Time
 	UpdatedAt  time.Time
 	DeletedAt  gorm.DeletedAt
@@ -30,8 +31,8 @@ type User struct {
 }
 
 func (u *User) BeforeCreate(_ *gorm.DB) error {
-	if u.ID == uuid.Nil {
-		u.ID = uuid.New()
+	if u.ID == uuid.Nil() {
+		u.ID = uuid.NewV7()
 	}
 	return nil
 }
@@ -41,12 +42,12 @@ type PublicKey struct {
 	Fingerprint string
 	Name        string
 	LastUsedAt  time.Time
-	UserID      uuid.UUID
-	User        User `gorm:"foreignKey:UserID"`
+	UserID      uuid.UUID `gorm:"serializer:stduuid"`
+	User        User      `gorm:"foreignKey:UserID"`
 }
 
 type Ranking struct {
-	UserID uuid.UUID `gorm:"primaryKey"`
+	UserID uuid.UUID `gorm:"primaryKey;serializer:stduuid"`
 	GameID uint      `gorm:"primaryKey"`
 
 	Elo uint32

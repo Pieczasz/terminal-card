@@ -1,9 +1,9 @@
 package game
 
 import (
-	"github.com/Pieczasz/terminal-card/internal/deck"
+	"uuid"
 
-	"github.com/google/uuid"
+	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
 // Player is a seat at a table. It holds the scalars the engine, the rules and the
@@ -26,7 +26,7 @@ func (p *Player) Equal(other *Player) bool {
 	if p == nil || other == nil {
 		return false
 	}
-	if p.UserID == uuid.Nil || other.UserID == uuid.Nil {
+	if p.UserID == uuid.Nil() || other.UserID == uuid.Nil() {
 		return p.ID != "" && p.ID == other.ID
 	}
 	return p.UserID == other.UserID

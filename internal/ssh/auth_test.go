@@ -9,9 +9,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/ssh"
 
+	"uuid"
+
 	charmssh "charm.land/ssh"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"

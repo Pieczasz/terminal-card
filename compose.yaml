@@ -136,7 +136,7 @@ services:
         condition: service_completed_successfully
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: always
     <<: *default-logging
     mem_limit: 1536m
@@ -162,8 +162,10 @@ services:
       - maintenance_work_mem=96MB
       - -c
       - max_connections=50
+    # PG 18+ versions PGDATA under /var/lib/postgresql/<major>/docker; the volume
+    # is the parent so a later major upgrade can pg_upgrade in place.
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql
     environment:
       - POSTGRES_DB=${DB_NAME:-terminal_card}
       - POSTGRES_USER=${DB_USER:-postgres}

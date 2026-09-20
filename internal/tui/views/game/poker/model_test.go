@@ -10,8 +10,9 @@ import (
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
+	"uuid"
+
 	"github.com/Pieczasz/terminal-card/internal/testutil"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
