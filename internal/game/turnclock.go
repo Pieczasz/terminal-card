@@ -3,6 +3,7 @@ package game
 import (
 	"errors"
 	"log/slog"
+	"runtime/debug"
 	"time"
 )
 
@@ -61,6 +62,12 @@ func (e *Engine) MissedTurns(playerID string) int {
 }
 
 func (e *Engine) onTurnTimeout(seq uint64) {
+	// This is a time.AfterFunc goroutine: nothing above it recovers, so a panic in a
+	// rules hook here would take the whole process down - every table, for one game's
+	// bug. It gets the same treatment as a rules error from SubmitAction: this table
+	// ends unrated and the rest keep playing.
+	defer e.recoverRulesPanic()
+
 	playerID, action, takeSeat := e.resolveTurnTimeout(seq)
 	if playerID == "" {
 		return
@@ -83,6 +90,22 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 		slog.Warn("auto-play for an expired turn was refused",
 			"error", err, "player_id", playerID, "action", action.Name())
 		e.rearmTurnTimer()
+	}
+}
+
+// recoverRulesPanic is deferred by the timer goroutine. The locked helpers release
+// e.mu in their own defers while the panic unwinds, so it is safe to take here.
+func (e *Engine) recoverRulesPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	slog.Error("rules panicked during auto-play; ending the table as a rules error",
+		"panic", r, "stack", string(debug.Stack()))
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state.Phase == Playing && !e.closed {
+		e.finishGameLocked(nil, EndReasonRulesError)
 	}
 }
 
