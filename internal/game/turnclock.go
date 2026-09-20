@@ -63,9 +63,9 @@ func (e *Engine) MissedTurns(playerID string) int {
 
 func (e *Engine) onTurnTimeout(seq uint64) {
 	// This is a time.AfterFunc goroutine: nothing above it recovers, so a panic in a
-	// rules hook here would take the whole process down - every table, for one game's
-	// bug. It gets the same treatment as a rules error from SubmitAction: this table
-	// ends unrated and the rest keep playing.
+	// rules hook here would take the whole process down: every table, for one game's
+	// defect. It gets the same treatment as a rules error from SubmitAction, so this
+	// table ends unrated and the rest keep playing.
 	defer e.recoverRulesPanic()
 
 	playerID, action, takeSeat := e.resolveTurnTimeout(seq)
