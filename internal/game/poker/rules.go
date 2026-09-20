@@ -769,3 +769,7 @@ func activePlayers(state *game.State, extra *State) []*game.Player {
 	}
 	return out
 }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)
