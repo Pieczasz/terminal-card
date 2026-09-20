@@ -43,7 +43,7 @@ loadtest:
 
 # Database Migrations
 install-tools:
-	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@latest
+	go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.18.3
 
 migrate-create:
 	@read -p "Enter migration name: " name; \
