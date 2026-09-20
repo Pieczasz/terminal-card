@@ -15,6 +15,10 @@ ssh tty.cards
 Go, [Charm](https://charm.sh/) (Bubble Tea + Wish), PostgreSQL for what has to
 outlive the process. One process holds every table.
 
+**Documentation lives in [`docs/`](docs/README.md)** - start there for the design,
+the reading order and the reasoning behind every non-obvious choice. This file is
+orientation, commands and configuration.
+
 ## Play
 
 ```
@@ -76,8 +80,8 @@ client sees a host-key change.
 (SSH) and **80** (the site and `/api/`). Grafana is the one exception and is bound
 to `127.0.0.1:3000` - reach it with `ssh -L 3000:127.0.0.1:3000 <host>`. The
 backend's `6969` (SSH) and `6970` (stats API) stay on the compose network; see
-[SECURITY.md](SECURITY.md) for why publishing them is a real hole and not a
-nitpick.
+[`docs/SECURITY.md`](docs/SECURITY.md) for why publishing them is a real hole and
+not a nitpick.
 
 **Sizing.** Every service carries an explicit `mem_limit` and they add up to
 5632 MiB (5.5 GiB), sized for a 12 GB / 6-core VPS with half left for the host.
@@ -163,6 +167,7 @@ internal/
   systemtest/      end-to-end through public APIs only
 
 web/               Astro marketing site (not part of the Go module)
+docs/              the design document, reading guide, decisions, policies
 ```
 
 ## Configuration
@@ -198,7 +203,7 @@ scrapes only the host.
 Retention is explicit: **logs 14 days** (`internal/config/loki/loki.yaml`),
 **traces 48 hours** (`internal/config/tempo/tempo.yaml`), **metrics 30 days**
 (`compose.yaml`). What is in them, per field, is in
-[`internal/observability/DATA.md`](internal/observability/DATA.md).
+[`docs/data-inventory.md`](docs/data-inventory.md).
 
 ## Self-hosting
 
@@ -220,21 +225,26 @@ Notes worth reading before you deploy:
 
 - **Registration is open on purpose.** Any public key is accepted. For a private
   community put it behind a firewall, a VPN or an allowlist -
-  [SECURITY.md](SECURITY.md).
+  [`docs/SECURITY.md`](docs/SECURITY.md).
 - Compose sets `DB_SSLMODE=disable` for the internal Postgres network. For an
   external managed database set `DB_SSLMODE=require` and supply CA-trusted TLS.
 
 ## Docs
 
+Start at [`docs/README.md`](docs/README.md) - it says what each document is for
+and the order to read them in.
+
 | Doc | For |
 |---|---|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | Contracts, topology, the invariants that bite |
-| [`READING_GUIDE.md`](READING_GUIDE.md) | Ordered file-by-file tour, "where is X?" index |
-| [`ONBOARDING.md`](ONBOARDING.md) | Product context and the patterns behind the code |
-| [`CONTRIBUTING.md`](CONTRIBUTING.md) | How to add a game, test conventions, PR norms |
-| [`SECURITY.md`](SECURITY.md) | Reporting a vulnerability; what is in scope |
-| [`CHANGELOG.md`](CHANGELOG.md) | What changed, in user-facing terms |
-| [`PRIVACY.md`](PRIVACY.md) / [`TERMS.md`](TERMS.md) | The published policies |
+| [`docs/architecture.md`](docs/architecture.md) | The canonical design document: contracts, topology, invariants |
+| [`docs/decisions.md`](docs/decisions.md) | One record per non-obvious choice, with its reasoning |
+| [`docs/reading-guide.md`](docs/reading-guide.md) | Ordered bottom-up code tour, "where is X?" index |
+| [`docs/onboarding.md`](docs/onboarding.md) | Product story, annotated file tree, day one |
+| [`docs/CONTRIBUTING.md`](docs/CONTRIBUTING.md) | How to add a game, test conventions, PR norms |
+| [`docs/SECURITY.md`](docs/SECURITY.md) | Reporting a vulnerability; what is in scope |
+| [`docs/data-inventory.md`](docs/data-inventory.md) | Per-field personal-data inventory |
+| [`docs/changelog.md`](docs/changelog.md) | What changed, in user-facing terms |
+| [`docs/privacy.md`](docs/privacy.md) / [`docs/terms.md`](docs/terms.md) | The published policies |
 | [`CLAUDE.md`](CLAUDE.md) / [`AGENTS.md`](AGENTS.md) | Terse briefs for coding agents |
 
 ## License

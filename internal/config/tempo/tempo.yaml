@@ -15,7 +15,7 @@ compactor:
   compaction:
     # 48 hours, and deliberately the shortest retention in the stack. A session span
     # carries the username (the client address was removed so the two never sit on
-    # one record - see internal/observability/DATA.md), and traces are a debugging aid
+    # one record - see docs/data-inventory.md), and traces are a debugging aid
     # for the last day or two; nothing here needs them longer, so nothing keeps them.
     block_retention: 48h
 
