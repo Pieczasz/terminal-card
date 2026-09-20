@@ -14,7 +14,8 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -493,10 +494,11 @@ func TestFeedEnd_ReleasesHeldSeatsWhenFinished(t *testing.T) {
 	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
 	engine.Close()
 
-	require.Eventually(t, func() bool { return !pendingGrace(m, guest.ID) },
+	// Both in one condition: expireLeave drops the pending grace under m.mu and only
+	// then takes the seat, so "grace gone" alone can be observed a moment early.
+	require.Eventually(t, func() bool { return !pendingGrace(m, guest.ID) && !l.HasPlayer(guest) },
 		2*time.Second, 10*time.Millisecond,
-		"closing the finished feed left the grace armed")
-	assert.False(t, l.HasPlayer(guest))
+		"closing the finished feed left the grace armed or the ghost seat on the roster")
 }
 
 // A timer armed for a reconnect fires long after the drain is over: nothing would
