@@ -477,3 +477,43 @@ func TestEngine_TurnTimeout_StretchCannotResurrectADisabledClock(t *testing.T) {
 
 	assert.True(t, engine.TurnDeadline().IsZero())
 }
+
+// panickingRules is a rules bug in the one hook that runs on a timer goroutine.
+type panickingRules struct{ *timeoutRules }
+
+func (*panickingRules) TimeoutAction(*State) Action { panic("rules bug in auto-play") }
+
+// A panic inside TimeoutAction unwinds a time.AfterFunc goroutine, and an unrecovered
+// panic there kills the process: every table on the server, for one game's bug. The
+// engine has to catch it and end just this table, the way it ends one on a rules
+// error from SubmitAction.
+func TestEngine_TurnTimeout_RulesPanicEndsOnlyThisTable(t *testing.T) {
+	t.Parallel()
+
+	rules := &panickingRules{&timeoutRules{safe: namedAction{name: "safe"}}}
+	engine := newTimeoutEngine(t, rules, "a", "b")
+
+	events, err := engine.Broadcaster().Subscribe()
+	require.NoError(t, err)
+	engine.mu.Lock()
+	seq := engine.turnSeq
+	engine.mu.Unlock()
+
+	require.NotPanics(t, func() { engine.onTurnTimeout(seq) }, "the timer goroutine must recover")
+
+	assert.True(t, engine.IsFinished(), "the table with the buggy rules is over")
+	var ended *Event
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == EventGameEnded {
+				ended = &ev
+			}
+			continue
+		default:
+		}
+		break
+	}
+	require.NotNil(t, ended, "the end is announced so the lobby can finalize")
+	assert.Equal(t, EndReasonRulesError, ended.Reason, "a panic is a rules error: the match is not rated")
+}

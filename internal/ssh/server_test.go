@@ -174,6 +174,17 @@ func TestServer_SecondSessionDisplaces(t *testing.T) {
 	_ = session2.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
 	err = session2.Shell()
 	require.NoError(t, err, "a second session displaces the first instead of being refused")
+
+	// Displacing has to hang up on the first session, not merely forget it: a zombie
+	// keeps its TUI, its lobby subscription and a tracker slot alive until its TCP
+	// dies. Wait returns once the server closes the channel.
+	closed := make(chan error, 1)
+	go func() { closed <- session1.Wait() }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the displaced session is still open")
+	}
 }
 
 func TestServer_ExistingUserConnection(t *testing.T) {
