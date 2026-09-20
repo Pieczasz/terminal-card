@@ -12,7 +12,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -30,8 +31,8 @@ func TestUserRepository_RegisterUserWithKey(t *testing.T) {
 		require.NotNil(t, user)
 		assert.Equal(t, "reg_ok", user.Username)
 		assert.Equal(t, "fp_reg_ok", key.Fingerprint)
-		assert.NotEqual(t, uuid.Nil, user.ID, "the account id is assigned on insert")
-		assert.Equal(t, uuid.Version(4), user.ID.Version(), "users.id is a random UUID, not a sequence")
+		assert.NotEqual(t, uuid.Nil(), user.ID, "the account id is assigned on insert")
+		assert.EqualValues(t, 7, user.ID[6]>>4, "users.id is UUIDv7, not a sequence")
 	})
 
 	t.Run("username already taken", func(t *testing.T) {
@@ -136,7 +137,7 @@ func TestUserRepository_UpdateUserActivity(t *testing.T) {
 	// Backdate both timestamps. Asserting only "After or Equal" would pass even if
 	// UpdateUserActivity did nothing at all, since Equal covers the no-op.
 	stale := time.Now().Add(-24 * time.Hour).UTC()
-	require.NoError(t, database.Model(&db.User{}).Where("id = ?", user.ID).
+	require.NoError(t, database.Model(&db.User{}).Where("id = ?", user.ID.String()).
 		Update("last_seen_at", stale).Error)
 	require.NoError(t, database.Model(&db.PublicKey{}).Where("id = ?", key.ID).
 		Update("last_used_at", stale).Error)
@@ -164,7 +165,7 @@ func TestUserRepository_SoftDeletedUserDoesNotAuthenticate(t *testing.T) {
 
 	created, createdKey, err := repo.RegisterUserWithKey(ctx, "activity_user", "activity_fp")
 	require.NoError(t, err)
-	require.NoError(t, database.Delete(&db.User{}, created.ID).Error)
+	require.NoError(t, database.Delete(&db.User{}, "id = ?", created.ID.String()).Error)
 
 	// The key row is deliberately left behind: that is the state the fix is about.
 	var key db.PublicKey
@@ -478,12 +479,12 @@ func TestUserRepository_UpdateUserActivityWritesNoAssociations(t *testing.T) {
 	require.Len(t, loaded.Rankings, 1, "the preload is what makes this dangerous")
 
 	var before db.Ranking
-	require.NoError(t, database.Where("user_id = ?", user.ID).First(&before).Error)
+	require.NoError(t, database.Where("user_id = ?", user.ID.String()).First(&before).Error)
 
 	require.NoError(t, repo.UpdateUserActivity(ctx, loaded, loadedKey))
 
 	var after db.Ranking
-	require.NoError(t, database.Where("user_id = ?", user.ID).First(&after).Error)
+	require.NoError(t, database.Where("user_id = ?", user.ID.String()).First(&after).Error)
 	assert.Equal(t, before.UpdatedAt.UnixNano(), after.UpdatedAt.UnixNano(),
 		"logging in rewrote the player's ranking row")
 	assert.Equal(t, uint32(1234), after.Elo)
@@ -542,10 +543,10 @@ func assertIdentityErased(t *testing.T, database *gorm.DB, f deletionFixture) {
 	// unique fingerprint and the (user_id, game_id) ranking key - in place.
 	var keys, rankings int64
 	require.NoError(t, database.Unscoped().Model(&db.PublicKey{}).
-		Where("user_id = ?", f.leaver.ID).Count(&keys).Error)
+		Where("user_id = ?", f.leaver.ID.String()).Count(&keys).Error)
 	assert.Zero(t, keys, "the erased account still has a key to log in with")
 	require.NoError(t, database.Unscoped().Model(&db.Ranking{}).
-		Where("user_id = ?", f.leaver.ID).Count(&rankings).Error)
+		Where("user_id = ?", f.leaver.ID.String()).Count(&rankings).Error)
 	assert.Zero(t, rankings, "the erased account still has a rating")
 
 	var row struct {
@@ -553,12 +554,12 @@ func assertIdentityErased(t *testing.T, database *gorm.DB, f deletionFixture) {
 		LastSeenAt *time.Time
 	}
 	require.NoError(t, database.Raw(
-		`SELECT username, last_seen_at FROM users WHERE id = ?`, f.leaver.ID).Scan(&row).Error)
+		`SELECT username, last_seen_at FROM users WHERE id = ?`, f.leaver.ID.String()).Scan(&row).Error)
 	assert.Equal(t, db.AnonymisedUsername(f.leaver.ID), row.Username)
 	assert.Nil(t, row.LastSeenAt, "last_seen_at still says when the erased player was last here")
 
 	var stayer db.User
-	require.NoError(t, database.First(&stayer, f.other.ID).Error)
+	require.NoError(t, database.Where("id = ?", f.other.ID.String()).First(&stayer).Error)
 	assert.Equal(t, "stayer", stayer.Username, "the other player's row is not this player's to touch")
 }
 
@@ -574,7 +575,7 @@ func assertHistorySurvives(t *testing.T, database *gorm.DB, repo db.UserReposito
 	// The erased seat is still in the match and still resolves - to the anonymised name.
 	var seat db.MatchParticipant
 	require.NoError(t, database.Preload("User").
-		Where("match_id = ? AND user_id = ?", f.match.ID, f.leaver.ID).First(&seat).Error)
+		Where("match_id = ? AND user_id = ?", f.match.ID, f.leaver.ID.String()).First(&seat).Error)
 	assert.Equal(t, db.AnonymisedUsername(f.leaver.ID), seat.User.Username)
 	assert.Equal(t, 12, seat.EloDelta, "the Elo already paid out stays paid out")
 

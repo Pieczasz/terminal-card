@@ -20,6 +20,8 @@ import (
 	"gorm.io/gorm/logger"
 )
 
+const PostgresImage = "postgres:18-alpine"
+
 func RequireContainer(t *testing.T, err error) {
 	t.Helper()
 	if err == nil {
@@ -57,7 +59,7 @@ func SetupTestDB(t *testing.T) *gorm.DB {
 	ctx := context.Background()
 
 	postgresContainer, err := tcpostgres.Run(ctx,
-		"postgres:16-alpine",
+		PostgresImage,
 		tcpostgres.WithDatabase("test"),
 		tcpostgres.WithUsername("user"),
 		tcpostgres.WithPassword("password"),

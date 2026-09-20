@@ -10,7 +10,8 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -69,7 +70,7 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 	// The Preload applies deleted_at IS NULL while the public_keys row still matches, so
 	// a soft-deleted account arrives as a zero-valued association rather than a miss -
 	// handing that back authenticates the key as the zero user.
-	if dbKey.User.ID == uuid.Nil {
+	if dbKey.User.ID == uuid.Nil() {
 		return nil, nil, nil
 	}
 	return &dbKey.User, &dbKey, nil
@@ -217,7 +218,8 @@ func (q *gormUserRepository) UserProfile(ctx context.Context, userID uuid.UUID) 
 	err = q.db.WithContext(ctx).Preload("PublicKeys").
 		Preload("Rankings").
 		Preload("Rankings.Game").
-		First(&user, userID).Error
+		Where("id = ?", userID.String()).
+		First(&user).Error
 	if err != nil {
 		// gorm.ErrRecordNotFound, wrapped: a second "not found" sentinel in this
 		// package only gave callers a second thing to compare against.
@@ -260,7 +262,7 @@ func (q *gormUserRepository) UserMatchHistory(
 	limit = max(limit, 0)
 
 	var history []db.MatchParticipant
-	err = q.db.WithContext(ctx).Where("user_id = ?", userID).
+	err = q.db.WithContext(ctx).Where("user_id = ?", userID.String()).
 		Preload("Match").
 		Preload("Match.Game").
 		Order("match_id desc").
@@ -304,16 +306,16 @@ func eraseUserLocked(tx *gorm.DB, userID uuid.UUID) error {
 	// Unscoped, not a soft delete: the fingerprint column is unique, so a lingering
 	// key row would keep the returning player from ever registering again - and a
 	// soft-deleted ranking still holds the (user_id, game_id) primary key.
-	if err := tx.Unscoped().Where("user_id = ?", userID).Delete(&db.PublicKey{}).Error; err != nil {
+	if err := tx.Unscoped().Where("user_id = ?", userID.String()).Delete(&db.PublicKey{}).Error; err != nil {
 		return fmt.Errorf("delete public keys: %w", err)
 	}
-	if err := tx.Unscoped().Where("user_id = ?", userID).Delete(&db.Ranking{}).Error; err != nil {
+	if err := tx.Unscoped().Where("user_id = ?", userID.String()).Delete(&db.Ranking{}).Error; err != nil {
 		return fmt.Errorf("delete rankings: %w", err)
 	}
 
 	// A column update keyed on the id, not Save on a loaded User: the save hooks would
 	// walk the associations this transaction has just deleted and write them back.
-	anonymised := tx.Model(&db.User{}).Where("id = ?", userID).Updates(map[string]any{
+	anonymised := tx.Model(&db.User{}).Where("id = ?", userID.String()).Updates(map[string]any{
 		"username": db.AnonymisedUsername(userID),
 		// NULL rather than a zero timestamp: "never seen" is what an erased row means,
 		// and the column is nullable precisely so it can say that.

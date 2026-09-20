@@ -1,5 +1,6 @@
 CREATE TABLE users (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- uuidv7() is Postgres 18; time-ordered, not gen_random_uuid().
+    id UUID PRIMARY KEY DEFAULT uuidv7(),
     created_at TIMESTAMPTZ,
     updated_at TIMESTAMPTZ,
     deleted_at TIMESTAMPTZ,

@@ -22,13 +22,14 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
 	"github.com/Pieczasz/terminal-card/internal/tui"
 
+	"uuid"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/ssh"
 	"charm.land/wish/v2"
 	"charm.land/wish/v2/activeterm"
 	bm "charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/keygen"
-	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"

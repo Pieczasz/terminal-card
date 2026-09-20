@@ -49,7 +49,7 @@ API, no WebSockets.
           |                        |
           v                        v
    +---------------+   +---------------------------+
-   | Postgres 16   |   | Alloy -> Loki/Tempo/Prom  |
+   | Postgres 18   |   | Alloy -> Loki/Tempo/Prom  |
    | users, keys   |   |        -> Grafana         |
    | games, ranks  |   +---------------------------+
    | matches       |

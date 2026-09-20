@@ -18,7 +18,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
-	"github.com/google/uuid"
+	"uuid"
 )
 
 const (

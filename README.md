@@ -86,7 +86,7 @@ The arithmetic is in the header comment of `compose.yaml`.
 ### Without Docker
 
 ```bash
-# prerequisites: Go 1.27.1, PostgreSQL
+# prerequisites: Go 1.27.1, PostgreSQL 18
 
 cp .env.example .env
 export DB_DSN='postgres://postgres:PASSWORD@localhost:5432/terminal_card?sslmode=disable'

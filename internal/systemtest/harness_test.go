@@ -12,7 +12,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/stretchr/testify/require"
 )
 

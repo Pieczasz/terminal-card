@@ -28,7 +28,7 @@ func TestConnect_Success(t *testing.T) {
 
 	ctx := context.Background()
 	postgresContainer, err := tcpostgres.Run(ctx,
-		"postgres:16-alpine",
+		testutil.PostgresImage,
 		tcpostgres.WithDatabase("testdb"),
 		tcpostgres.WithUsername("testuser"),
 		tcpostgres.WithPassword("testpass"),

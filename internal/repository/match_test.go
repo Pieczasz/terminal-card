@@ -13,7 +13,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/repository"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 
-	"github.com/google/uuid"
+	"uuid"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -105,7 +106,7 @@ func TestMatchRepositoryFinalizeRankedMatch(t *testing.T) {
 	assert.Equal(t, int64(1), matchCount)
 
 	var r1 db.Ranking
-	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", u1.ID, game.ID).First(&r1).Error)
+	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", u1.ID.String(), game.ID).First(&r1).Error)
 	assert.Greater(t, r1.Elo, uint32(elo.DefaultRating))
 }
 
@@ -224,7 +225,7 @@ func TestMatchRepositoryConcurrentFinalizeMatchesSequential(t *testing.T) {
 		}
 
 		var got []db.Ranking
-		require.NoError(t, gormDB.Where("user_id IN ?", []uuid.UUID{u1.ID, u2.ID}).
+		require.NoError(t, gormDB.Where("user_id IN ?", []string{u1.ID.String(), u2.ID.String()}).
 			Order("user_id").Find(&got).Error)
 		require.Len(t, got, 2)
 		return got[0].Elo, got[1].Elo
@@ -301,7 +302,7 @@ func antiFarmTable(t *testing.T, gormDB *gorm.DB, seats ...seat) (uint, []uuid.U
 func rankingOf(t *testing.T, gormDB *gorm.DB, userID uuid.UUID, gameID uint) db.Ranking {
 	t.Helper()
 	var r db.Ranking
-	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userID, gameID).First(&r).Error)
+	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userID.String(), gameID).First(&r).Error)
 	return r
 }
 
@@ -487,7 +488,7 @@ func TestFinalizeRankedMatchRevivesSoftDeletedRanking(t *testing.T) {
 	gormDB := testutil.SetupTestDB(t)
 	gameID, userIDs := antiFarmTable(t, gormDB, seat{1600, 3}, seat{1400, 3})
 
-	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userIDs[0], gameID).
+	require.NoError(t, gormDB.Where("user_id = ? AND game_id = ?", userIDs[0].String(), gameID).
 		Delete(&db.Ranking{}).Error)
 
 	repo := repository.NewMatchRepository(gormDB)

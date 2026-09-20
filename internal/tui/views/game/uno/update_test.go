@@ -14,9 +14,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
+	"uuid"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
