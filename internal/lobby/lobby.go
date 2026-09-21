@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/broadcaster"
+	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/observability"
@@ -276,15 +277,18 @@ func (l *Lobby) unsubscribePlayerLocked(playerID string) {
 
 func (l *Lobby) ToggleReady(p *game.Player, registry *game.Registry) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if l.state == InGame {
-		finished := l.releaseFinishedGameLocked()
-		if finished == nil {
+		// releaseFinishedGame takes l.mu itself, then m.mu via releaseHeldSeats.
+		// Calling it while we hold l.mu deadlocks.
+		l.mu.Unlock()
+		l.releaseFinishedGame()
+		l.mu.Lock()
+		if l.state == InGame {
+			l.mu.Unlock()
 			return errors.New("game is already in progress")
 		}
-		finished.Close()
 	}
+	defer l.mu.Unlock()
 
 	if !l.hasPlayerLocked(p) {
 		return errors.New("player not in lobby")
@@ -428,13 +432,6 @@ func (l *Lobby) averageEloLocked(gameName string) uint32 {
 	return totalElo / count
 }
 
-func abs(x int) int {
-	if x < 0 {
-		return -x
-	}
-	return x
-}
-
 func (l *Lobby) addGuest(p *game.Player) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -505,11 +502,15 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 		return nil, fmt.Errorf("failed to start game engine: %w", err)
 	}
 
-	l.watchGameLocked(engine)
+	// Before watchGameLocked, which snapshots it for the finalize.
+	l.startedAt = time.Now()
+	// The slug, not the display name, is what the match is persisted under. Create
+	// above already proved the module is registered.
+	mod, _ := registry.Module(l.options.cardGame)
+	l.watchGameLocked(engine, db.GameRef{Slug: mod.Slug, Name: l.options.cardGame})
 
 	l.setStateLocked(InGame)
 	l.activeEngine = engine
-	l.startedAt = time.Now()
 	clear(l.ready)
 
 	observability.GameStarted(context.Background(), l.options.cardGame, l.options.isRanked)
@@ -529,8 +530,17 @@ func (l *Lobby) startGameLocked(registry *game.Registry) (*game.Engine, error) {
 // events. It is the only thing that persists a match, so a failed subscribe costs the
 // players their history and Elo - the engine's len(players)+8 broadcaster exists so
 // that cannot happen, and it is logged loudly if it ever does. Caller holds l.mu.
-func (l *Lobby) watchGameLocked(engine *game.Engine) {
-	if l.manager == nil || l.manager.matchRepo == nil {
+//
+// It subscribes whether or not a match repository is configured: this goroutine is
+// also the only consumer of EventPlayerIdle, so skipping it leaves an idle-removed
+// seat on the roster with the engine no longer holding it, and the table can never
+// reach all-ready again. finalizeFinishedGame already no-ops without a repository.
+//
+// The finalize snapshot is taken here, not when the game ends: by then the lobby may
+// have reopened and been reconfigured, and the result would be written under the new
+// ranked flag, the new game, and the next hand's start time.
+func (l *Lobby) watchGameLocked(engine *game.Engine, ref db.GameRef) {
+	if l.manager == nil {
 		return
 	}
 	ch, err := engine.Broadcaster().Subscribe()
@@ -538,18 +548,24 @@ func (l *Lobby) watchGameLocked(engine *game.Engine) {
 		observability.SubscribeFailure(l.manager.shutdownCtx(), "game")
 		slog.ErrorContext(l.manager.shutdownCtx(),
 			"cannot watch game for completion; result will not be persisted",
-			"error", err, "lobby", l.code, "game", l.options.cardGame)
+			"error", err, "lobby", l.code, "game", ref.Slug)
 		return
+	}
+	req := finalizeRequest{
+		lobbyCode: l.code,
+		game:      ref,
+		isRanked:  l.options.isRanked,
+		startedAt: l.startedAt,
 	}
 	go func() {
 		defer engine.Broadcaster().Unsubscribe(ch)
-		l.handleBroadcasterEvents(ch, engine)
+		l.handleBroadcasterEvents(ch, engine, req)
 	}()
 }
 
-func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engine) {
+func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engine, req finalizeRequest) {
 	ctx := l.manager.shutdownCtx()
-	gameName := l.GameName()
+	gameName := req.game.Name
 	defer func() {
 		if n := engine.Broadcaster().Dropped(); n > 0 {
 			observability.BroadcastDropped(ctx, "game", n)
@@ -567,11 +583,13 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 			// back to ID, so a zero-UserID stub still matches.
 			l.manager.LeaveLobby(&game.Player{ID: event.PlayerID})
 		case game.EventGameEnded:
-			l.requestFinalize(engine, event.Reason)
-			// Reopen now, not on the next ready press: until it does the lobby is still
-			// InGame and an inherited leader can change no setting on the screen.
+			// Reopen before persist: a 15s write must not pin InGame while the TUI
+			// is already back in the lobby and ready-ing the next hand.
 			l.releaseFinishedGame()
+			l.requestFinalize(engine, event.Reason, req)
 			return
+		default:
+			// Turn and action events are the views' business; the lobby counts nothing.
 		}
 	}
 
@@ -579,28 +597,24 @@ func (l *Lobby) handleBroadcasterEvents(ch <-chan game.Event, engine *game.Engin
 	// latest-wins and can drop EventGameEnded, and RemoveLobby closes the feed from
 	// under this goroutine.
 	if engine.IsFinished() {
-		l.requestFinalize(engine, game.EndReasonUnknown)
+		l.releaseFinishedGame()
+		l.requestFinalize(engine, game.EndReasonUnknown, req)
 	}
 }
 
-// requestFinalize hands the finished table to Manager for persistence.
-func (l *Lobby) requestFinalize(engine *game.Engine, reason game.EndReason) {
+// requestFinalize hands the finished table to Manager for persistence. req was
+// snapshotted by watchGameLocked when this game started, so a lobby that has since
+// reopened cannot rewrite what the finished match is recorded as.
+func (l *Lobby) requestFinalize(engine *game.Engine, reason game.EndReason, req finalizeRequest) {
 	if l.manager == nil {
 		return
 	}
-	l.mu.RLock()
-	req := finalizeRequest{
-		lobbyCode: l.code,
-		gameName:  l.options.cardGame,
-		isRanked:  l.options.isRanked,
-		startedAt: l.startedAt,
-	}
-	l.mu.RUnlock()
 	l.manager.finalizeFinishedGame(req, engine, reason)
 }
 
 // releaseFinishedGameLocked returns a finished lobby to Waiting and hands back the
-// engine to close - closing is the caller's job, since both callers hold l.mu.
+// engine to close. Caller holds l.mu; closing and releaseHeldSeats are the unlocked
+// caller's job (lock order is manager then lobby).
 func (l *Lobby) releaseFinishedGameLocked() *game.Engine {
 	if l.state != InGame || l.activeEngine == nil || !l.activeEngine.IsFinished() {
 		return nil
@@ -624,6 +638,7 @@ func (l *Lobby) releaseFinishedGame() {
 		return
 	}
 	finished.Close()
+	l.manager.releaseHeldSeats(l)
 	if bc != nil {
 		bc.Broadcast(Event{Type: EventPlayersUpdated})
 	}

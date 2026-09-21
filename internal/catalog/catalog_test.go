@@ -1,7 +1,12 @@
 package catalog
 
 import (
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
+
+	"github.com/Pieczasz/terminal-card/internal/game"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,6 +30,8 @@ func TestAll_EntriesComplete(t *testing.T) {
 		slugs[e.Slug] = true
 
 		assert.NotNil(t, e.Rules(), "rules factory for %q returned nil", e.Name)
+		_, scores := e.Rules().(game.StandingScorer)
+		assert.True(t, scores, "%q must implement StandingScorer so equal scores share a place", e.Name)
 	}
 }
 
@@ -36,5 +43,58 @@ func TestEntry_Module(t *testing.T) {
 		assert.Equal(t, e.Slug, m.Slug)
 		require.NotNil(t, m.Factory)
 		assert.NotNil(t, m.Factory())
+	}
+}
+
+// Module.Name is persisted as games.name and is the registry key the lobby looks a
+// game up by, so a rename is a data migration, not a cosmetic edit: existing rows,
+// existing rankings and every match already recorded point at the old string. Freeze
+// them here so changing one has to be deliberate.
+func TestAll_NamesArePersistedAndFrozen(t *testing.T) {
+	t.Parallel()
+
+	want := map[string]string{
+		"crazy_eights": "Crazy Eights",
+		"poker":        "Poker",
+		"uno":          "Uno",
+		"hearts":       "Hearts",
+		"gin_rummy":    "Gin Rummy",
+	}
+
+	got := make(map[string]string, len(All))
+	for _, e := range All {
+		got[e.Slug] = e.Name
+	}
+
+	assert.Equal(t, want, got,
+		"update this map when adding a game; renaming or re-slugging one orphans its rows in games, rankings and match_participants")
+}
+
+// Migration 000005 backfills games.slug from the display names that existed when it
+// shipped. If a catalog slug ever disagrees with that table, a running server writes
+// ratings under one slug while the migration filed the old rows under another, and the
+// leaderboard for that game silently splits in two.
+func TestAll_SlugsMatchTheMigrationBackfill(t *testing.T) {
+	t.Parallel()
+	matches, err := filepath.Glob("../db/migrations/000005_*.up.sql")
+	require.NoError(t, err)
+	require.Len(t, matches, 1, "exactly one slug migration")
+	sql, err := os.ReadFile(matches[0])
+	require.NoError(t, err)
+
+	backfill := regexp.MustCompile(`WHEN '([^']+)'\s+THEN '([^']+)'`).FindAllStringSubmatch(string(sql), -1)
+	want := make(map[string]string, len(backfill))
+	for _, m := range backfill {
+		want[m[1]] = m[2]
+	}
+
+	gotByName := make(map[string]string, len(All))
+	for _, e := range All {
+		gotByName[e.Name] = e.Slug
+	}
+	for name, slug := range want {
+		if got, ok := gotByName[name]; ok {
+			assert.Equal(t, slug, got, "%q must still backfill to its catalog slug", name)
+		}
 	}
 }

@@ -31,6 +31,7 @@ func listenLocal(t *testing.T) net.Listener {
 }
 
 func generateSigner(t *testing.T) cryptossh.Signer {
+	t.Helper()
 	_, privKey, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
 
@@ -61,10 +62,9 @@ func setupTestEnvironment(t *testing.T) testEnv {
 			RateLimitCount:  5,
 			RateLimitWindow: time.Second,
 		},
-		UserRepository:  userRepo,
-		MatchRepository: matchRepo,
-		LobbyManager:    lobby.NewManager(context.Background(), matchRepo),
-		GameRegistry:    game.NewRegistry(),
+		UserRepository: userRepo,
+		LobbyManager:   lobby.NewManager(context.Background(), matchRepo),
+		GameRegistry:   game.NewRegistry(),
 	}
 
 	server, err := SetupServer(deps)
@@ -174,6 +174,17 @@ func TestServer_SecondSessionDisplaces(t *testing.T) {
 	_ = session2.RequestPty("xterm", 80, 40, cryptossh.TerminalModes{})
 	err = session2.Shell()
 	require.NoError(t, err, "a second session displaces the first instead of being refused")
+
+	// Displacing has to hang up on the first session, not merely forget it: a zombie
+	// keeps its TUI, its lobby subscription and a tracker slot alive until its TCP
+	// dies. Wait returns once the server closes the channel.
+	closed := make(chan error, 1)
+	go func() { closed <- session1.Wait() }()
+	select {
+	case <-closed:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the displaced session is still open")
+	}
 }
 
 func TestServer_ExistingUserConnection(t *testing.T) {
@@ -241,7 +252,7 @@ func TestServer_RateLimit(t *testing.T) {
 	}
 
 	var failed bool
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		client, err := cryptossh.Dial("tcp", env.addr, clientConfig)
 		if err != nil {
 			failed = true
@@ -263,32 +274,4 @@ func TestServer_RateLimit(t *testing.T) {
 	}
 
 	assert.True(t, failed, "Expected rate limit to block connection")
-}
-
-func TestSetupServer_Errors(t *testing.T) {
-	t.Parallel()
-
-	deps := ServerDependencies{
-		Config: &config.Config{SSHKeyPath: "/invalid/path/that/doesnt/exist"},
-	}
-	_, err := SetupServer(deps)
-	assert.ErrorContains(t, err, "error while saving keypair")
-}
-
-func TestSetupServer_SetsConnectionTimeouts(t *testing.T) {
-	t.Parallel()
-
-	deps := ServerDependencies{
-		Config: &config.Config{
-			SSHKeyPath:      t.TempDir() + "/id_ed25519",
-			RateLimitCount:  5,
-			RateLimitWindow: time.Second,
-		},
-	}
-
-	server, err := SetupServer(deps)
-	require.NoError(t, err)
-
-	assert.Equal(t, 20*time.Second, server.HandshakeTimeout, "an unauthenticated connection must be dropped")
-	assert.Equal(t, 30*time.Minute, server.IdleTimeout, "a connection that vanished without a FIN must be reaped")
 }

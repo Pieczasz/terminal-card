@@ -2,7 +2,6 @@ package poker
 
 import (
 	"fmt"
-	"strconv"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
@@ -11,25 +10,28 @@ import (
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
+	"uuid"
+
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func testUser(id uint, name string) *db.User {
-	return &db.User{ID: id, Username: name}
+func testUser(name string) *db.User {
+	return &db.User{ID: testutil.UID(1), Username: name}
 }
 
 // startedTable returns a two-handed table mid-hand plus the view bound to seat 1.
 func startedTable(t *testing.T) (*game.Engine, *Model) {
 	t.Helper()
 	players := []*game.Player{
-		{ID: "1", UserID: 1, Name: "alice"},
-		{ID: "2", UserID: 2, Name: "bob"},
+		{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"},
+		{ID: testutil.SeatID(2), UserID: testutil.UID(2), Name: "bob"},
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 
-	global := router.GlobalContext{User: testUser(1, "alice")}
+	global := router.GlobalContext{User: testUser("alice")}
 	m, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	return engine, m
@@ -47,7 +49,7 @@ func TestSyncState_BuildsSeatsFromEngine(t *testing.T) {
 
 	hero := m.heroSeat()
 	require.NotNil(t, hero)
-	assert.Equal(t, "1", hero.PlayerID)
+	assert.Equal(t, testutil.SeatID(1), hero.PlayerID)
 	assert.Equal(t, "alice", hero.Name)
 	assert.Len(t, hero.Hole, 2, "hero sees their own hole cards")
 
@@ -131,19 +133,18 @@ func tableOnTurn(t *testing.T, seats int) (*game.Engine, *Model) {
 	players := make([]*game.Player, 0, seats)
 	for i := range seats {
 		players = append(players, &game.Player{
-			ID:     strconv.Itoa(i + 1),
-			UserID: uint(i + 1),
-			Name:   fmt.Sprintf("p%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1),
+			Name: fmt.Sprintf("p%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	id, err := strconv.ParseUint(engine.CurrentPlayerID(), 10, 64)
+	id, err := uuid.Parse(engine.CurrentPlayerID())
 	require.NoError(t, err)
 
-	m, ok := New(router.GlobalContext{User: testUser(uint(id), "hero")}, engine).(*Model)
+	m, ok := New(router.GlobalContext{User: &db.User{ID: id, Username: "hero"}}, engine).(*Model)
 	require.True(t, ok)
 	require.True(t, m.Base.MyTurn, "the view has to be bound to the seat on turn")
 	return engine, m
@@ -198,8 +199,7 @@ func BenchmarkSyncState(b *testing.B) {
 			players := make([]*game.Player, 0, seats)
 			for i := range seats {
 				players = append(players, &game.Player{
-					ID:     strconv.Itoa(i + 1),
-					UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
+					ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("p%d", i+1),
 				})
 			}
 			engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
@@ -208,7 +208,7 @@ func BenchmarkSyncState(b *testing.B) {
 			}
 			b.Cleanup(engine.Close)
 
-			m, ok := New(router.GlobalContext{User: testUser(1, "p1")}, engine).(*Model)
+			m, ok := New(router.GlobalContext{User: testUser("p1")}, engine).(*Model)
 			if !ok {
 				b.Fatal("New did not return *Model")
 			}

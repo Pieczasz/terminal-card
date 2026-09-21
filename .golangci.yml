@@ -35,6 +35,45 @@ linters:
     - paralleltest
     - tparallel
     - usetesting
+    # Security and correctness.
+    - gosec
+    - errorlint
+    - errchkjson
+    - forcetypeassert
+    - spancheck
+    - bodyclose
+    - exhaustive
+    - nilnil
+    - durationcheck
+    - makezero
+    - reassign
+    - predeclared
+    - asasalint
+    - bidichk
+    - gocheckcompilerdirectives
+    - gocritic
+    # Logging: slog is the only logger, so every call site should be well-formed.
+    - sloglint
+    # Architecture: the layer rules from CLAUDE.md, enforced rather than remembered.
+    - depguard
+    - iface
+    - recvcheck
+    - errname
+    - fatcontext
+    # Style that stays fixed once fixed.
+    - copyloopvar
+    - intrange
+    - perfsprint
+    - unconvert
+    - wastedassign
+    - nakedret
+    - nolintlint
+    - godox
+    - dupl
+    - exptostd
+    - mirror
+    - usestdlibvars
+    - testableexamples
 
   exclusions:
     generated: lax
@@ -55,8 +94,52 @@ linters:
           - wrapcheck
           - errcheck
           - noctx
+          # A test asserting a message type is the point of the test; a mock returning
+          # nil, nil is the shape testify's mock.Called forces; table-driven tests
+          # repeat by design.
+          - forcetypeassert
+          - nilnil
+          - dupl
+          - gosec
 
   settings:
+    depguard:
+      rules:
+        repository-only-from-root:
+          list-mode: lax
+          files: ["!**/cmd/server/**", "!**/internal/repository/**", "!$test"]
+          deny:
+            - pkg: github.com/Pieczasz/terminal-card/internal/repository
+              desc: only cmd/server (the composition root) may import the GORM implementations; depend on the internal/db interfaces
+        game-is-pure:
+          list-mode: lax
+          files: ["**/internal/game/**", "!$test"]
+          deny:
+            - pkg: github.com/Pieczasz/terminal-card/internal/db
+              desc: internal/game knows nothing about the database
+            - pkg: github.com/Pieczasz/terminal-card/internal/tui
+              desc: internal/game knows nothing about the TUI
+            - pkg: github.com/Pieczasz/terminal-card/internal/lobby
+              desc: internal/game knows nothing about lobbies
+    dupl:
+      threshold: 120
+    gocritic:
+      enabled-tags: [diagnostic, performance]
+      # A type switch with one case is the idiomatic Bubble Tea Update shape.
+      disabled-checks: [hugeParam, rangeValCopy, singleCaseSwitch]
+    exhaustive:
+      # A switch with a default has said what it does with the rest.
+      default-signifies-exhaustive: true
+    spancheck:
+      checks: [end, record-error, set-status]
+      # recordSpanResult records the error and sets the status; span.End stays at the
+      # call site where spancheck can see it.
+      ignore-check-signatures: ["recordSpanResult"]
+    gosec:
+      # G104 is errcheck's job and is configured there. G704 (SSRF taint) has exactly
+      # one client call to look at, the container healthcheck against loopback, and
+      # flags its source and sink in turn no matter where a waiver sits.
+      excludes: [G104, G704]
     revive:
       enable-default-rules: true
       rules:

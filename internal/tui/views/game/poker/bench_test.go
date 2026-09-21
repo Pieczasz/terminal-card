@@ -10,6 +10,7 @@ import (
 	logic "github.com/Pieczasz/terminal-card/internal/game/poker"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,15 +22,14 @@ func benchTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
-			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(b, engine.Start())
 	b.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: testUser(1, "player1"), Width: 120, Height: 40}
+	global := router.GlobalContext{User: testUser("player1"), Width: 120, Height: 40}
 	m, ok := New(global, engine).(*Model)
 	require.True(b, ok)
 	b.Cleanup(m.Close)
@@ -82,15 +82,14 @@ func TestCapacity_FrameBytesAndSessionMemory(t *testing.T) {
 	players := make([]*game.Player, 0, 6)
 	for i := range 6 {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
-			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	global := router.GlobalContext{User: testUser(1, "player1"), Width: 120, Height: 40}
+	global := router.GlobalContext{User: testUser("player1"), Width: 120, Height: 40}
 	first, ok := New(global, engine).(*Model)
 	require.True(t, ok)
 	t.Cleanup(first.Close)
@@ -145,15 +144,14 @@ func benchParallelTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
-			UserID: uint(i + 1), Name: fmt.Sprintf("player%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
 	if err := engine.Start(); err != nil {
 		b.Error(err)
 	}
-	global := router.GlobalContext{User: testUser(1, "player1"), Width: 120, Height: 40}
+	global := router.GlobalContext{User: testUser("player1"), Width: 120, Height: 40}
 	m, ok := New(global, engine).(*Model)
 	if !ok {
 		b.Error("unexpected model type")

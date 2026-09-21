@@ -15,14 +15,14 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: true
 
     - name: Download dependencies
       run: go mod download
 
     - name: Run unit tests
-      run: go test ./... -race -short -count=1
+      run: go test ./... -race -short -shuffle=on -count=1
 
   integration:
     runs-on: ubuntu-latest
@@ -32,14 +32,14 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: true
 
     - name: Download dependencies
       run: go mod download
 
     - name: Run integration tests
-      run: go test ./... -race -tags=integration -count=1 -timeout 15m
+      run: go test ./... -race -shuffle=on -tags=integration -count=1 -timeout 15m
 
   lint:
     runs-on: ubuntu-latest
@@ -49,16 +49,31 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
         cache: false
 
     - name: golangci-lint
       # Prebuilt binaries lag the module's Go version (v2.12.x is go1.26 and
-      # refuses go 1.27.0). goinstall builds with the setup-go toolchain.
+      # refuses go 1.27.x). goinstall builds with the setup-go toolchain.
       uses: golangci/golangci-lint-action@v7
       with:
         version: v2.13.2
         install-mode: goinstall
+
+    - name: gofmt and go fix leave nothing to change
+      run: |
+        test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+        test -z "$(go fix -diff ./...)" || { go fix -diff ./...; exit 1; }
+
+    # The action above lints the default build; the integration tests are a second
+    # build that the size gates and test linters must also pass.
+    - name: golangci-lint (integration tag)
+      run: golangci-lint run --build-tags=integration ./...
+
+    - name: deadcode
+      run: |
+        out=$(go run golang.org/x/tools/cmd/deadcode@v0.50.0 -test ./...)
+        if [ -n "$out" ]; then echo "$out"; exit 1; fi
 
   vulncheck:
     runs-on: ubuntu-latest
@@ -68,9 +83,62 @@ jobs:
     - name: Set up Go
       uses: actions/setup-go@v5
       with:
-        go-version: '1.27'
+        go-version: '1.27.1'
 
     # Reachability-based, so it fails only on advisories our call graph can actually
     # reach. Clean today; this is what keeps it clean.
+    #
+    # Pinned, not @latest: @latest makes every run depend on whatever was published
+    # that morning, so a release that changes the exit codes or drops a Go version
+    # turns a green pipeline red on a commit that touched nothing. Bump deliberately.
     - name: govulncheck
-      run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      run: go run golang.org/x/vuln/cmd/govulncheck@v1.8.0 ./...
+
+  # The Dockerfile is not exercised by any test, and it was wrong for months without
+  # anything noticing: it built one file instead of the package, and cross-built for
+  # the wrong architecture. Building it here is the only thing that catches that.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: docker/setup-buildx-action@v3
+
+    - name: Build the server image
+      uses: docker/build-push-action@v6
+      with:
+        context: .
+        file: cmd/server/Dockerfile
+        # linux/arm64 as well as the runner's own arch, because the deployment target
+        # may be either and TARGETOS/TARGETARCH handling is exactly what broke before.
+        platforms: linux/amd64,linux/arm64
+        push: false
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+  compose:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    # Interpolation happens at parse time, so `docker compose config` is a real check
+    # on every ${VAR} in the file - including the ones that must have no default.
+    - name: Validate compose and the proxy config
+      env:
+        DB_PASSWORD: ci
+      run: |
+        docker compose config --quiet
+        docker run --rm --add-host backend:127.0.0.1 \
+          -v "$PWD/internal/config/nginx.conf:/etc/nginx/nginx.conf:ro" \
+          nginx:1.27-alpine nginx -t
+
+    # Grafana is anonymous-admin on purpose, so the VPS itself is the gate: it must
+    # never be published on anything but loopback. This is the one line that keeps
+    # that true when someone edits the ports.
+    - name: Grafana stays on loopback
+      env:
+        DB_PASSWORD: ci
+      run: |
+        bindings=$(docker compose config --format json | jq -r '.services.grafana.ports[]? | "\(.host_ip // "0.0.0.0"):\(.published)"')
+        echo "grafana publishes: $bindings"
+        [ "$bindings" = "127.0.0.1:3000" ] || { echo "grafana must publish only 127.0.0.1:3000" >&2; exit 1; }

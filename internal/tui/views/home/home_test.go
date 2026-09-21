@@ -3,9 +3,13 @@ package home
 import (
 	"testing"
 
+	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -62,4 +66,111 @@ func TestHome_Update_IgnoresUnboundKeys(t *testing.T) {
 	_, cmd := m.Update(tea.KeyPressMsg{Code: 'z', Text: "z"})
 
 	assert.Nil(t, cmd, "an unbound key does nothing")
+}
+
+// Home holds nothing that needs arming - no subscription, no query - so Init has
+// nothing to return. A command here would be one the router runs on every visit.
+func TestHome_Init(t *testing.T) {
+	t.Parallel()
+	assert.Nil(t, New(router.GlobalContext{}).Init())
+}
+
+// Home is a full-screen view, so it has to fit the screen at every size the app
+// claims to support: a frame taller than the terminal is handed to the terminal to
+// wrap, and one wrapped row shifts every row under it.
+func TestHome_View_FitsTheTerminal(t *testing.T) {
+	t.Parallel()
+
+	for _, size := range []struct {
+		name string
+		w, h int
+	}{
+		{"the declared minimum", styles.MinWidth, styles.MinHeight},
+		{"a stock terminal", 80, 24},
+		{"a tall terminal", 120, 50},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			t.Parallel()
+			m := New(router.GlobalContext{
+				User:  &db.User{ID: testutil.UID(1), Username: "alice"},
+				Theme: styles.NewTheme(true), Width: size.w, Height: size.h,
+			})
+
+			out := m.View().Content
+
+			assert.LessOrEqual(t, lg.Height(out), size.h, "taller than the terminal")
+			assert.LessOrEqual(t, lg.Width(out), size.w, "wider than the terminal")
+		})
+	}
+}
+
+func TestHome_View_Greeting(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		user *db.User
+		want string
+	}{
+		{name: "a signed-in player is greeted by name", user: &db.User{Username: "alice"}, want: "alice"},
+		// The view is built before auth has resolved, so a nil user has to render
+		// something rather than dereference nothing.
+		{name: "no user yet falls back", user: nil, want: "Player"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := New(router.GlobalContext{
+				User: tt.user, Theme: styles.NewTheme(true), Width: 120, Height: 50,
+			})
+
+			assert.Contains(t, m.View().Content, tt.want)
+		})
+	}
+}
+
+// The banner word is the fixed string "Welcome"; the username is styled text beside
+// it. Baking the name into the figlet keyed the banner cache on a user-controlled
+// string, so any account could mint entries, fill the cap, and push every real
+// screen title back to re-parsing the whole figlet font on every frame.
+//
+// Not parallel, and deliberately self-contained: ResetFigureCacheForTest clears
+// package-global state that every other render in this package shares.
+//
+//nolint:paralleltest // shares the package-global banner cache; see above.
+func TestHome_View_BannerIsNotKeyedOnTheUsername(t *testing.T) {
+	styles.ResetFigureCacheForTest()
+
+	render := func(username string) {
+		m := New(router.GlobalContext{
+			User:  &db.User{Username: username},
+			Theme: styles.NewTheme(true), Width: 120, Height: 50,
+		})
+		_ = m.View()
+	}
+
+	render("alice")
+	afterFirst := styles.FigureCacheLenForTest()
+	require.Positive(t, afterFirst, "the fixed titles are cached, or this test proves nothing")
+
+	for _, username := range []string{"bob", "carol", "dave", "eve", "mallory"} {
+		render(username)
+	}
+
+	assert.Equal(t, afterFirst, styles.FigureCacheLenForTest(),
+		"a new username must not mint a banner cache entry")
+}
+
+// The shared handler runs first, so a resize has to be swallowed here rather than
+// falling through to the key switch.
+func TestHome_Update_HandlesCommonMessages(t *testing.T) {
+	t.Parallel()
+	m := New(router.GlobalContext{})
+
+	updated, cmd := m.Update(tea.WindowSizeMsg{Width: 120, Height: 50})
+
+	assert.Nil(t, cmd)
+	assert.Equal(t, 120, updated.(model).global.Width)
+	assert.Equal(t, 50, updated.(model).global.Height)
 }

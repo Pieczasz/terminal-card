@@ -79,9 +79,7 @@ func (r *Rules) beginHand(state *game.State, extra *State) error {
 	extra.TurnsThisHand = 0
 
 	state.Deck = deck.New(deck.StandardDeck())
-	if err := state.Deck.Shuffle(); err != nil {
-		return fmt.Errorf("shuffle: %w", err)
-	}
+	state.Deck.Shuffle()
 	for _, p := range state.Players {
 		cards, ok := state.Deck.DrawNCards(dealCount)
 		if !ok {
@@ -276,26 +274,31 @@ func computeKnockOutcome(
 ) (*HandResult, []deck.Card) {
 	remaining := deck.RemoveOne(knockerHand, discard)
 	knockerMelds, knockerDW, knockerPts := bestMeldSplit(remaining)
-	oppMelds, oppDW, oppPts := bestMeldSplit(opponentHand)
 
 	result := &HandResult{
-		KnockerMelds:           knockerMelds,
-		KnockerDeadwood:        knockerDW,
-		KnockerDeadwoodPoints:  knockerPts,
-		OpponentMelds:          oppMelds,
-		OpponentDeadwood:       oppDW,
-		OpponentDeadwoodPoints: oppPts,
-		Gin:                    knockerPts == 0,
+		KnockerMelds:          knockerMelds,
+		KnockerDeadwood:       knockerDW,
+		KnockerDeadwoodPoints: knockerPts,
+		Gin:                   knockerPts == 0,
 	}
 
 	if result.Gin {
-		// Gin blocks layoffs: opponent scores raw deadwood + bonus to knocker.
+		// Gin blocks layoffs, so the opponent's best arrangement is the one with the
+		// lowest raw deadwood: opponent scores that + bonus to the knocker.
+		oppMelds, oppDW, oppPts := bestMeldSplit(opponentHand)
+		result.OpponentMelds = oppMelds
+		result.OpponentDeadwood = oppDW
+		result.OpponentDeadwoodPoints = oppPts
 		result.ScoreDelta = oppPts + ginBonus
 		result.Winner = knockerID
 		return result, remaining
 	}
 
-	_, remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
+	// Layoffs are open, so the defender arranges for the lowest total *after* them.
+	oppMelds, oppDW, _ := bestMeldSplitAgainst(opponentHand, knockerMelds)
+	result.OpponentMelds = oppMelds
+
+	remDW, laidOff := applyLayoffs(oppDW, knockerMelds)
 	remPts := sumDeadwood(remDW)
 	result.LaidOffCards = laidOff
 	result.OpponentDeadwood = remDW
@@ -475,3 +478,7 @@ func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
 	}
 	return extra.CumulativeScores[p.ID]
 }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)

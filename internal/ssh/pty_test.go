@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/ssh"
 	"charm.land/wish/v2/testsession"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,8 +96,8 @@ func (panickyModel) Close() { panic("closing the view exploded") }
 func TestSessionLifecycle_PanicClosingTheViewStillReleasesTheSession(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(0)
-	user := &db.User{ID: 7}
-	gen, err := tracker.Connect(user.ID)
+	user := &db.User{ID: testutil.UID(7)}
+	gen, err := tracker.Connect(user.ID, nil)
 	require.NoError(t, err)
 
 	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}

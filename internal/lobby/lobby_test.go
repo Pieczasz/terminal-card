@@ -5,13 +5,19 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
+	"uuid"
+
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -56,26 +62,51 @@ type MockMatchRepo struct {
 }
 
 func (m *MockMatchRepo) RecordCasualMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uuid.UUID,
 ) error {
-	return m.Called(ctx, gameName, orderedUserIDs).Error(0)
+	return m.Called(ctx, ref, orderedUserIDs).Error(0)
 }
 
 func (m *MockMatchRepo) FinalizeRankedMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uuid.UUID, places []int,
 ) error {
-	return m.Called(ctx, gameName, orderedUserIDs, places).Error(0)
+	return m.Called(ctx, ref, orderedUserIDs, places).Error(0)
 }
 
-func mockPlayer(id string, dbID uint) *game.Player {
+// gameRef mirrors what registerGame put in the registry: the persisted key is the
+// slug, so an expectation written against the display name would pass while the row
+// was being written under a different identity.
+func gameRef(name string) db.GameRef {
+	return db.GameRef{Slug: strings.ToLower(name), Name: name}
+}
+
+// newTestManager is NewManager with teardown. A started game parks a watcher
+// goroutine on the engine feed, and closing the engine - which only RemoveLobby does -
+// is what ends it. Production always gets there; a test that drops the manager on the
+// floor would strand the goroutine and trip goleak.
+func newTestManager(t *testing.T, repo db.MatchRepository) *Manager {
+	t.Helper()
+	m := NewManager(context.Background(), repo)
+	t.Cleanup(func() {
+		m.mu.RLock()
+		codes := slices.Collect(maps.Keys(m.lobbies))
+		m.mu.RUnlock()
+		for _, code := range codes {
+			m.RemoveLobby(code)
+		}
+	})
+	return m
+}
+
+func mockPlayer(id string, dbID uuid.UUID) *game.Player {
 	return &game.Player{ID: id, UserID: dbID}
 }
 
 func TestLobby_ToggleReady(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
 
 	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(4), WithCardGame(cardGame))
@@ -109,8 +140,8 @@ func TestLobby_ToggleReady(t *testing.T) {
 
 func TestLobby_SettersAndGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("p1", 1)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("p1", testutil.UID(1))
 
 	cardGame := "CrazyEights"
 	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithRanked(true))
@@ -136,8 +167,8 @@ func TestLobby_SettersAndGetters(t *testing.T) {
 
 func TestLobby_DefaultCasual(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("leader", 1)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithCardGame("TestGame"))
 	require.NoError(t, err)
 	assert.False(t, l.IsRanked(), "new lobbies default to casual to limit Elo farming under open registration")
@@ -145,8 +176,8 @@ func TestLobby_DefaultCasual(t *testing.T) {
 
 func TestLobby_BasicGetters(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("leader", 1)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("leader", testutil.UID(1))
 
 	cardGame := "CrazyEights"
 	l, err := m.New(leader, WithCardGame(cardGame), WithPrivate(true), WithMaxPlayers(4))
@@ -159,16 +190,16 @@ func TestLobby_BasicGetters(t *testing.T) {
 	assert.Equal(t, 4, l.MaxPlayers())
 	assert.True(t, l.IsPrivate())
 
-	require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("guest", 2)))
+	require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("guest", testutil.UID(2))))
 	assert.Len(t, l.Guests(), 1)
 }
 
 func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
-	m := NewManager(context.Background(), mockRepo)
-	leader := mockPlayer("leader", 1)
-	guest := mockPlayer("guest", 2)
+	m := newTestManager(t, mockRepo)
+	leader := mockPlayer("leader", testutil.UID(1))
+	guest := mockPlayer("guest", testutil.UID(2))
 
 	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(true))
@@ -189,7 +220,7 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("FinalizeRankedMatch", mock.Anything, "MockGame", []uint{1, 2}, mock.Anything).
+	mockRepo.On("FinalizeRankedMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}, mock.Anything).
 		Run(func(mock.Arguments) {
 			close(done)
 		}).
@@ -230,9 +261,9 @@ func TestLobby_StartGameAndBroadcasterEvents(t *testing.T) {
 func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	t.Parallel()
 	mockRepo := new(MockMatchRepo)
-	m := NewManager(context.Background(), mockRepo)
-	leader := mockPlayer("leader", 1)
-	guest := mockPlayer("guest", 2)
+	m := newTestManager(t, mockRepo)
+	leader := mockPlayer("leader", testutil.UID(1))
+	guest := mockPlayer("guest", testutil.UID(2))
 
 	cardGame := "MockGame"
 	l, err := m.New(leader, WithMaxPlayers(2), WithCardGame(cardGame), WithRanked(false))
@@ -251,7 +282,7 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 	registerGame(registry, "MockGame", mockRules)
 
 	done := make(chan struct{})
-	mockRepo.On("RecordCasualMatch", mock.Anything, "MockGame", []uint{1, 2}).
+	mockRepo.On("RecordCasualMatch", mock.Anything, gameRef("MockGame"), []uuid.UUID{testutil.UID(1), testutil.UID(2)}).
 		Run(func(mock.Arguments) { close(done) }).
 		Return(nil)
 
@@ -274,10 +305,10 @@ func TestLobby_CasualGameIsRecordedWithoutElo(t *testing.T) {
 
 func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	t.Parallel()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("p1", 1)
-	guest := mockPlayer("p2", 2)
-	guest3 := mockPlayer("p3", 3)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("p1", testutil.UID(1))
+	guest := mockPlayer("p2", testutil.UID(2))
+	guest3 := mockPlayer("p3", testutil.UID(3))
 
 	l, err := m.New(leader, WithMaxPlayers(3), WithCardGame("Mock"))
 	require.NoError(t, err)
@@ -298,7 +329,7 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	require.ErrorContains(t, err, "too many players")
 
 	// Missing game in registry
-	leader2 := mockPlayer("p4", 4)
+	leader2 := mockPlayer("p4", testutil.UID(4))
 	l2, err := m.New(leader2, WithCardGame("Missing"))
 	require.NoError(t, err)
 	err = l2.ToggleReady(leader2, registry) // Should fail on create game rules
@@ -313,11 +344,11 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 	mockRules2.On("OnGameStart", mock.Anything).Return(nil)
 	registerGame(registry, "Mock2", mockRules2)
 
-	leader3 := mockPlayer("p5", 5)
+	leader3 := mockPlayer("p5", testutil.UID(5))
 	l3, err := m.New(leader3, WithCardGame("Mock2"))
 	require.NoError(t, err)
 	_ = m.JoinLobbyByCode(l3.Code(), guest) // guest is already in lobby l, so this join is expected to fail.
-	guest4 := mockPlayer("p6", 6)
+	guest4 := mockPlayer("p6", testutil.UID(6))
 	require.NoError(t, m.JoinLobbyByCode(l3.Code(), guest4))
 	require.NoError(t, l3.ToggleReady(leader3, registry))
 	require.NoError(t, l3.ToggleReady(guest4, registry)) // Starts game!
@@ -339,8 +370,8 @@ func TestLobby_ToggleReady_EdgeCases(t *testing.T) {
 // maxPlayers, for tests that care about lobby bookkeeping rather than the game.
 func newTestLobby(t *testing.T, maxPlayers int) (*Manager, *Lobby, *game.Registry) {
 	t.Helper()
-	m := NewManager(context.Background(), nil)
-	leader := mockPlayer("p1", 1)
+	m := newTestManager(t, nil)
+	leader := mockPlayer("p1", testutil.UID(1))
 
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("Mock"))
 	require.NoError(t, err)
@@ -391,7 +422,7 @@ func TestLobby_ChangesAreBroadcast(t *testing.T) {
 		ch, err := l.Subscribe("p1")
 		require.NoError(t, err)
 
-		require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("p2", 2)))
+		require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer("p2", testutil.UID(2))))
 
 		assert.Equal(t, []string{EventPlayersUpdated}, drainEventTypes(ch))
 	})
@@ -399,7 +430,7 @@ func TestLobby_ChangesAreBroadcast(t *testing.T) {
 	t.Run("a guest leaving", func(t *testing.T) {
 		t.Parallel()
 		m, l, _ := newTestLobby(t, 4)
-		guest := mockPlayer("p2", 2)
+		guest := mockPlayer("p2", testutil.UID(2))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 		ch, err := l.Subscribe("p1")
@@ -478,7 +509,7 @@ func TestLobby_SetMaxPlayers_Bounds(t *testing.T) {
 			t.Parallel()
 			m, l, _ := newTestLobby(t, 9)
 			for i := range tt.guests {
-				require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer(fmt.Sprintf("g%d", i), uint(10+i))))
+				require.NoError(t, m.JoinLobbyByCode(l.Code(), mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(10+i)))))
 			}
 
 			err := l.SetMaxPlayers(l.Leader(), tt.limit, tt.rulesMin, tt.rulesMax)
@@ -498,7 +529,7 @@ func TestLobby_SetMaxPlayers_Bounds(t *testing.T) {
 func TestLobby_LeavingUnsubscribesThePlayer(t *testing.T) {
 	t.Parallel()
 	m, l, _ := newTestLobby(t, 4)
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	guestCh, err := l.Subscribe(guest.ID)
@@ -549,7 +580,7 @@ func TestLobby_SurvivesATornDownBroadcaster(t *testing.T) {
 func TestLobby_ToggleReadyAfterAFinishedGame(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 2)
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	require.NoError(t, l.ToggleReady(l.Leader(), registry))
@@ -576,7 +607,7 @@ func TestLobby_ToggleReadyAfterAFinishedGame(t *testing.T) {
 func TestLobby_StartsWithExactlyMaxPlayers(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 3)
-	guests := []*game.Player{mockPlayer("p2", 2), mockPlayer("p3", 3)}
+	guests := []*game.Player{mockPlayer("p2", testutil.UID(2)), mockPlayer("p3", testutil.UID(3))}
 	for _, g := range guests {
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 	}
@@ -605,27 +636,27 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			name:   "ranked success",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(nil)
+				r.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}, mock.Anything).Return(nil)
 			},
 		},
 		{
 			name:   "ranked failure is reported",
 			ranked: true,
 			setup: func(r *MockMatchRepo) {
-				r.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
+				r.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}, mock.Anything).Return(assert.AnError)
 			},
 			wantErr: "finalize ranked match",
 		},
 		{
 			name: "casual success",
 			setup: func(r *MockMatchRepo) {
-				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(nil)
+				r.On("RecordCasualMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}).Return(nil)
 			},
 		},
 		{
 			name: "casual failure is reported",
 			setup: func(r *MockMatchRepo) {
-				r.On("RecordCasualMatch", mock.Anything, "Mock", []uint{1}).Return(assert.AnError)
+				r.On("RecordCasualMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}).Return(assert.AnError)
 			},
 			wantErr: "record casual match",
 		},
@@ -636,9 +667,9 @@ func TestLobby_RecordFinishedMatch(t *testing.T) {
 			t.Parallel()
 			repo := new(MockMatchRepo)
 			tt.setup(repo)
-			m := NewManager(context.Background(), repo)
+			m := newTestManager(t, repo)
 
-			err := m.recordFinishedMatch(context.Background(), "Mock", []uint{1}, nil, tt.ranked)
+			err := m.recordFinishedMatch(context.Background(), gameRef("Mock"), []uuid.UUID{testutil.UID(1)}, nil, tt.ranked)
 
 			if tt.wantErr != "" {
 				require.ErrorContains(t, err, tt.wantErr)
@@ -683,15 +714,20 @@ func TestLobby_FailedMatchWriteIsLoggedLoudly(t *testing.T) {
 	t.Cleanup(func() { slog.SetDefault(original) })
 
 	repo := new(MockMatchRepo)
-	repo.On("FinalizeRankedMatch", mock.Anything, "Mock", []uint{1}, mock.Anything).Return(assert.AnError)
-	m := NewManager(context.Background(), repo)
-	l, err := m.New(mockPlayer("p1", 1), WithCardGame("Mock"), WithRanked(true))
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}, mock.Anything).Return(assert.AnError)
+	m := newTestManager(t, repo)
+	l, err := m.New(mockPlayer("p1", testutil.UID(1)), WithCardGame("Mock"), WithRanked(true))
 	require.NoError(t, err)
 
-	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", 1)}, deck.StandardDeck())
+	engine := game.NewEngine(&stubRules{}, []*game.Player{mockPlayer("p1", testutil.UID(1))}, deck.StandardDeck())
 	t.Cleanup(engine.Close)
 
-	l.requestFinalize(engine, game.EndReasonWin)
+	l.requestFinalize(engine, game.EndReasonWin, finalizeRequest{
+		lobbyCode: l.code,
+		game:      gameRef("Mock"),
+		isRanked:  true,
+		startedAt: time.Now(),
+	})
 
 	assert.Contains(t, logged.String(), "failed to record finished match",
 		"a lost match result has to be shouted about")
@@ -718,7 +754,7 @@ func TestLobby_FinishedGameReopensTheTableForSettings(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 2)
 	leader := l.Leader()
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	require.NoError(t, l.ToggleReady(leader, registry))
@@ -749,7 +785,7 @@ func TestLobby_InheritedLeaderCanChangeSettingsAfterTheGameEnds(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 2)
 	original := l.Leader()
-	inheritor := mockPlayer("p2", 2)
+	inheritor := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), inheritor))
 
 	require.NoError(t, l.ToggleReady(original, registry))
@@ -773,7 +809,7 @@ func TestLobby_InheritedLeaderCanChangeSettingsAfterTheGameEnds(t *testing.T) {
 func TestLobby_ReleaseFinishedGameIsANoOpOtherwise(t *testing.T) {
 	t.Parallel()
 	m, l, registry := newTestLobby(t, 2)
-	guest := mockPlayer("p2", 2)
+	guest := mockPlayer("p2", testutil.UID(2))
 	require.NoError(t, m.JoinLobbyByCode(l.Code(), guest))
 
 	require.NotPanics(t, l.releaseFinishedGame)
@@ -792,4 +828,49 @@ func TestLobby_ReleaseFinishedGameIsANoOpOtherwise(t *testing.T) {
 	l.releaseFinishedGame()
 	require.NotPanics(t, l.releaseFinishedGame)
 	assert.True(t, l.IsWaiting())
+}
+
+// The watcher runs after the game ends, by which point the lobby may have reopened
+// and been reconfigured. The finished match must still be recorded as the game that
+// was actually played: snapshotting at finalize time wrote a ranked result to the
+// casual path, or onto another game's ladder entirely.
+func TestLobby_FinalizeUsesTheSettingsTheGameStartedWith(t *testing.T) {
+	t.Parallel()
+	repo := new(MockMatchRepo)
+	done := make(chan struct{})
+	repo.On("FinalizeRankedMatch", mock.Anything, gameRef("Mock"), []uuid.UUID{testutil.UID(1)}, mock.Anything).
+		Return(nil).Run(func(mock.Arguments) { close(done) })
+
+	m := newTestManager(t, repo)
+	leader := mockPlayer("p1", testutil.UID(1))
+	l, err := m.New(leader, WithCardGame("Mock"), WithRanked(true))
+	require.NoError(t, err)
+
+	registry := game.NewRegistry()
+	registerGame(registry, "Mock", stubRules{})
+	require.NoError(t, l.ToggleReady(leader, registry))
+
+	l.mu.RLock()
+	engine := l.activeEngine
+	l.mu.RUnlock()
+	require.NotNil(t, engine)
+	t.Cleanup(engine.Close)
+
+	// The table reopens and is reconfigured while the finished game is still on its
+	// way to the watcher.
+	l.mu.Lock()
+	l.options.isRanked = false
+	l.options.cardGame = "Something Else"
+	l.mu.Unlock()
+
+	engine.WithState(func(state *game.State) { state.Phase = game.Finished })
+	engine.Broadcaster().Broadcast(game.Event{Type: game.EventGameEnded, Reason: game.EndReasonWin})
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the match was never finalized as the ranked Mock game it was")
+	}
+	repo.AssertExpectations(t)
+	repo.AssertNotCalled(t, "RecordCasualMatch", mock.Anything, mock.Anything, mock.Anything)
 }

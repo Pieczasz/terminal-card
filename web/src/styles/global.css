@@ -247,3 +247,251 @@
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/*
+ * ---------------------------------------------------------------- game cards ---
+ *
+ * Hover/focus choreography for the fanned hands on the games grid.
+ *
+ * It lives here rather than in CardFan.astro for two reasons: the trigger is a hover
+ * on the surrounding card, which a scoped style in the child component cannot select,
+ * and every rule moves `.card-face` - the inner element - so it composes with the
+ * resting fan rotation the outer element carries as an inline style.
+ *
+ * Only transform is animated, and nothing here changes a box's size, so a hover can
+ * neither shift the layout nor cost a paint of the rest of the grid. `--rot` and
+ * `--i` come from CardFan: the card's resting angle and its index in the hand, which
+ * is what lets a flavour square the fan up (rotate the angle back out) or stagger.
+ */
+.fan .card-face {
+  transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition-delay: calc(var(--i) * 35ms);
+}
+
+/* Idle: one card per hand breathes, not all of them. A whole grid of permanently
+   animating elements is a compositor cost with nothing to show for it. */
+.fan > :last-child .card-face {
+  animation: fan-idle 5.5s ease-in-out infinite;
+}
+
+@keyframes fan-idle {
+  0%,
+  100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  50% {
+    transform: translateY(-0.22ch) rotate(1.4deg);
+  }
+}
+
+/* An animation outranks a plain declaration, so the idle sway has to stop before a
+   hover transform can be seen at all. Uno is excluded because its hover *is* an
+   animation, and this rule is the more specific of the two. */
+.game-card:is(:hover, :focus-within)
+  .fan:not([data-flavour="uno"])
+  > :last-child
+  .card-face {
+  animation: none;
+}
+
+.game-card:is(:hover, :focus-within) {
+  /* Crazy Eights - a riffle: the hand springs open and the middle card rides up. */
+  & [data-flavour="eights"] .card-face {
+    transform: translate(-0.7ch, -0.3ch) rotate(-7deg);
+  }
+  & [data-flavour="eights"] > :nth-child(2) .card-face {
+    transform: translateY(-1ch);
+  }
+  & [data-flavour="eights"] > :nth-child(3) .card-face {
+    transform: translate(0.7ch, -0.3ch) rotate(7deg);
+  }
+
+  /* Poker - the fan squares up and the cards stack like chips. Rotating the resting
+     angle back out is what turns a fan into a pile. */
+  & [data-flavour="poker"] .card-face {
+    transform: rotate(calc(-1 * var(--rot))) translate(calc(var(--i) * -0.5ch), calc(var(--i) * -0.4ch));
+  }
+
+  /* Uno - the four colours pop in sequence. The suits are already the Uno palette
+     (see the colour aliases in internal/game/uno/deck.go), so the stagger is the
+     colour cycle. */
+  & [data-flavour="uno"] .card-face {
+    animation: uno-pop 1.5s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.16s);
+  }
+
+  /* Hearts - the hearts lift, and the queen of spades ducks away from them. */
+  & [data-flavour="hearts"] .card-face {
+    transform: translateY(-1.1ch) scale(1.06);
+  }
+  & [data-flavour="hearts"] > :nth-child(2) .card-face {
+    transform: translateY(0.5ch) rotate(-9deg);
+  }
+
+  /* Gin Rummy - three cards close up into a meld. */
+  & [data-flavour="gin"] .card-face {
+    transform: rotate(calc(-1 * var(--rot))) translateX(calc(var(--i) * -0.9ch));
+  }
+}
+
+@keyframes uno-pop {
+  0%,
+  55%,
+  100% {
+    transform: translateY(0);
+  }
+  25% {
+    transform: translateY(-0.9ch);
+  }
+}
+
+/* The Uno colours as internal/game/uno/deck.go maps them onto the four suits:
+   Hearts=red, Diamonds=yellow, Clubs=green, Spades=blue. Static paint, so there is
+   no animation here to switch off for reduced motion. */
+[data-flavour="uno"] > :nth-child(1) .suit {
+  color: var(--color-suit-red);
+}
+[data-flavour="uno"] > :nth-child(2) .suit {
+  color: var(--color-accent);
+}
+[data-flavour="uno"] > :nth-child(3) .suit {
+  color: var(--color-ok);
+}
+[data-flavour="uno"] > :nth-child(4) .suit {
+  color: var(--color-cyan);
+}
+
+/* !important because the flavour rules above are per-card (nth-child), so they
+   outrank a plain reset - the same reason the global reduced-motion block uses it. */
+@media (prefers-reduced-motion: reduce) {
+  .fan .card-face,
+  .game-card:is(:hover, :focus-within) .fan .card-face {
+    transition: none !important;
+    animation: none !important;
+    transform: none !important;
+  }
+}
+
+/*
+ * ---------------------------------------------------------------------- prose ---
+ *
+ * Long-form body copy: blog posts and the legal pages. Markdown output has no classes
+ * to hang utilities on, and the three pages that need this would otherwise each carry
+ * their own copy, so it is one definition here rather than a typography plugin.
+ */
+.prose {
+  color: var(--color-muted);
+  font-size: 1rem;
+}
+
+.prose h2 {
+  color: var(--color-heading);
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin-block: 6ch 2ch;
+}
+
+.prose h3 {
+  color: var(--color-fg);
+  font-size: 1rem;
+  font-weight: 700;
+  margin-block: 4ch 1.5ch;
+}
+
+.prose p,
+.prose ul,
+.prose ol,
+.prose table {
+  margin-bottom: 2.5ch;
+  text-wrap: pretty;
+}
+
+.prose ul {
+  list-style: none;
+  padding-left: 0;
+}
+
+.prose ul li {
+  position: relative;
+  padding-left: 3ch;
+  margin-bottom: 0.6ch;
+}
+
+.prose ul li::before {
+  content: "-";
+  position: absolute;
+  left: 1ch;
+  color: var(--color-accent);
+}
+
+.prose ol {
+  padding-left: 3ch;
+}
+
+/* Markdown links land inside body copy, so they need a non-colour cue too. */
+.prose a {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-decoration-color: var(--color-frame-lit);
+  text-underline-offset: 4px;
+}
+
+.prose a:hover {
+  text-decoration-color: var(--color-accent);
+}
+
+.prose code {
+  color: var(--color-accent);
+  font-size: 0.92em;
+}
+
+.prose pre {
+  border: 1px solid var(--color-frame);
+  padding: 2.5ch;
+  overflow-x: auto;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  margin-bottom: 3ch;
+}
+
+.prose pre code {
+  color: var(--color-muted);
+}
+
+.prose blockquote {
+  border-left: 2px solid var(--color-frame-lit);
+  padding-left: 3ch;
+  margin: 0 0 2.5ch;
+  color: var(--color-dim);
+}
+
+.prose hr {
+  border: 0;
+  border-top: 1px dotted var(--color-frame);
+  margin-block: 5ch;
+}
+
+.prose table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+  display: block;
+  overflow-x: auto;
+}
+
+.prose th,
+.prose td {
+  border: 1px solid var(--color-frame);
+  padding: 1ch 1.5ch;
+  text-align: left;
+  vertical-align: top;
+}
+
+.prose th {
+  color: var(--color-fg);
+  font-weight: 700;
+}
+
+.prose strong {
+  color: var(--color-fg);
+}

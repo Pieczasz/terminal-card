@@ -3,6 +3,7 @@ package observability
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"sync/atomic"
 	"time"
@@ -31,9 +32,10 @@ func mustCounter(name, desc string) metric.Int64Counter {
 	return c
 }
 
-func mustHistogram(name, desc, unit string) metric.Float64Histogram {
+// Every histogram here measures seconds, so the unit is not a parameter.
+func mustHistogram(name, desc string) metric.Float64Histogram {
 	h, err := meter.Float64Histogram(name,
-		metric.WithDescription(desc), metric.WithUnit(unit))
+		metric.WithDescription(desc), metric.WithUnit("s"))
 	if err != nil {
 		panic(fmt.Sprintf("observability: create histogram %s: %v", name, err))
 	}
@@ -47,7 +49,7 @@ var (
 	sshSessions = mustCounter("terminalcard.ssh.sessions",
 		"SSH connection outcomes")
 	sshSessionDuration = mustHistogram("terminalcard.ssh.session.duration",
-		"SSH session duration", "s")
+		"SSH session duration")
 	sshPanics = mustCounter("terminalcard.ssh.session.panics",
 		"Panics recovered during SSH sessions")
 	rateLimitRejects = mustCounter("terminalcard.ratelimit.rejects",
@@ -57,7 +59,7 @@ var (
 	gamesFinished = mustCounter("terminalcard.games.finished",
 		"Games finished")
 	gameDuration = mustHistogram("terminalcard.game.duration",
-		"Wall-clock duration of a game", "s")
+		"Wall-clock duration of a game")
 	turnTimeouts = mustCounter("terminalcard.game.turn.timeouts",
 		"Turns played by the clock instead of the player")
 	idleRemovals = mustCounter("terminalcard.game.players.idle_removed",
@@ -73,7 +75,7 @@ var (
 	lobbyJoins = mustCounter("terminalcard.lobby.joins",
 		"Lobby join attempts by outcome")
 	lobbyTimeToStart = mustHistogram("terminalcard.lobby.time_to_start",
-		"Time from lobby creation to game start", "s")
+		"Time from lobby creation to game start")
 )
 
 func SSHSession(ctx context.Context, outcome string) {
@@ -146,22 +148,17 @@ func LobbyStarted(ctx context.Context, gameType string, waited time.Duration) {
 // RegisterDBStats exposes the connection pool as gauges. The pool is a hard cap
 // that queues silently, so this is the only early warning before saturation.
 func RegisterDBStats(db *sql.DB) error {
-	inUse, err := meter.Int64ObservableGauge("db.client.connections.used",
+	inUse, errUsed := meter.Int64ObservableGauge("db.client.connections.used",
 		metric.WithDescription("Connections currently in use"))
-	if err != nil {
-		return fmt.Errorf("create pool gauge: %w", err)
-	}
-	idle, err := meter.Int64ObservableGauge("db.client.connections.idle",
+	idle, errIdle := meter.Int64ObservableGauge("db.client.connections.idle",
 		metric.WithDescription("Idle connections in the pool"))
-	if err != nil {
-		return fmt.Errorf("create idle gauge: %w", err)
-	}
-	waits, err := meter.Int64ObservableCounter("db.client.connections.wait_count",
+	waits, errWaits := meter.Int64ObservableCounter("db.client.connections.wait_count",
 		metric.WithDescription("Times a query waited for a free connection"))
-	if err != nil {
-		return fmt.Errorf("create wait counter: %w", err)
+	if err := errors.Join(errUsed, errIdle, errWaits); err != nil {
+		return fmt.Errorf("create pool instruments: %w", err)
 	}
-	_, err = meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
+
+	_, err := meter.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		s := db.Stats()
 		o.ObserveInt64(inUse, int64(s.InUse))
 		o.ObserveInt64(idle, int64(s.Idle))

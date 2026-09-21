@@ -48,16 +48,22 @@ func renderTopBand(g router.GlobalContext, top string) string {
 	return styles.Clamp(g.Width, 0, lg.NewStyle().MarginTop(1).Render(top))
 }
 
+// The key hints survive every size. A small terminal loses the margins around them,
+// never the line itself: 80x24 is the commonest terminal there is, and dropping the
+// one row that names "d: draw" there left the game unplayable for a new player while
+// blank rows sat above it in the middle band.
 func renderBottomBand(g router.GlobalContext, player, hints string) string {
+	// Wrapped to the terminal, not clamped to it: the key line is longer than 64
+	// columns, and cutting it would both hide the last key and drag every row of the
+	// hand above it sideways, since the band is centred on its widest line.
+	hintLine := g.Theme.Dim.Width(g.Width).Align(lg.Center).Render(hints)
+
 	var band string
-	switch {
-	case IsSuperCompact(g.Width, g.Height):
-		band = player
-	case IsCompact(g.Width, g.Height):
-		band = lg.JoinVertical(lg.Center, player, g.Theme.Dim.Render(hints))
-	default:
+	if IsCompact(g.Width, g.Height) {
+		band = lg.JoinVertical(lg.Center, player, hintLine)
+	} else {
 		band = lg.NewStyle().MarginBottom(1).Render(
-			lg.JoinVertical(lg.Center, player, g.Theme.Dim.MarginTop(1).Render(hints)),
+			lg.JoinVertical(lg.Center, player, lg.NewStyle().MarginTop(1).Render(hintLine)),
 		)
 	}
 	return styles.Clamp(g.Width, 0, band)

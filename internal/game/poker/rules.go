@@ -28,6 +28,7 @@ var (
 	_ game.PlayerLeaveHandler  = (*Rules)(nil)
 	_ game.TurnTimeoutHandler  = (*Rules)(nil)
 	_ game.TurnDurationHandler = (*Rules)(nil)
+	_ game.StandingScorer      = (*Rules)(nil)
 )
 
 // TimeoutAction never risks chips on an absent player's behalf: it checks when that
@@ -146,10 +147,7 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	extra.handStartChips = chipsInPlay(extra)
 
 	state.Deck = deck.New(r.InitialDeck())
-	if err := state.Deck.Shuffle(); err != nil {
-		slog.Error("poker shuffle failed", "hand", extra.HandNumber, "error", err)
-		return fmt.Errorf("shuffle deck: %w", err)
-	}
+	state.Deck.Shuffle()
 	if err := dealHoleCards(state, extra, holeCards); err != nil {
 		return err
 	}
@@ -165,13 +163,12 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	setBlinds(state, extra, dealer, headsUp)
 	postBlind(extra, state.Players[extra.SBIndex], extra.SmallBlind)
 	postBlind(extra, state.Players[extra.BBIndex], extra.BigBlind)
-	// Deviation worth naming: a big blind too short to post in full lowers the
-	// bring-in, because CurrentBet follows what was actually posted. A casino keeps
-	// the bring-in at the full big blind and treats the shortfall as dead money.
-	extra.CurrentBet = max(
-		extra.PlayerBets[state.Players[extra.SBIndex].ID],
-		extra.PlayerBets[state.Players[extra.BBIndex].ID],
-	)
+	// A blind too short to post in full is all-in for less; the bring-in stays at the
+	// full big blind and the shortfall is dead money, so the opening bet is the blind
+	// rather than what was actually posted. Following the posted amount would drop the
+	// opening bet below the blind and, since MinRaise is measured from it, drag the
+	// first legal raise under a full blind with it.
+	extra.CurrentBet = extra.BigBlind
 
 	first := firstToActPreflop(state, extra, headsUp)
 	if first < 0 {
@@ -307,9 +304,21 @@ func finishHand(state *game.State, extra *State) {
 
 // checkChipConservation is a money-bug tripwire. Chips only ever move between a stack
 // and the pool, so once a hand is closed out the two together must still add up to
-// what the table had when the hand was dealt. A mismatch means a pot paid out more or
-// less than it collected, which is worth a log line even though it is too late to fix.
+// what the table had when the hand was dealt, and every one of them must be back in a
+// stack. A mismatch means a pot paid out more or less than it collected, which is
+// worth a log line even though it is too late to fix.
+//
+// The pool is checked separately because the total cannot see it: chipsInPlay counts
+// MainPool, so a hand that ends without paying a pot out balances, and the next
+// resetForHand quietly zeroes the stranded chips.
 func checkChipConservation(extra *State) {
+	if extra.MainPool != 0 {
+		slog.Error("poker hand finished with chips still in the pot",
+			"hand", extra.HandNumber,
+			"phase", extra.Phase.String(),
+			"pool", extra.MainPool,
+		)
+	}
 	if extra.handStartChips == 0 {
 		return // a hand-shaped State assembled by hand, not dealt by beginHand
 	}
@@ -320,7 +329,7 @@ func checkChipConservation(extra *State) {
 	slog.Error("poker chip conservation broken",
 		"hand", extra.HandNumber,
 		"phase", extra.Phase.String(),
-		"delta", int64(total)-int64(extra.handStartChips),
+		"delta", int64(total)-int64(extra.handStartChips), //nolint:gosec // G115: chip totals are far below 2^63
 	)
 }
 
@@ -349,6 +358,29 @@ func (r *Rules) Standings(state *game.State) []*game.Player {
 		return nil
 	}
 	return rankPlayers(state, extra)
+}
+
+// StandingScore is the group a player lands in once resultLevel stops separating
+// them - two players who busted on the same hand are a draw, not places i and i+1
+// split by whose ID sorts first. Only equality is read, so the group index is enough;
+// chips alone would not be, since it would tie two busts from different hands.
+func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return 0
+	}
+	ranked := rankPlayers(state, extra)
+	level := resultLevel(state, extra)
+	group := 0
+	for i, q := range ranked {
+		if i > 0 && level(ranked[i-1], q) != 0 {
+			group++
+		}
+		if q.ID == p.ID {
+			return group
+		}
+	}
+	return group
 }
 
 // OnPlayerLeave folds the departing player. Turn and seat resolution runs in
@@ -389,22 +421,23 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 		return
 	}
 
+	// A hand is only ever handed to a seat while two players still contest it, and
+	// one leave drops that by at most one, so the pot always has a claimant here.
 	live := contenders(state, extra)
-	if len(live) <= 1 {
-		if len(live) == 1 {
-			awardUncontested(extra, live[0])
-			extra.Winners = live
-		}
+	if len(live) == 1 {
+		awardUncontested(extra, live[0])
+		extra.Winners = live
 		finishHand(state, extra)
 		return
 	}
 
-	if state.CurrentTurn >= n {
-		state.CurrentTurn = 0
-	}
-
 	if bettingRoundComplete(state, extra) {
 		if err := settleAndAdvance(state, extra); err != nil {
+			// Nothing can be dealt or shown down, so the hand is unwound rather than
+			// closed over a pot no showdown will ever award.
+			slog.Error("poker cannot finish the hand after a leave",
+				"hand", extra.HandNumber, "phase", extra.Phase.String(), "error", err)
+			refundContributions(extra)
 			finishHand(state, extra)
 			return
 		}
@@ -418,11 +451,11 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 		return
 	}
 
+	// The round is unfinished, so somebody still owes an action - the same predicate
+	// nextToAct searches on, which is why it cannot come back empty.
 	idx := state.CurrentTurn
 	if cannotAct(extra, state.Players[idx].ID) {
-		if next := nextToAct(state, extra, idx); next >= 0 {
-			idx = next
-		}
+		idx = nextToAct(state, extra, idx)
 	}
 	state.CurrentTurn = idx
 	state.OverrideNextTurn = &idx
@@ -509,7 +542,7 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		}
 		return nil
 	case ActionRaiseTo:
-		return validateRaiseTo(extra, p, action.Amount)
+		return validateRaiseTo(state, extra, p, action.Amount)
 	case ActionAllIn:
 		if extra.PlayerChips[p.ID] == 0 {
 			return errors.New("no chips to go all-in")
@@ -546,12 +579,15 @@ func checkBettingReopened(extra *State, p *game.Player) error {
 	return nil
 }
 
-func validateRaiseTo(extra *State, p *game.Player, amount uint) error {
+func validateRaiseTo(state *game.State, extra *State, p *game.Player, amount uint) error {
 	if err := checkBettingReopened(extra, p); err != nil {
 		return err
 	}
 	if amount <= extra.CurrentBet {
 		return errors.New("raise must be above current bet")
+	}
+	if callable := largestCallableBet(state, extra, p); amount > callable {
+		return fmt.Errorf("no opponent can call more than %d", callable)
 	}
 	additional := amount - extra.PlayerBets[p.ID]
 	if additional > extra.PlayerChips[p.ID] {
@@ -562,6 +598,22 @@ func validateRaiseTo(extra *State, p *game.Player, amount uint) error {
 		return fmt.Errorf("minimum raise is %d", extra.MinRaise)
 	}
 	return nil
+}
+
+// largestCallableBet is the highest street total any opponent still in the hand could
+// match: their own effective stack, what they already have out plus what is behind it.
+// Betting past it is chips nobody can call, and the showdown hands them straight back,
+// so the raise is refused rather than staged - a slider that stops at the effective
+// stack is what every client does with the same situation.
+func largestCallableBet(state *game.State, extra *State, p *game.Player) uint {
+	var best uint
+	for _, o := range contenders(state, extra) {
+		if o.ID == p.ID {
+			continue
+		}
+		best = max(best, extra.PlayerBets[o.ID]+extra.PlayerChips[o.ID])
+	}
+	return best
 }
 
 func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
@@ -663,14 +715,12 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 		return nil
 	}
 
+	// Only a live player is ever given the turn, and a fold takes one live player out
+	// of a field of at least two, so the pot always still has a claimant.
 	live := contenders(state, extra)
 	if len(live) == 1 {
 		awardUncontested(extra, live[0])
 		extra.Winners = []*game.Player{live[0]}
-		finishHand(state, extra)
-		return nil
-	}
-	if len(live) == 0 {
 		finishHand(state, extra)
 		return nil
 	}
@@ -684,6 +734,9 @@ func (r *Rules) afterBettingAction(state *game.State, extra *State) error {
 	}
 
 	if err := settleAndAdvance(state, extra); err != nil {
+		// The engine ends the match on this error, so the pot has to go back to the
+		// stacks the standings are read from instead of dying with the hand.
+		refundContributions(extra)
 		return err
 	}
 	if extra.HandComplete {
@@ -716,3 +769,7 @@ func activePlayers(state *game.State, extra *State) []*game.Player {
 	}
 	return out
 }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)

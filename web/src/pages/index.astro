@@ -9,11 +9,81 @@ import Base from "../layouts/Base.astro";
 const H2 =
   "text-[clamp(1.2rem,2.4vw+0.5rem,2.1rem)] font-bold leading-[1.25] text-balance";
 const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
+
+/*
+ * The five games, in the order internal/catalog/catalog.go declares them. Seat counts
+ * are each rules set's MinPlayers/MaxPlayers; the blurbs describe what that rules file
+ * actually implements. Adding a game to the catalog means adding it here too - the
+ * site is static and has no way to read the registry.
+ */
+const games = [
+  {
+    name: "CRAZY EIGHTS",
+    meta: "2-6 players",
+    flavour: "eights" as const,
+    blurb:
+      "Match the suit or the rank. Eights are wild - play one and name the suit you want next.",
+    cards: [
+      { rank: "8", suit: "\u2660" as const },
+      { rank: "Q", suit: "\u2665" as const },
+      { rank: "3", suit: "\u2666" as const },
+    ],
+  },
+  {
+    name: "POKER",
+    meta: "2-9 seats",
+    flavour: "poker" as const,
+    blurb:
+      "No-limit Texas Hold'em, ten hands to a match. Blinds, side pots and a real showdown; chips carry across hands and the biggest stack wins.",
+    cards: [
+      { rank: "A", suit: "\u2660" as const },
+      { rank: "K", suit: "\u2665" as const },
+      { rank: "7", suit: "\u2663" as const },
+    ],
+  },
+  {
+    name: "UNO",
+    meta: "2-10 players",
+    flavour: "uno" as const,
+    blurb:
+      "The full 108-card deck. Skips, reverses and draw twos, and wilds that name the colour everyone plays next.",
+    cards: [
+      { rank: "7", suit: "\u2665" as const },
+      { rank: "2", suit: "\u2666" as const },
+      { rank: "9", suit: "\u2663" as const },
+      { rank: "4", suit: "\u2660" as const },
+    ],
+  },
+  {
+    name: "HEARTS",
+    meta: "4 players",
+    flavour: "hearts" as const,
+    blurb:
+      "Exactly four seats. Pass three, duck every heart and the queen of spades - or take all of them and shoot the moon. Lowest score when someone hits 100.",
+    cards: [
+      { rank: "2", suit: "\u2665" as const },
+      { rank: "Q", suit: "\u2660" as const },
+      { rank: "A", suit: "\u2665" as const },
+    ],
+  },
+  {
+    name: "GIN RUMMY",
+    meta: "2 players",
+    flavour: "gin" as const,
+    blurb:
+      "Head to head. Draw, discard, build runs and sets; knock on ten deadwood or less, or go gin for the bonus. First to 100 takes the match.",
+    cards: [
+      { rank: "7", suit: "\u2663" as const },
+      { rank: "8", suit: "\u2663" as const },
+      { rank: "9", suit: "\u2663" as const },
+    ],
+  },
+];
 ---
 
 <Base
-  title="tty.cards - play poker and crazy eights over ssh"
-  description="Card games in your terminal. Poker and Crazy Eights over ssh with Elo ranking - no download, no account, no browser. Free and open source."
+  title="tty.cards - play card games over ssh"
+  description="Five card games in your terminal. Poker, Crazy Eights, Uno, Hearts and Gin Rummy over ssh with Elo ranking - no download, no account, no browser. Free and open source."
   appSchema
 >
   <!-- ------------------------------------------------------------- hero --- -->
@@ -52,48 +122,33 @@ const BLOCK = "shell mt-[clamp(10ch,11vw,16ch)]";
 
   <!-- ------------------------------------------------------------ games --- -->
   <section class={BLOCK} id="games" data-rise>
-    <h2 class={`${H2} mb-gutter`}>Two games so far.</h2>
+    <h2 class={`${H2} mb-gutter`}>Five games.</h2>
+
+    <p class="mb-gap max-w-[62ch] text-[0.97rem] text-muted text-pretty">
+      Every lobby starts casual, so you can learn a game for nothing; switch it to
+      ranked and the result moves your Elo for that game alone. You get 30 seconds a
+      turn - the rules play a safe move if it runs out, and a seat that misses three
+      in a row is given up. Drop your connection mid-hand and you have 90 seconds to
+      come back to the same table.
+    </p>
 
     <div class="grid grid-cols-[repeat(auto-fit,minmax(38ch,1fr))] gap-gap">
-      <TerminalWindow title="CRAZY EIGHTS" meta="2-6 players" tone="gold">
-        <div
-          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
-        >
-          <p
-            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
-          >
-            Match the suit or the rank. Eights are wild - play one and name the
-            suit you want next.
-          </p>
-          <CardFan
-            cards={[
-              { rank: "8", suit: "♠" },
-              { rank: "Q", suit: "♥" },
-              { rank: "3", suit: "♦" },
-            ]}
-          />
-        </div>
-      </TerminalWindow>
-
-      <TerminalWindow title="TEXAS HOLD'EM" meta="2-9 seats" tone="gold">
-        <div
-          class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel"
-        >
-          <p
-            class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty"
-          >
-            No-limit. Blinds, side pots, and a real showdown. Chips are plain
-            numbers.
-          </p>
-          <CardFan
-            cards={[
-              { rank: "A", suit: "♠" },
-              { rank: "K", suit: "♥" },
-              { rank: "7", suit: "♣" },
-            ]}
-          />
-        </div>
-      </TerminalWindow>
+      {
+        games.map((g) => (
+          <div class="game-card">
+            <TerminalWindow title={g.name} meta={g.meta} tone="gold">
+              <div class="flex flex-wrap items-start justify-between gap-x-gutter gap-y-panel">
+                <p class="max-w-[36ch] min-w-[22ch] flex-1 text-[0.97rem] text-muted text-pretty">
+                  {g.blurb}
+                </p>
+                {/* focusable: the fan's flourish is the only thing a hover does here,
+                    so it needs to be reachable without a pointer. */}
+                <CardFan cards={g.cards} flavour={g.flavour} focusable />
+              </div>
+            </TerminalWindow>
+          </div>
+        ))
+      }
     </div>
   </section>
 

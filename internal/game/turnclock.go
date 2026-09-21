@@ -3,6 +3,7 @@ package game
 import (
 	"errors"
 	"log/slog"
+	"runtime/debug"
 	"time"
 )
 
@@ -61,6 +62,12 @@ func (e *Engine) MissedTurns(playerID string) int {
 }
 
 func (e *Engine) onTurnTimeout(seq uint64) {
+	// This is a time.AfterFunc goroutine: nothing above it recovers, so a panic in a
+	// rules hook here would take the whole process down: every table, for one game's
+	// defect. It gets the same treatment as a rules error from SubmitAction, so this
+	// table ends unrated and the rest keep playing.
+	defer e.recoverRulesPanic()
+
 	playerID, action, takeSeat := e.resolveTurnTimeout(seq)
 	if playerID == "" {
 		return
@@ -71,7 +78,6 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 		return
 	}
 
-	e.broadcaster.Broadcast(Event{Type: EventTurnTimedOut, PlayerID: playerID})
 	err := e.submitTimedOutAction(playerID, action, seq)
 	switch {
 	case err == nil, errors.Is(err, errStaleTurn):
@@ -84,6 +90,22 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 		slog.Warn("auto-play for an expired turn was refused",
 			"error", err, "player_id", playerID, "action", action.Name())
 		e.rearmTurnTimer()
+	}
+}
+
+// recoverRulesPanic is deferred by the timer goroutine. The locked helpers release
+// e.mu in their own defers while the panic unwinds, so it is safe to take here.
+func (e *Engine) recoverRulesPanic() {
+	r := recover()
+	if r == nil {
+		return
+	}
+	slog.Error("rules panicked during auto-play; ending the table as a rules error",
+		"panic", r, "stack", string(debug.Stack()))
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.state.Phase == Playing && !e.closed {
+		e.finishGameLocked(nil, EndReasonRulesError)
 	}
 }
 
@@ -105,9 +127,13 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		return current.ID, nil, true
 	}
 
-	// armTurnTimerLocked never arms without a TurnTimeoutHandler, and Rules is set once
-	// at construction, so this cannot fail.
-	safe := e.state.Rules.(TurnTimeoutHandler).TimeoutAction(e.state)
+	// armTurnTimerLocked never arms without a TurnTimeoutHandler and Rules is set once
+	// at construction, so a missing handler here is a wiring bug. It falls into the
+	// "no safe move" path below - the seat goes, the table does not panic.
+	var safe Action
+	if handler, ok := e.state.Rules.(TurnTimeoutHandler); ok {
+		safe = handler.TimeoutAction(e.state)
+	}
 	if safe == nil {
 		// No safe move: the seat goes rather than the table waiting. A full set of
 		// misses is what makes that re-checkable in removeIfStillIdle. Reaching this in
@@ -117,26 +143,29 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		e.missedTurns[current.ID] = MaxMissedTurns
 		return current.ID, nil, true
 	}
+	// Broadcast under the same lock hold that charged the miss. Outside it, a player
+	// whose action lands in the gap has the miss refunded while the "timed out" they
+	// disproved still ships.
+	e.broadcaster.Broadcast(Event{Type: EventTurnTimedOut, PlayerID: current.ID})
 	return current.ID, safe, false
 }
 
 // removeIfStillIdle re-checks the idle decision and removes under one lock hold.
-// resolveTurnTimeout had to drop the locks before calling here; without this, a
-// player who SubmitAction'd in that window would still be kicked.
+// resolveTurnTimeout had to drop the lock before calling here; without this, a player
+// who SubmitAction'd in that window would still be kicked.
+//
+// turnSeq is the whole re-check: every path that clears a miss count settles the
+// cursor too, and settling the cursor bumps turnSeq. So a sequence that still matches
+// is proof the count was not cleared behind our back, and no separate count check is
+// needed - a rejected action clears nothing and leaves the sequence alone, which is
+// how spamming garbage fails to dodge removal.
 func (e *Engine) removeIfStillIdle(seq uint64, playerID string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
 	if seq != e.turnSeq {
-		// The cursor moved on, so a newer timer already owns the turn.
-		return
-	}
-	if e.missedTurns[playerID] < MaxMissedTurns {
-		// They acted inside the window we had to drop the locks for. The timer that
-		// brought us here has already fired, and a rejected action returns without
-		// settling the cursor, so nothing else will re-arm: do it here or the table
-		// sits on this seat with a dead clock forever.
-		e.armTurnTimerLocked()
+		// They acted (or the table moved on) inside the window we had to drop the
+		// lock for: a newer timer already owns the turn.
 		return
 	}
 	// EventPlayerIdle ends the player's ssh session through the view, so this is the

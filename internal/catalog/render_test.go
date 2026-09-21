@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"fmt"
+	"path"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -18,6 +20,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	lg "charm.land/lipgloss/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -78,13 +81,13 @@ func TestGameViews_NeverShowAnotherSeatsCards(t *testing.T) {
 			rules := entry.Rules()
 			engine, m := seatedEngineAndView(t, entry, rules.MinPlayers(), 120, 40)
 
-			hero := heroHand(t, engine, "1")
+			hero := heroHand(t, engine, testutil.SeatID(1))
 			out := stripANSI(m.View().Content)
 
 			var others []deck.Card
 			engine.WithState(func(state *game.State) {
 				for _, p := range state.Players {
-					if p == nil || p.ID == "1" {
+					if p == nil || p.ID == testutil.SeatID(1) {
 						continue
 					}
 					others = append(others, p.Cards...)
@@ -140,22 +143,39 @@ func seatedEngineAndView(t *testing.T, entry Entry, seats, width, height int) (*
 	players := make([]*game.Player, 0, seats)
 	for i := range seats {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
-			UserID: uint(i + 1),
-			Name:   fmt.Sprintf("player%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1),
+			Name: fmt.Sprintf("player%d", i+1),
 		})
 	}
-	engine := game.NewEngine(entry.Rules(), players, deck.StandardDeck())
+	rules := entry.Rules()
+	engine := game.NewEngine(rules, players, deck.StandardDeck())
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
 	global := router.GlobalContext{
-		User:   &db.User{ID: 1, Username: "player1"},
+		User:   &db.User{ID: testutil.UID(1), Username: "player1"},
 		Theme:  styles.NewTheme(true),
 		Width:  width,
 		Height: height,
 	}
-	return engine, entry.View(global, engine)
+	model := entry.View(global, engine)
+	requireSameGame(t, rules, model)
+	return engine, model
+}
+
+// requireSameGame is the one check that catches a catalog entry whose Rules and View
+// belong to different games. Copy the Hearts entry, change only Rules, and every
+// other test still passes: the view renders a table it has no state for, so it prints
+// almost nothing and asserts nothing. The packages are named for the game on both
+// sides of the tree (internal/game/<g> and internal/tui/views/game/<g>), so comparing
+// the leaf is enough - and it is the convention a new game has to follow anyway.
+func requireSameGame(t *testing.T, rules game.Rules, model tea.Model) {
+	t.Helper()
+	rulesPkg := path.Base(reflect.TypeOf(rules).Elem().PkgPath())
+	viewPkg := path.Base(reflect.TypeOf(model).Elem().PkgPath())
+
+	require.Equal(t, rulesPkg, viewPkg,
+		"this catalog entry pairs the %s rules with the %s view", rulesPkg, viewPkg)
 }
 
 // setHand overwrites the hand the view has cached, which is the only way to render a

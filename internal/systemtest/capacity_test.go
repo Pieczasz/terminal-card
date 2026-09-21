@@ -9,6 +9,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/lobby"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -25,10 +26,20 @@ func heapInUse() uint64 {
 //
 //nolint:paralleltest // a shared heap measurement cannot run alongside other tests
 func TestCapacity_MemoryPerTable(t *testing.T) {
+	// A heap measurement is a sizing exercise, not a gate: it needs the process to
+	// itself, it allocates 200 live tables, and its answer moves with the allocator.
+	// -short is what CI runs on every push, and this belongs nowhere near it.
+	if testing.Short() {
+		t.Skip("heap measurement; run without -short")
+	}
+
 	const tables = 200
 	const seatsPerTable = 6
 
-	manager := lobby.NewManager(context.Background(), nil)
+	// A real repository, not nil: a nil db.MatchRepository is a shape the server can
+	// never have, so measuring against one measures something that does not exist -
+	// and any path that starts touching it turns this into a nil dereference.
+	manager := lobby.NewManager(context.Background(), newRankedFinalizeRecorder())
 	registry := realRegistry(t)
 
 	warm := openTable(t, manager, registry, 0, seatsPerTable)
@@ -77,5 +88,5 @@ func openTable(t *testing.T, manager *lobby.Manager, registry *game.Registry, id
 
 func benchPlayer(table, seat int) *game.Player {
 	id := fmt.Sprintf("t%d-s%d", table, seat)
-	return &game.Player{ID: id, UserID: uint(table*100 + seat + 1), Name: id}
+	return &game.Player{ID: id, UserID: testutil.UID(byte(table*100 + seat + 1)), Name: id}
 }

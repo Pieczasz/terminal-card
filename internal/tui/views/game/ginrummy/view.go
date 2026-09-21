@@ -28,9 +28,12 @@ func (m *Model) View() tea.View {
 	// count says everything a player reads off the other seat.
 	minimalSeat := gameview.IsCompact(m.Global.Width, m.Global.Height)
 
+	// Gin rummy seats one opponent, which the shared top row places and budgets the
+	// same way crazy eights and uno do.
+	top := gameview.RenderOpponentTop(m.Global.Theme, m.Base, m.Global.Width, minimalSeat)
+
 	return tea.NewView(gameview.RenderBands(m.Global,
-		m.renderTopOpponent(minimalSeat), m.renderPlayerSection(), m.keyHints(),
-		m.renderMiddleLayer))
+		top, m.renderPlayerSection(), m.keyHints(), m.renderMiddleLayer))
 }
 
 func (m *Model) keyHints() string {
@@ -42,19 +45,6 @@ func (m *Model) keyHints() string {
 	default:
 		return "esc: leave"
 	}
-}
-
-func (m *Model) renderTopOpponent(minimal bool) string {
-	if len(m.Base.Opponents) == 0 {
-		return ""
-	}
-	o := m.Base.Opponents[0]
-	isTurn := m.Base.CurrentPlayerID == o.ID
-	if minimal {
-		return gameview.RenderOpponentMinimal(m.Global.Theme, o, isTurn)
-	}
-	return gameview.RenderOpponent(m.Global.Theme, o, isTurn, gameview.OrientationTop,
-		m.Base.TurnRemaining, m.Global.Width)
 }
 
 func (m *Model) renderMiddleLayer(height int) string {
@@ -79,11 +69,7 @@ func (m *Model) renderPlayerSection() string {
 	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false,
 		gameview.HandWidth(m.Global.Width), gameview.HandRows(m.Global.Height))
 
-	sections := []string{statusView, handView}
-	if m.lastActionErr != nil {
-		sections = append(sections, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	return lg.JoinVertical(lg.Center, sections...)
+	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, handView)
 }
 
 func (m *Model) renderHandOver() string {
@@ -93,7 +79,7 @@ func (m *Model) renderHandOver() string {
 		title = m.Global.Theme.Accented.Render("MATCH COMPLETE")
 		hint = "esc / enter -> lobby"
 		if m.Base.Winner != "" {
-			title = m.Global.Theme.Accented.Render("MATCH COMPLETE — " + m.Base.Winner + " wins")
+			title = m.Global.Theme.Accented.Render("MATCH COMPLETE - " + m.Base.Winner + " wins")
 		}
 	}
 
@@ -121,10 +107,10 @@ func (m *Model) renderHandResult() string {
 		return ""
 	}
 	if r.Wall {
-		return lg.NewStyle().Foreground(m.Global.Theme.Warning).Render("WALL — stock exhausted, no score")
+		return lg.NewStyle().Foreground(m.Global.Theme.Warning).Render("WALL - stock exhausted, no score")
 	}
 
-	banner := ""
+	var banner string
 	switch {
 	case r.Gin:
 		banner = m.Global.Theme.SuccessText.Render("GIN!")
@@ -149,7 +135,7 @@ func (m *Model) renderHandResult() string {
 
 func (m *Model) renderMeldGroups(label string, melds [][]deck.Card, laidOff bool) string {
 	if len(melds) == 0 {
-		return m.Global.Theme.Dim.Render(label + ": —")
+		return m.Global.Theme.Dim.Render(label + ": -")
 	}
 	groups := make([]string, 0, len(melds))
 	for _, meld := range melds {
@@ -173,7 +159,7 @@ func (m *Model) renderMeldGroups(label string, melds [][]deck.Card, laidOff bool
 
 func (m *Model) renderCardRow(label string, cards []deck.Card, highlight bool) string {
 	if len(cards) == 0 {
-		return m.Global.Theme.Dim.Render(label + ": —")
+		return m.Global.Theme.Dim.Render(label + ": -")
 	}
 	parts := make([]string, 0, len(cards))
 	for _, card := range cards {

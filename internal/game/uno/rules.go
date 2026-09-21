@@ -32,34 +32,13 @@ func (r *Rules) TimeoutAction(_ *game.State) game.Action {
 func (r *Rules) OnGameStart(state *game.State) error {
 	extra := &State{Direction: 1}
 	state.Extra = extra
-	state.Discard = deck.New([]deck.Card{})
 
 	// Official Uno never starts on a Wild; redraw until a colored card surfaces.
-	var setAside []deck.Card
-	for {
-		card, ok := state.Deck.Draw()
-		if !ok {
-			state.Deck.AddCard(setAside...)
-			return errors.New("not enough cards to start")
-		}
-		if !isWild(card.Rank) {
-			state.Discard.AddCard(card)
-			extra.CurrentColor = card.Suit
-			break
-		}
-		setAside = append(setAside, card)
+	top, err := game.OpenDiscard(state, func(c deck.Card) bool { return !isWild(c.Rank) })
+	if err != nil {
+		return fmt.Errorf("open the uno discard pile: %w", err)
 	}
-	if len(setAside) > 0 {
-		state.Deck.AddCard(setAside...)
-		if err := state.Deck.Shuffle(); err != nil {
-			return fmt.Errorf("reshuffle wilds: %w", err)
-		}
-	}
-
-	top, ok := state.Discard.Peek()
-	if !ok {
-		return errors.New("no opening card on the discard pile")
-	}
+	extra.CurrentColor = top.Suit
 	r.applyOpeningCard(state, extra, top)
 	return nil
 }
@@ -88,6 +67,8 @@ func (r *Rules) applyOpeningCard(state *game.State, extra *State, card deck.Card
 		// this table has no dealer to measure from. The seat the engine picked keeps
 		// it and only the direction flips.
 		extra.Direction = -1
+	default:
+		// A number card (a Wild cannot open, see OnGameStart): the first seat plays.
 	}
 	state.CurrentTurn = first
 	state.OverrideNextTurn = &first
@@ -109,19 +90,22 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 	if !ok {
 		return game.ErrInvalidState
 	}
-	topCard, ok := state.Discard.Peek()
-	if !ok {
-		return errors.New("no cards in discard")
-	}
 
 	switch a := action.(type) {
 	case ActionPlayCard:
+		// Peeked here, not above the switch: a draw is legal whatever is on the pile,
+		// and TimeoutAction plays a draw, so making it depend on the top card is what
+		// would freeze a seat on a board that somehow has no discard.
+		topCard, ok := state.Discard.Peek()
+		if !ok {
+			return errors.New("no cards in discard")
+		}
 		hand := state.Players[state.CurrentTurn].Cards
 		if !slices.Contains(hand, a.Card) {
 			return errors.New("you don't have that card")
 		}
 		if isWild(a.Card.Rank) {
-			if !validColor(a.ChosenColor) {
+			if !deck.IsSuit(a.ChosenColor) {
 				return errors.New("must choose a valid color")
 			}
 			// A Wild Draw Four is the one card the official rules gate on the hand
@@ -273,16 +257,13 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 }
 
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
-	if extra, ok := state.Extra.(*State); ok {
-		// Passes counts turns a draw yielded nothing on, and the returned hand
-		// refills the stock, so the count is stale. Left alone it would also be
-		// measured against a table one seat smaller and read as a deadlock that
-		// never happened.
-		extra.Passes = 0
-		extra.leaverWasOnTurn = state.CurrentTurn == slices.IndexFunc(state.Players,
-			func(p *game.Player) bool { return p != nil && p.ID == playerID })
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return
 	}
-	game.ReturnHandToStock(state, playerID, "uno")
+	extra.leaverWasOnTurn = state.CurrentTurn == slices.IndexFunc(state.Players,
+		func(p *game.Player) bool { return p != nil && p.ID == playerID })
+	game.LeaveShedGame(state, &extra.ShedState, playerID)
 }
 
 // AfterPlayerRemoved settles the cursor when the seat on turn left a counterclockwise
@@ -298,7 +279,10 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 	extra.leaverWasOnTurn = false
 
 	n := len(state.Players)
-	if !onTurn || extra.Direction >= 0 || n == 0 {
+	// Below two seats there is no neighbour to hand the turn to, and a non-nil
+	// OverrideNextTurn would tell the engine the last seat still has work - which
+	// costs the survivor the forfeit win.
+	if !onTurn || extra.Direction >= 0 || n < 2 {
 		return
 	}
 	// Counterclockwise the turn owes to the seat before the leaver, which keeps its
@@ -309,14 +293,10 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 	state.OverrideNextTurn = &next
 }
 
-func (r *Rules) Standings(state *game.State) []*game.Player {
-	return game.StandingsByScore(state.Players, func(p *game.Player) int {
-		return r.StandingScore(state, p)
-	})
-}
+func (r *Rules) Standings(state *game.State) []*game.Player { return game.ShedStandings(state) }
 
-// StandingScore is the value Standings sorted by, so two players left holding the
-// same number of cards are reported as the draw they are.
-func (r *Rules) StandingScore(_ *game.State, p *game.Player) int {
-	return len(p.Cards)
-}
+func (r *Rules) StandingScore(_ *game.State, p *game.Player) int { return game.ShedScore(p) }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)

@@ -87,7 +87,7 @@ func (m *Model) syncState() {
 
 	// Poker needs State.Players for hole cards at showdown, so the Frame callback
 	// takes the live *State (not only Extra) and fills betting scalars in the same
-	// hold as Base.MyTurn — a split Sync+WithState let an opponent act between them.
+	// hold as Base.MyTurn - a split Sync+WithState let an opponent act between them.
 	m.Sync(func(state *game.State) {
 		m.matchComplete = state.Phase == game.Finished
 		m.handComplete = state.Phase == game.Finished
@@ -116,7 +116,7 @@ func (m *Model) syncState() {
 			m.winnerName = e.Winners[0].DisplayName()
 		}
 
-		m.board = append(m.board[:0], e.Table...)
+		m.board = slices.Clone(e.Table)
 		m.seats = buildSeats(state, e, heroID)
 	})
 

@@ -26,7 +26,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	case "left", "h":
 		m.MoveCursor(-1)
 		return m, nil
@@ -36,7 +39,10 @@ func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "0", "1", "2", "3", "4", "5", "6", "7", "8", "9":
 		m.SelectDigit(msg.String())
 		return m, nil
-	case " ":
+	// "space", not " ": that is what KeyPressMsg.String() normalises the spacebar to,
+	// and matching the literal meant the pass phase could not be played by hand at all
+	// - the engine's 45-second auto-pass was the only way out of it.
+	case "space":
 		return m.handleSpace()
 	case "enter":
 		return m.handleEnter()
@@ -65,7 +71,10 @@ func (m *Model) handleSpace() (tea.Model, tea.Cmd) {
 
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.Base.Phase == game.Finished {
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	}
 
 	if m.stage == logic.StageHandOver && !m.matchComplete {

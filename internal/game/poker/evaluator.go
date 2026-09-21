@@ -86,14 +86,18 @@ func normalizeCards(cards []deck.Card) []rankedCard {
 	return hand
 }
 
+// maxRankValue is the largest deck.RankValue a card can carry (ace, and joker with it),
+// so a rank indexes an array rather than hashing into a map.
+const maxRankValue = 14
+
 func rankCounts(hand []rankedCard) (quadRank, tripRank int, pairs []int) {
-	counts := make(map[int]int, len(hand))
+	var counts [maxRankValue + 1]int
 	for _, c := range hand {
 		counts[c.rank]++
 	}
 	// Ranks descend, so the first quad and the first trip found are the highest ones;
 	// a second trip is only ever worth a pair, and a second quad nothing at all.
-	for r := 14; r >= 2; r-- {
+	for r := maxRankValue; r >= 2; r-- {
 		switch counts[r] {
 		case 4:
 			if quadRank == 0 {
@@ -149,36 +153,40 @@ func ranksOf(hand []rankedCard) []int {
 	return ranks
 }
 
+// wheelMask is A-5-4-3-2 as rank bits: the one straight whose ranks are not
+// consecutive, because the ace plays low in it.
+const wheelMask = 1<<14 | 1<<5 | 1<<4 | 1<<3 | 1<<2
+
 // straightHigh returns the high card of the best straight in ranks, or 0.
-// Wheel (A-2-3-4-5) returns 5.
+// Wheel (A-2-3-4-5) returns 5. ranks must be sorted descending; duplicates are fine.
+//
+// It walks the descending run in place rather than deduplicating first, so the hottest
+// check in the evaluator - every classify runs it at least once - allocates nothing.
+// The first run of five it reaches is the highest straight, since the ranks descend.
 func straightHigh(ranks []int) int {
-	unique := slices.Compact(slices.Clone(ranks))
-	if len(unique) < 5 {
+	if len(ranks) == 0 {
 		return 0
 	}
-	for i := 0; i <= len(unique)-5; i++ {
-		if unique[i]-unique[i+4] == 4 {
-			return unique[i]
+	var seen uint16
+	seen |= 1 << ranks[0]
+	run, high := 1, ranks[0]
+	for i := 1; i < len(ranks); i++ {
+		seen |= 1 << ranks[i]
+		switch ranks[i] {
+		case ranks[i-1]: // a duplicate rank neither extends nor breaks the run
+		case ranks[i-1] - 1:
+			run++
+			if run == 5 {
+				return high
+			}
+		default:
+			run, high = 1, ranks[i]
 		}
 	}
-	if isWheel(unique) {
+	if seen&wheelMask == wheelMask {
 		return 5
 	}
 	return 0
-}
-
-var wheelLowRanks = []int{5, 4, 3, 2}
-
-func isWheel(unique []int) bool {
-	if len(unique) == 0 || unique[0] != 14 {
-		return false
-	}
-	for _, need := range wheelLowRanks {
-		if !slices.Contains(unique, need) {
-			return false
-		}
-	}
-	return true
 }
 
 func kickers(hand []rankedCard, exclude []int, count int) []int {

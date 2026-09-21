@@ -4,11 +4,10 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"hash/fnv"
 	"log/slog"
 	"slices"
-	"strconv"
 	"time"
+	"uuid"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/elo"
@@ -23,23 +22,23 @@ import (
 
 var tracer = otel.Tracer("terminal-card/repository")
 
-// endSpan closes a span, marking it failed on error: recording the error without the
-// status leaves the one failed span reading as successful.
-func endSpan(span trace.Span, err error) {
+// recordSpanResult marks a span failed on error: recording the error without the
+// status leaves the one failed span reading as successful. Ending it stays at the
+// call site so the End is visible on every path.
+func recordSpanResult(span trace.Span, err error) {
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, err.Error())
 	}
-	span.End()
 }
 
 // A duplicate seat would move that player's rating twice, then collide on the
 // match_participants primary key and roll the whole match back.
-func checkDistinctPlayers(userIDs []uint) error {
-	seen := make(map[uint]struct{}, len(userIDs))
+func checkDistinctPlayers(userIDs []uuid.UUID) error {
+	seen := make(map[uuid.UUID]struct{}, len(userIDs))
 	for _, id := range userIDs {
 		if _, dup := seen[id]; dup {
-			return fmt.Errorf("duplicate user id %d in match standings", id)
+			return fmt.Errorf("duplicate user id %s in match standings", id)
 		}
 		seen[id] = struct{}{}
 	}
@@ -58,39 +57,46 @@ func NewMatchRepository(db *gorm.DB) db.MatchRepository {
 // reuses its connection: going back to the pool holds one while waiting for a second, so
 // DBMaxOpenConnections concurrent finalizes deadlock until they time out - and the game
 // row would outlive a rollback.
-func getOrCreateGame(tx *gorm.DB, name string) (*db.Game, error) {
-	game := db.Game{Name: name}
+//
+// DoUpdates rather than DoNothing, for the same reason seedRankingRows revives its rows:
+// a soft-deleted game still occupies the unique slug, so DO NOTHING would leave ID zero
+// and the default-scoped reload could not see the row - every finalize for that game
+// would fail forever. Writing the name on the way through is also how a renamed game
+// reaches the leaderboard without its ratings moving.
+func getOrCreateGame(tx *gorm.DB, ref db.GameRef) (*db.Game, error) {
+	game := db.Game{Slug: ref.Slug, Name: ref.Name}
 	if err := tx.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "name"}},
-		DoNothing: true,
+		Columns: []clause.Column{{Name: "slug"}},
+		DoUpdates: clause.Assignments(map[string]any{
+			"deleted_at": nil,
+			"name":       ref.Name,
+			"updated_at": time.Now(),
+		}),
 	}).Create(&game).Error; err != nil {
 		return nil, fmt.Errorf("create game: %w", err)
 	}
-	if game.ID == 0 {
-		if err := tx.Where("name = ?", name).First(&game).Error; err != nil {
-			return nil, fmt.Errorf("load game: %w", err)
-		}
-	}
+	// No id check: DO UPDATE always returns the row, and a zero would fail the
+	// matches.game_id foreign key on the very next statement anyway.
 	return &game, nil
 }
 
 func (q *gormMatchRepository) RecordCasualMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uuid.UUID,
 ) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	ctx, span := tracer.Start(ctx, "db.RecordCasualMatch",
-		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
 		return fmt.Errorf("record casual match: %w", err)
 	}
 
 	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGame(tx, gameName)
+		game, err := getOrCreateGame(tx, ref)
 		if err != nil {
 			return err
 		}
@@ -105,22 +111,22 @@ func (q *gormMatchRepository) RecordCasualMatch(
 // FinalizeRankedMatch creates/looks up the game, updates rankings, and records the match
 // in a single database transaction so ELO and history cannot diverge.
 func (q *gormMatchRepository) FinalizeRankedMatch(
-	ctx context.Context, gameName string, orderedUserIDs []uint, places []int,
+	ctx context.Context, ref db.GameRef, orderedUserIDs []uuid.UUID, places []int,
 ) (err error) {
 	if len(orderedUserIDs) == 0 {
 		return nil
 	}
 
 	ctx, span := tracer.Start(ctx, "db.FinalizeRankedMatch",
-		trace.WithAttributes(attribute.String("game", gameName), attribute.Int("players", len(orderedUserIDs))))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.String("game", ref.Slug), attribute.Int("players", len(orderedUserIDs))))
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err = checkDistinctPlayers(orderedUserIDs); err != nil {
 		return fmt.Errorf("finalize ranked match: %w", err)
 	}
 
 	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		game, err := getOrCreateGame(tx, gameName)
+		game, err := getOrCreateGame(tx, ref)
 		if err != nil {
 			return err
 		}
@@ -144,14 +150,18 @@ func (q *gormMatchRepository) FinalizeRankedMatch(
 //
 // Soft-deleted rankings are revived first: DO NOTHING leaves them invisible to the
 // default scope, and a missing row used to abort the whole table's finalize.
-func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uint) error {
+func seedRankingRows(tx *gorm.DB, gameID uint, userIDs []uuid.UUID) error {
+	// Sorted for the same reason fetchRankings orders: an UPDATE locks the rows its
+	// IN list yields, so two finalizes over overlapping seats would otherwise take
+	// the revived rows in opposite orders and Postgres would abort one.
+	sorted := sortedUserIDs(userIDs)
 	if err := tx.Unscoped().Model(&db.Ranking{}).
-		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", userIDs, gameID).
+		Where("user_id IN ? AND game_id = ? AND deleted_at IS NOT NULL", uuidStrings(sorted), gameID).
 		Update("deleted_at", nil).Error; err != nil {
 		return fmt.Errorf("revive rankings: %w", err)
 	}
 	seeds := make([]db.Ranking, 0, len(userIDs))
-	for _, userID := range slices.Sorted(slices.Values(userIDs)) {
+	for _, userID := range sorted {
 		seeds = append(seeds, db.Ranking{UserID: userID, GameID: gameID, Elo: elo.ToUint32(elo.DefaultRating)})
 	}
 	if err := tx.Clauses(clause.OnConflict{
@@ -170,18 +180,18 @@ const (
 	// profitable until it has a track record of its own.
 	provisionalMatches = 5
 
-	// maxSamePairingPerDay is how many ranked matches between the exact same set of
-	// players still move rating inside a 24h window. The same pair trading wins is
-	// either farming or a private rivalry; either way the ladder stops paying after
-	// three a day.
+	// maxSamePairingPerDay is how many ranked matches any two players at a table may
+	// already have shared inside a 24h window before the table stops moving rating.
+	// The same two accounts trading wins is either farming or a private rivalry;
+	// either way the ladder stops paying after three a day.
 	maxSamePairingPerDay = 3
 )
 
 func (q *gormMatchRepository) updateRankingsTx(
-	ctx context.Context, tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int,
-) (map[uint]int, error) {
+	ctx context.Context, tx *gorm.DB, gameID uint, orderedUserIDs []uuid.UUID, places []int,
+) (map[uuid.UUID]int, error) {
 	// Serialize same-pairing finalizes across every game: ranking row locks are
-	// per (user, game), so A–B farming Poker and Hearts concurrently would both
+	// per (user, game), so A-B farming Poker and Hearts concurrently would both
 	// see an undamped count without this.
 	if err := lockPairing(tx, orderedUserIDs); err != nil {
 		return nil, err
@@ -196,30 +206,29 @@ func (q *gormMatchRepository) updateRankingsTx(
 		return nil, fmt.Errorf("fetch rankings: %w", err)
 	}
 
-	pairings, err := samePairingCountLast24h(tx, orderedUserIDs)
+	pairings, err := repeatedPairCountLast24h(tx, orderedUserIDs)
 	if err != nil {
 		return nil, err
 	}
 	damped := pairings >= maxSamePairingPerDay
 	if damped {
-		slog.WarnContext(ctx, "ranked match damped: same players again inside 24h",
+		slog.WarnContext(ctx, "ranked match damped: these players have already met inside 24h",
 			"user_ids", orderedUserIDs, "game_id", gameID, "recent_pairings", pairings)
 	}
 
 	newRatings := q.calculateNewElos(orderedUserIDs, places, rankingMap)
-	provisional := anyProvisional(orderedUserIDs, rankingMap)
 
-	deltas := make(map[uint]int, len(orderedUserIDs))
+	deltas := make(map[uuid.UUID]int, len(orderedUserIDs))
 	for _, userID := range orderedUserIDs {
 		// Every seat was just seeded, so a miss is a soft-deleted row, not a new player.
 		r, ok := rankingMap[userID]
 		if !ok {
-			return nil, fmt.Errorf("no ranking row for user %d in game %d", userID, gameID)
+			return nil, fmt.Errorf("no ranking row for user %s in game %d", userID, gameID)
 		}
 		// A key mismatch used to fall through to the zero value and store the elo floor.
-		newRating, ok := newRatings[strconv.FormatUint(uint64(userID), 10)]
+		newRating, ok := newRatings[userID.String()]
 		if !ok {
-			return nil, fmt.Errorf("no elo result for user %d", userID)
+			return nil, fmt.Errorf("no elo result for user %s", userID)
 		}
 
 		// The increment rides the row this transaction already holds FOR UPDATE, and
@@ -227,42 +236,47 @@ func (q *gormMatchRepository) updateRankingsTx(
 		// match played, and it is what lets a provisional account graduate.
 		update := map[string]any{"matches_played": gorm.Expr("matches_played + 1")}
 
-		// A provisional player's own rating still converges; only the established
-		// players around them go unpaid. This deliberately breaks conservation - the
-		// zero-sum property of Elo is worth less than an unfarmable ladder.
-		if !damped && (!provisional || r.MatchesPlayed < provisionalMatches) {
+		// Who gets paid against a provisional seat is elo.Calculate's decision, per
+		// pair; here a damped table is the only reason a rating stays put.
+		if !damped {
 			stored := elo.ToUint32(newRating)
 			update["elo"] = stored
 			deltas[userID] = int(stored) - int(r.Elo)
 		}
-		if err := tx.Model(r).Updates(update).Error; err != nil {
-			return nil, fmt.Errorf("update ranking: %w", err)
+		res := tx.Model(r).Updates(update)
+		if res.Error != nil {
+			return nil, fmt.Errorf("update ranking: %w", res.Error)
+		}
+		// This transaction holds the row FOR UPDATE, so zero rows means it is gone
+		// underneath us. Carrying on would write the computed elo_delta into history for
+		// a rating that never moved.
+		if res.RowsAffected == 0 {
+			return nil, fmt.Errorf("ranking for user %s in game %d was not updated", userID, gameID)
 		}
 	}
 	return deltas, nil
 }
 
-func anyProvisional(orderedUserIDs []uint, rankingMap map[uint]*db.Ranking) bool {
-	for _, userID := range orderedUserIDs {
-		if r, ok := rankingMap[userID]; ok && r.MatchesPlayed < provisionalMatches {
-			return true
-		}
-	}
-	return false
-}
-
-// samePairingCountLast24h counts recent ranked matches whose participant set is
-// exactly userIDs, across every game - a pair farming each other does not become
-// legitimate by switching table. One participant's recent matches bound the scan and
-// the sets are compared in Go, which is cheap at these volumes. Callers must hold
-// lockPairing so concurrent finalizes of the same set cannot both underrun the cap.
-func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
+// repeatedPairCountLast24h is the most ranked matches any single pair of players at
+// this table has already shared inside 24h, across every game.
+//
+// Pairs, not the exact seat list: {A,B}, {A,B,C} and {A,B,D} are three different
+// participant sets, so a cap on set repeats handed each of them its own budget and two
+// accounts could farm each other indefinitely by rotating a third alt through the
+// table. A and B co-occurring is what the cap is actually about, and switching game
+// does not make it legitimate either, so the window spans every game.
+//
+// The scan is bounded by the recent ranked matches these seats played; the pair
+// counting happens in Go, which is cheap at these volumes. Callers must hold
+// lockPairing, or two concurrent finalizes sharing a seat both read an undamped count.
+func repeatedPairCountLast24h(tx *gorm.DB, userIDs []uuid.UUID) (int, error) {
 	var matchIDs []uint
 	if err := tx.Model(&db.MatchParticipant{}).
 		Joins("JOIN matches ON matches.id = match_participants.match_id").
-		Where(`match_participants.user_id = ? AND matches.ranked
+		Where(`match_participants.user_id IN ? AND matches.ranked
 			AND matches.deleted_at IS NULL AND matches.created_at > ?`,
-			userIDs[0], time.Now().Add(-24*time.Hour)).
+			uuidStrings(userIDs), time.Now().Add(-24*time.Hour)).
+		Distinct().
 		Pluck("match_participants.match_id", &matchIDs).Error; err != nil {
 		return 0, fmt.Errorf("query recent pairings: %w", err)
 	}
@@ -275,41 +289,77 @@ func samePairingCountLast24h(tx *gorm.DB, userIDs []uint) (int, error) {
 		return 0, fmt.Errorf("query pairing participants: %w", err)
 	}
 
-	seats := make(map[uint][]uint, len(matchIDs))
-	for _, row := range rows {
-		seats[row.MatchID] = append(seats[row.MatchID], row.UserID)
+	here := make(map[uuid.UUID]struct{}, len(userIDs))
+	for _, id := range userIDs {
+		here[id] = struct{}{}
 	}
-
-	want := slices.Sorted(slices.Values(userIDs))
-	count := 0
-	for _, got := range seats {
-		if slices.Equal(want, slices.Sorted(slices.Values(got))) {
-			count++
+	// Only the seats sitting at this table matter: a past match's other players are
+	// not part of any pair being capped now.
+	seats := make(map[uint][]uuid.UUID, len(matchIDs))
+	for _, row := range rows {
+		if _, ours := here[row.UserID]; ours {
+			seats[row.MatchID] = append(seats[row.MatchID], row.UserID)
 		}
 	}
-	return count, nil
+	return worstPairCount(seats), nil
 }
 
-func lockPairing(tx *gorm.DB, userIDs []uint) error {
-	if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", pairingAdvisoryKey(userIDs)).Error; err != nil {
-		return fmt.Errorf("lock pairing: %w", err)
+// worstPairCount is the highest co-occurrence count over every pair in seats.
+func worstPairCount(seats map[uint][]uuid.UUID) int {
+	counts := make(map[[2]uuid.UUID]int, len(seats))
+	worst := 0
+	for _, shared := range seats {
+		slices.SortFunc(shared, uuid.UUID.Compare)
+		for i, a := range shared {
+			for _, b := range shared[i+1:] {
+				counts[[2]uuid.UUID{a, b}]++
+				worst = max(worst, counts[[2]uuid.UUID{a, b}])
+			}
+		}
+	}
+	return worst
+}
+
+// lockPairing serializes finalizes that share any seat, taking the locks in user-id
+// order so two overlapping tables cannot grab them in opposite orders and deadlock.
+// Ranking row locks are per (user, game), so the same accounts finalizing Poker and
+// Hearts at the same moment would both read an undamped pair count without this. One
+// lock per seat rather than one per exact set, because the cap is now per pair and two
+// different sets can share one.
+func lockPairing(tx *gorm.DB, userIDs []uuid.UUID) error {
+	for _, id := range sortedUserIDs(userIDs) {
+		if err := tx.Exec("SELECT pg_advisory_xact_lock(?)", seatAdvisoryKey(id)).Error; err != nil {
+			return fmt.Errorf("lock seat %s: %w", id, err)
+		}
 	}
 	return nil
 }
 
-func pairingAdvisoryKey(userIDs []uint) int64 {
-	h := fnv.New64a()
-	for _, id := range slices.Sorted(slices.Values(userIDs)) {
-		var buf [8]byte
-		binary.LittleEndian.PutUint64(buf[:], uint64(id))
-		_, _ = h.Write(buf[:])
+func sortedUserIDs(userIDs []uuid.UUID) []uuid.UUID {
+	out := slices.Clone(userIDs)
+	slices.SortFunc(out, uuid.UUID.Compare)
+	return out
+}
+
+func uuidStrings(ids []uuid.UUID) []string {
+	// Stdlib uuid.UUID has no database/sql Valuer; pgx will not encode it as uuid.
+	out := make([]string, len(ids))
+	for i, id := range ids {
+		out[i] = id.String()
 	}
-	// Advisory keys are opaque coordination tokens, not secrets.
-	return int64(h.Sum64()) //nolint:gosec // G115: lock key space is intentionally 64-bit wrap
+	return out
+}
+
+func seatAdvisoryKey(userID uuid.UUID) int64 {
+	// One lock per seat. Folding 128 bits into a bigint can collide; that only
+	// serializes two finalizes, it does not mix ratings.
+	hi := binary.BigEndian.Uint64(userID[0:8])
+	lo := binary.BigEndian.Uint64(userID[8:16])
+	return int64(hi ^ lo) //nolint:gosec // G115: advisory key, not an id
 }
 
 func (q *gormMatchRepository) recordMatchTx(
-	tx *gorm.DB, gameID uint, orderedUserIDs []uint, places []int, eloDeltas map[uint]int, ranked bool,
+	tx *gorm.DB, gameID uint, orderedUserIDs []uuid.UUID, places []int, eloDeltas map[uuid.UUID]int, ranked bool,
 ) error {
 	match, err := q.recordNewMatch(tx, gameID, ranked)
 	if err != nil {
@@ -332,7 +382,7 @@ func (q *gormMatchRepository) recordMatchTx(
 	return nil
 }
 
-func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uint) (map[uint]*db.Ranking, error) {
+func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []uuid.UUID) (map[uuid.UUID]*db.Ranking, error) {
 	var rankings []db.Ranking
 	// FOR UPDATE: serialize concurrent finalize transactions to avoid lost Elo updates.
 	//
@@ -342,12 +392,12 @@ func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []
 	// fixed order two finalizes over overlapping seats can lock in opposite orders.
 	// Postgres then aborts one, and that match is lost from history and Elo.
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-		Where("user_id IN ? AND game_id = ?", userIDs, gameID).
+		Where("user_id IN ? AND game_id = ?", uuidStrings(userIDs), gameID).
 		Order("user_id").Find(&rankings).Error; err != nil {
 		return nil, fmt.Errorf("query rankings: %w", err)
 	}
 
-	rankingMap := make(map[uint]*db.Ranking)
+	rankingMap := make(map[uuid.UUID]*db.Ranking)
 	for i := range rankings {
 		rankingMap[rankings[i].UserID] = &rankings[i]
 	}
@@ -355,18 +405,20 @@ func (q *gormMatchRepository) fetchRankings(tx *gorm.DB, gameID uint, userIDs []
 }
 
 func (q *gormMatchRepository) calculateNewElos(
-	orderedUserIDs []uint, places []int, rankingMap map[uint]*db.Ranking,
+	orderedUserIDs []uuid.UUID, places []int, rankingMap map[uuid.UUID]*db.Ranking,
 ) map[string]float64 {
 	players := make([]elo.Player, 0, len(orderedUserIDs))
 	for i, userID := range orderedUserIDs {
-		rating := elo.DefaultRating
+		rating, provisional := elo.DefaultRating, true
 		if r, ok := rankingMap[userID]; ok {
 			rating = float64(r.Elo)
+			provisional = r.MatchesPlayed < provisionalMatches
 		}
 		players = append(players, elo.Player{
-			ID:     strconv.FormatUint(uint64(userID), 10),
-			Rating: rating,
-			Place:  placeAt(places, i),
+			ID:          userID.String(),
+			Rating:      rating,
+			Place:       placeAt(places, i),
+			Provisional: provisional,
 		})
 	}
 	return elo.Calculate(players)

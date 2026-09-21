@@ -1,11 +1,23 @@
 global:
   scrape_interval: 15s
   evaluation_interval: 15s
+  # Stamped onto everything this server stores, so a federated or remote reader can
+  # tell these series apart from another deployment's.
+  external_labels:
+    deployment: terminal-card
 
 rule_files:
   - /etc/prometheus/alerts.yml
 
+# Retention is a command-line flag, not a config key: see compose.yaml, which sets
+# --storage.tsdb.retention.time=30d and --storage.tsdb.retention.size=8GB. Thirty
+# days is safe to state publicly because nothing here is personal data - every
+# attribute this application records is a bounded enum, which
+# internal/observability/metrics_test.go enforces.
 scrape_configs:
+  # The only scrape target. Everything else - the application's OTLP metrics and
+  # Alloy's host exporter - arrives by remote write from Alloy, which is why the
+  # alerts file has no up{} for the backend and watches the sessions gauge instead.
   - job_name: prometheus
     static_configs:
       - targets: ["localhost:9090"]

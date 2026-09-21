@@ -3,12 +3,14 @@ package ginrummy
 import (
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func twoPlayers(hands ...[]deck.Card) []*game.Player {
@@ -442,7 +444,7 @@ func TestRules_TimeoutAction_MatchOver(t *testing.T) {
 }
 
 // The engine removes a player whose auto-play the rules then refuse, so the move
-// TimeoutAction picks must satisfy ValidateAction — including the upcard restriction.
+// TimeoutAction picks must satisfy ValidateAction - including the upcard restriction.
 func TestRules_TimeoutAction_NeverLaysBackTakenUpcard(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -562,4 +564,197 @@ func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
 	standings, places := engine.StandingsWithPlaces()
 	require.Len(t, standings, 2)
 	assert.Equal(t, []int{1, 1}, places, "equal totals are one place, not two")
+}
+
+// A defender may arrange their hand for the lowest total *after* layoffs, not the
+// lowest raw deadwood. Here 3♠4♠5♠ is the cheaper meld on its own, but melding the
+// three 3s instead frees 4♠ and 5♠ to extend the knocker's 6♠7♠8♠ run to nothing -
+// which turns a 2-point loss into a 29-point undercut.
+func TestRules_Knock_DefenderMeldsForTheBestLayoff(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	knocker := []deck.Card{
+		c(deck.Six, deck.Spades), c(deck.Seven, deck.Spades), c(deck.Eight, deck.Spades),
+		c(deck.Jack, deck.Spades), c(deck.Jack, deck.Hearts), c(deck.Jack, deck.Diamonds),
+		c(deck.Ace, deck.Clubs), c(deck.Ace, deck.Spades), c(deck.Ace, deck.Hearts),
+		c(deck.Four, deck.Diamonds),
+		c(deck.King, deck.Clubs), // discard
+	}
+	opponent := []deck.Card{
+		c(deck.Three, deck.Spades), c(deck.Four, deck.Spades), c(deck.Five, deck.Spades),
+		c(deck.Three, deck.Hearts), c(deck.Three, deck.Diamonds),
+		c(deck.Eight, deck.Clubs), c(deck.Nine, deck.Clubs), c(deck.Ten, deck.Clubs),
+		c(deck.Jack, deck.Clubs), c(deck.Queen, deck.Clubs),
+	}
+	state := game.NewState(rules, twoPlayers(knocker, opponent), nil)
+	extra := &State{
+		HandPhase:        AwaitingDiscard,
+		FirstActor:       0,
+		CumulativeScores: map[string]int{"p1": 0, "p2": 0},
+	}
+	state.Extra = extra
+	state.CurrentTurn = 0
+	state.Deck = deck.New(nil)
+	state.Discard = deck.New(nil)
+
+	require.NoError(t, rules.ValidateAction(state, ActionKnock{Discard: c(deck.King, deck.Clubs)}))
+	rules.ApplyAction(state, ActionKnock{Discard: c(deck.King, deck.Clubs)})
+
+	res := extra.LastHandResult
+	require.NotNil(t, res)
+	assert.Equal(t, 4, res.KnockerDeadwoodPoints, "4♦ is the knock's only deadwood")
+	assert.Zero(t, res.OpponentDeadwoodPoints, "both loose spades lay off")
+	assert.ElementsMatch(t,
+		[]deck.Card{c(deck.Four, deck.Spades), c(deck.Five, deck.Spades)}, res.LaidOffCards)
+	assert.True(t, res.Undercut, "0 <= 4 is an undercut")
+	assert.Equal(t, "p2", res.Winner)
+	assert.Equal(t, 4+undercutBonus, res.ScoreDelta)
+}
+
+func TestRules_TableSize(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	assert.Equal(t, 2, rules.MinPlayers(), "gin rummy is strictly heads-up")
+	assert.Equal(t, 2, rules.MaxPlayers())
+	assert.Len(t, rules.InitialDeck(), 52)
+	assert.Equal(t, "ginrummy.DrawStock", ActionDrawStock{}.Name())
+	assert.Equal(t, "ginrummy.DrawDiscard", ActionDrawDiscard{}.Name())
+	assert.Equal(t, "ginrummy.Discard", ActionDiscard{}.Name())
+	assert.Equal(t, "ginrummy.Knock", ActionKnock{}.Name())
+	assert.Equal(t, "ginrummy.NextHand", ActionNextHand{}.Name())
+}
+
+// The between-hands prompt is a decision, not a move, so it gets longer than a turn.
+// Zero elsewhere means "engine default", not "no clock": a real duration there would
+// quietly redefine every draw-and-discard turn in the game.
+func TestRules_TurnTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		handComplete bool
+		want         time.Duration
+	}{
+		{name: "the hand-over prompt gets a minute", handComplete: true, want: time.Minute},
+		{name: "a live hand keeps the engine default"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state, extra := startedState(t)
+			extra.HandComplete = tt.handComplete
+			assert.Equal(t, tt.want, (&Rules{}).TurnTimeout(state))
+		})
+	}
+
+	t.Run("a state that is not a gin rummy state has no opinion", func(t *testing.T) {
+		t.Parallel()
+		assert.Zero(t, (&Rules{}).TurnTimeout(&game.State{}))
+	})
+}
+
+// The ordinary knock: neither gin nor an undercut, which is the branch the whole game
+// spends most of its time in and the one the two bonuses do not cover. The delta is the
+// difference in deadwood and nothing else.
+func TestRules_Knock_PlainWinScoresTheDifference(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	knocker := []deck.Card{
+		c(deck.Two, deck.Hearts), c(deck.Three, deck.Hearts), c(deck.Four, deck.Hearts),
+		c(deck.Jack, deck.Spades), c(deck.Jack, deck.Hearts), c(deck.Jack, deck.Diamonds),
+		c(deck.Ace, deck.Clubs), c(deck.Ace, deck.Spades), c(deck.Ace, deck.Hearts),
+		c(deck.Five, deck.Diamonds), // the only deadwood: 5 points
+		c(deck.King, deck.Clubs),    // discard
+	}
+	// No meld and nothing that attaches to a heart run of 2-4, a set of jacks or a set
+	// of aces, so the hand is 69 points of deadwood however the defender arranges it.
+	opponent := []deck.Card{
+		c(deck.Nine, deck.Diamonds), c(deck.Eight, deck.Clubs), c(deck.Seven, deck.Spades),
+		c(deck.Six, deck.Diamonds), c(deck.Four, deck.Clubs), c(deck.Three, deck.Spades),
+		c(deck.Two, deck.Clubs), c(deck.Ten, deck.Hearts), c(deck.Queen, deck.Diamonds),
+		c(deck.King, deck.Spades),
+	}
+	state := game.NewState(rules, twoPlayers(knocker, opponent), nil)
+	extra := &State{
+		HandPhase:        AwaitingDiscard,
+		FirstActor:       0,
+		CumulativeScores: map[string]int{"p1": 0, "p2": 0},
+	}
+	state.Extra = extra
+	state.CurrentTurn = 0
+	state.Deck = deck.New(nil)
+	state.Discard = deck.New(nil)
+
+	knock := ActionKnock{Discard: c(deck.King, deck.Clubs)}
+	require.NoError(t, rules.ValidateAction(state, knock))
+	require.NoError(t, rules.ApplyAction(state, knock))
+
+	result := extra.LastHandResult
+	require.NotNil(t, result)
+	assert.False(t, result.Gin, "five points of deadwood is not gin")
+	assert.False(t, result.Undercut, "69 beats 5, so the defender did not undercut")
+	assert.Empty(t, result.LaidOffCards, "nothing in the defender's hand attaches")
+	assert.Equal(t, 5, result.KnockerDeadwoodPoints)
+	assert.Equal(t, 69, result.OpponentDeadwoodPoints)
+	assert.Equal(t, "p1", result.Winner)
+	assert.Equal(t, 64, result.ScoreDelta, "the difference, with no bonus either way")
+	assert.Equal(t, 64, extra.CumulativeScores["p1"])
+	assert.Zero(t, extra.CumulativeScores["p2"], "the loser of a plain knock scores nothing")
+}
+
+func TestRules_ValidateAction_UnknownActionIsRefused(t *testing.T) {
+	t.Parallel()
+	state, _ := startedState(t)
+	assert.ErrorContains(t, (&Rules{}).ValidateAction(state, foreignAction{}), "unknown action")
+}
+
+// A move from some other game: the validator is the only thing between it and a state
+// machine that has no case for it.
+type foreignAction struct{}
+
+func (foreignAction) Name() string { return "not.AGinRummyAction" }
+
+func TestRules_NotAGinRummyState(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := &game.State{}
+
+	require.ErrorIs(t, rules.ValidateAction(state, ActionDrawStock{}), game.ErrInvalidState)
+	require.ErrorIs(t, rules.ApplyAction(state, ActionDrawStock{}), game.ErrInvalidState)
+	require.ErrorIs(t, rules.AfterAction(state, ActionDrawStock{}), game.ErrInvalidState)
+	assert.Nil(t, rules.Standings(state))
+	assert.Nil(t, rules.TimeoutAction(state))
+	assert.Zero(t, rules.StandingScore(state, &game.Player{ID: "p1"}))
+	assert.False(t, rules.CheckWinCondition(state))
+}
+
+// The engine plays TimeoutAction for a seat that has gone quiet. A move ValidateAction
+// refuses is not a skipped turn: the clock re-arms and the seat is taken on the next
+// expiry, so a player is removed for a mistake the rules made. The auto-player never
+// knocks, so every hand runs to the wall and the match ends on the hand cap.
+func TestSoak_TimeoutActionIsAlwaysLegal(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		players := []*game.Player{{ID: "p1"}, {ID: "p2"}}
+		engine := game.NewEngine(rules, players, deck.StandardDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		for step := range maxHands * (maxHandTurns + 4) {
+			if engine.IsFinished() {
+				return
+			}
+			id := engine.CurrentPlayerID()
+			var act game.Action
+			engine.WithState(func(s *game.State) {
+				act = rules.TimeoutAction(s)
+				require.NotNil(rt, act, "step %d: no move for %s", step, id)
+				require.NoError(rt, rules.ValidateAction(s, act),
+					"step %d: %s is not a legal move", step, act.Name())
+			})
+			require.NoError(rt, engine.SubmitAction(id, act))
+		}
+		rt.Fatalf("a match played entirely by the clock never reached the %d-hand cap", maxHands)
+	})
 }

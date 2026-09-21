@@ -160,7 +160,7 @@ func TestRenderFan_OnlyTheTopCardClosesItsEdge(t *testing.T) {
 }
 
 // rankLabels replaced an exhaustive switch, so the compiler no longer catches a
-// missing rank — a new one would render as a blank label instead. deck.AllRanks is
+// missing rank - a new one would render as a blank label instead. deck.AllRanks is
 // the substitute check, and deck's own test keeps that list honest.
 func TestRankLabels_CoversAllDeckRanks(t *testing.T) {
 	t.Parallel()

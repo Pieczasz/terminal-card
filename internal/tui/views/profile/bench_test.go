@@ -5,12 +5,13 @@ import (
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 )
 
 func BenchmarkProfileView_Render(b *testing.B) {
-	user := &db.User{ID: 1, Username: "alice"}
+	user := &db.User{ID: testutil.UID(1), Username: "alice"}
 	for i := range 3 {
 		user.Rankings = append(user.Rankings, db.Ranking{
 			Elo: uint32(1500 + i*40), Game: db.Game{Name: fmt.Sprintf("Game%d", i)},
@@ -23,10 +24,15 @@ func BenchmarkProfileView_Render(b *testing.B) {
 			Match: db.Match{Ranked: i%2 == 0, Game: db.Game{Name: "Poker"}},
 		})
 	}
+	// The filter lists are not optional: renderContent reads the current entry of
+	// each for its filter line, so a literal without them panics where the real
+	// view, built by New, never can.
 	m := model{
-		global:      router.GlobalContext{User: user, Width: 120, Height: 40, Theme: styles.NewTheme(true)},
-		userProfile: user,
-		history:     history,
+		global:        router.GlobalContext{User: user, Width: 120, Height: 40, Theme: styles.NewTheme(true)},
+		userProfile:   user,
+		history:       history,
+		gameFilters:   []string{filterAllGames, "Poker"},
+		resultFilters: []string{filterAllResults, filterWins, filterLosses},
 	}
 
 	b.ReportAllocs()

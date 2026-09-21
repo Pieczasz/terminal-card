@@ -17,6 +17,8 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
+
+	"uuid"
 )
 
 const (
@@ -31,6 +33,31 @@ const (
 	colElo    = 4
 	colPlace  = 10 // "1st place"
 	colResult = 14 // "Elo change: +99" / "casual game"
+	// tableGap is the space between the two tables when they sit side by side, and
+	// what the fit check has to account for when deciding whether they can.
+	tableGap = 4
+	// twoTableMinHeight is what a stacked pair costs at its smallest: the two label
+	// lines, two spacers, two 2-line table headers, a row each, and the gap between
+	// them. Below it one table has to go.
+	twoTableMinHeight = 11
+
+	// deleteConfirmWord is typed out in full on purpose: erasure is irreversible, and
+	// a single keystroke is one too few between a mistyped filter key and an account.
+	deleteConfirmWord = "DELETE"
+	// A cap so a held key cannot grow the string without bound; four characters of
+	// slack past the word leave room to see a typo before backspacing it.
+	deleteTypedMax = len(deleteConfirmWord) + 4
+)
+
+// deletePhase is the account-erasure state machine. The confirmation is modal: while
+// it is open every key belongs to it, or typing DELETE would cycle the filters on the
+// way past.
+type deletePhase int
+
+const (
+	deleteIdle deletePhase = iota
+	deleteConfirming
+	deleteDone
 )
 
 type model struct {
@@ -44,6 +71,12 @@ type model struct {
 	gameFilterIdx int
 	resultFilters []string
 	resultIdx     int
+
+	phase deletePhase
+	typed string
+	// notice replaces the filter line rather than adding one, so a refusal cannot
+	// make the screen a row taller than the terminal it was measured against.
+	notice string
 }
 
 func New(global router.GlobalContext) tea.Model {
@@ -68,7 +101,7 @@ type profileLoadedMsg struct {
 	historyErr error
 }
 
-func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uint) tea.Cmd {
+func loadProfile(ctx context.Context, userRepo db.UserRepository, userID uuid.UUID) tea.Cmd {
 	return func() tea.Msg {
 		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
@@ -93,6 +126,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case accountDeletedMsg:
+		return m.accountDeleted(msg)
 	case profileLoadedMsg:
 		m.userProfile = msg.user
 		m.history = msg.history
@@ -105,7 +140,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			slog.Error("database error while loading match history", "error", msg.historyErr)
 		}
 	case tea.KeyPressMsg:
+		if m.phase == deleteConfirming {
+			return m.confirmKey(msg)
+		}
+		m.notice = ""
 		switch msg.String() {
+		case "x":
+			return m.openConfirm()
 		case "g":
 			m.gameFilterIdx = components.CycleIndex(m.gameFilterIdx, 1, len(m.gameFilters))
 			return m, nil
@@ -121,11 +162,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() tea.View {
-	actions := []string{"g - Game", "r - Result"}
+	actions := []string{"g - Game", "r - Result", "x - Delete account"}
 	return tea.NewView(views.RenderScreen(m.global, "User Profile", actions, m.renderContent))
 }
 
 func (m model) renderContent(contentHeight int) string {
+	switch m.phase {
+	case deleteConfirming:
+		return m.renderConfirm()
+	case deleteDone:
+		return "Your account has been deleted. Goodbye."
+	case deleteIdle:
+	}
 	if m.err != nil {
 		return "Unable to load profile. Please try again."
 	}
@@ -133,20 +181,53 @@ func (m model) renderContent(contentHeight int) string {
 		return "Loading profile..."
 	}
 
-	const extraVerticalLines = 5 // userInfo, spacer, filter, spacer, headers
+	// userInfo, spacer, filter, spacer, and the table header - which is two lines,
+	// its titles and the rule under them.
+	const extraVerticalLines = 6
 	maxItems := max(contentHeight-extraVerticalLines, 1)
 
-	rankingsCol := lg.NewStyle().Align(lg.Left).Width(rankingsTable.Width()).MarginRight(4).
-		Render(lg.JoinVertical(lg.Left, m.rankingRows(maxItems)...))
-	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTable.Width()).
-		Render(lg.JoinVertical(lg.Left, m.historyRows(maxItems)...))
-	tables := lg.JoinHorizontal(lg.Top, rankingsCol, historyCol)
+	// The two tables are fixed-width, so below a certain terminal they do not fit
+	// beside each other and lipgloss word-wraps the columns into confetti rather
+	// than shrinking them. Stacking is what renderForm does for the same reason.
+	stacked := rankingsTable.Width()+tableGap+historyTable.Width() > styles.InnerWidth(m.global.Width)
+	rankItems, histItems := maxItems, maxItems
+	if stacked {
+		// Both tables now spend height instead of sharing it: two headers and the
+		// spacer between them come out of the same budget.
+		rankItems = max((maxItems-3)/2, 1)
+		histItems = max(maxItems-3-rankItems, 1)
+	}
 
-	userInfo := fmt.Sprintf("Profile for: %s", m.userProfile.Username)
+	userInfo := "Profile for: " + m.userProfile.Username
 	filters := m.global.Theme.Muted.Render(fmt.Sprintf("Game: %s  Result: %s",
 		styles.PadTruncate(m.gameFilters[m.gameFilterIdx], colGame),
 		styles.PadTruncate(m.resultFilters[m.resultIdx], len(filterLosses)),
 	))
+	if m.notice != "" {
+		filters = m.global.Theme.ErrorText.Render(m.notice)
+	}
+
+	// At the declared 64x20 minimum the title and footer leave six lines, fewer than
+	// two stacked tables need at their smallest. The rankings summary gives way to
+	// the match history, which is what a player opens this screen for.
+	if stacked && contentHeight < twoTableMinHeight {
+		items := max(contentHeight-4, 1) // the two labels and the 2-line header
+		return lg.JoinVertical(lg.Left, userInfo, filters,
+			lg.JoinVertical(lg.Left, m.historyRows(items)...))
+	}
+
+	rankingsStyle := lg.NewStyle().Align(lg.Left).Width(rankingsTable.Width())
+	if !stacked {
+		rankingsStyle = rankingsStyle.MarginRight(tableGap)
+	}
+	rankingsCol := rankingsStyle.Render(lg.JoinVertical(lg.Left, m.rankingRows(rankItems)...))
+	historyCol := lg.NewStyle().Align(lg.Left).Width(historyTable.Width()).
+		Render(lg.JoinVertical(lg.Left, m.historyRows(histItems)...))
+
+	tables := lg.JoinHorizontal(lg.Top, rankingsCol, historyCol)
+	if stacked {
+		tables = lg.JoinVertical(lg.Left, rankingsCol, "", historyCol)
+	}
 
 	return lg.JoinVertical(lg.Left, userInfo, "", filters, "", tables)
 }
@@ -164,16 +245,27 @@ var (
 	}}
 )
 
+// limitRows splits n items into what fits and whether to say so. The "... and more"
+// line comes *out* of the budget rather than being appended past it, or a truncated
+// table is one line taller than the space it was given.
+func limitRows(n, maxItems int) (show int, more bool) {
+	if n <= maxItems {
+		return n, false
+	}
+	return max(maxItems-1, 0), true
+}
+
 func (m model) rankingRows(maxItems int) []string {
 	rows := []string{rankingsTable.Header(m.global.Theme)}
 	if len(m.userProfile.Rankings) == 0 {
 		return append(rows, styles.PadTruncate("No games yet.", rankingsTable.Width()))
 	}
-	for i, r := range m.userProfile.Rankings {
-		if i >= maxItems {
-			return append(rows, "... and more")
-		}
+	show, more := limitRows(len(m.userProfile.Rankings), maxItems)
+	for _, r := range m.userProfile.Rankings[:show] {
 		rows = append(rows, rankingsTable.Cells(r.Game.Name, strconv.FormatUint(uint64(r.Elo), 10)))
+	}
+	if more {
+		rows = append(rows, "... and more")
 	}
 	return rows
 }
@@ -211,12 +303,13 @@ func (m model) historyRows(maxItems int) []string {
 	if len(filtered) == 0 {
 		return append(rows, styles.PadTruncate("No matches for this filter.", historyTable.Width()))
 	}
-	for i, h := range filtered {
-		if i >= maxItems {
-			return append(rows, "... and more")
-		}
+	show, more := limitRows(len(filtered), maxItems)
+	for _, h := range filtered[:show] {
 		rows = append(rows, historyTable.Cells(
 			h.Match.Game.Name, placementPlain(h.Placement), resultPlain(h)))
+	}
+	if more {
+		rows = append(rows, "... and more")
 	}
 	return rows
 }
@@ -241,3 +334,97 @@ func placementPlain(placement int) string {
 }
 
 var placementWords = [3]string{"1st place", "2nd place", "3rd place"}
+
+// accountDeletedMsg is the result of the erasure round trip; err nil means the row
+// is already anonymised and the session has nothing left to authenticate.
+type accountDeletedMsg struct{ err error }
+
+func deleteAccount(ctx context.Context, userRepo db.UserRepository, userID uuid.UUID) tea.Cmd {
+	return func() tea.Msg {
+		reqCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		return accountDeletedMsg{err: userRepo.DeleteAccount(reqCtx, userID)}
+	}
+}
+
+func (m model) openConfirm() (tea.Model, tea.Cmd) {
+	if m.global.User == nil {
+		return m, nil
+	}
+	// A seat is live state the lobby and engine hold under this player ID. Erasing the
+	// account out from under it would rename a player mid-hand and forfeit the table
+	// for everyone else, so leaving is the player's move to make first.
+	if p := views.SessionPlayer(m.global); p != nil && m.global.LobbyManager != nil &&
+		m.global.LobbyManager.FindLobbyByPlayer(p) != nil {
+		m.notice = "Leave your table before deleting your account."
+		return m, nil
+	}
+	m.phase = deleteConfirming
+	m.typed = ""
+	m.notice = ""
+	return m, nil
+}
+
+func (m model) confirmKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key := msg.String(); key {
+	case "esc":
+		m.phase, m.typed, m.notice = deleteIdle, "", ""
+	case "enter":
+		if m.typed != deleteConfirmWord {
+			m.notice = "Type " + deleteConfirmWord + " exactly, then press enter."
+			return m, nil
+		}
+		return m, deleteAccount(m.global.RequestContext(), m.global.UserRepository, m.global.User.ID)
+	case "backspace":
+		if runes := []rune(m.typed); len(runes) > 0 {
+			m.typed = string(runes[:len(runes)-1])
+		}
+		m.notice = ""
+	default:
+		// Text is empty for every key that is not a character, so arrows and function
+		// keys cannot end up in the confirmation string.
+		if msg.Text != "" && len([]rune(m.typed)) < deleteTypedMax {
+			m.typed += msg.Text
+			m.notice = ""
+		}
+	}
+	return m, nil
+}
+
+func (m model) accountDeleted(msg accountDeletedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		slog.Error("database error while deleting account", "error", msg.err)
+		m.typed = ""
+		m.notice = "Could not delete the account. Please try again."
+		return m, nil
+	}
+	m.phase = deleteDone
+	// Quitting is what ends the SSH session through the usual release path, which is
+	// also what frees the session slot - the view never touches the ssh layer itself.
+	return m, tea.Quit
+}
+
+// The warning is deliberately not paged or shortened for a small terminal: it fits
+// the declared 64x20 minimum as it is (TestView_FitsTheTerminal), and an erasure
+// warning is the last screen worth trimming to save a row.
+func (m model) renderConfirm() string {
+	anonymised := db.AnonymisedUsername(m.global.User.ID)
+	prompt := "> " + styles.PadTruncate(m.typed, deleteTypedMax)
+	lines := []string{
+		m.global.Theme.ErrorText.Render("Delete your account permanently?"),
+		"",
+		"- SSH keys removed; a new login is a new account",
+		"- ratings removed from every leaderboard",
+		// InnerWidth at MinWidth is 54; the 40-char deleted_ name has to share that
+		// line or the confirmation wraps taller than the 20-row minimum.
+		"- kept as " + anonymised,
+		"- this cannot be undone",
+		"",
+		"Type DELETE and press enter, esc to cancel",
+		prompt,
+	}
+	if m.notice != "" {
+		lines = append(lines, m.global.Theme.ErrorText.Render(m.notice))
+	}
+	return lg.JoinVertical(lg.Left, lines...)
+}

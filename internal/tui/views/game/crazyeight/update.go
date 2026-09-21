@@ -47,7 +47,10 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 		m.pickingSuit = false
 		return m, nil
 	}
-	return m, m.Leave()
+	// Separate statement on purpose: m is returned by value and Leave mutates it
+	// through the pointer receiver; the order of those two in one return is unspecified.
+	cmd := m.Leave()
+	return m, cmd
 }
 
 // step moves the suit picker's cursor while it is open, and the hand cursor
@@ -70,7 +73,10 @@ func (m *Model) handleNumberSelection(key string) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 	if m.Base.Phase == game.Finished {
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	}
 
 	card, ok := m.SelectedCard()

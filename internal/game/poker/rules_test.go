@@ -398,8 +398,11 @@ func TestRules_TimeoutAction(t *testing.T) {
 	}
 }
 
-// A safe move the rules then refuse would leave the seat stalling the whole table, so
-// the two are checked against each other on a real hand rather than in isolation.
+// A safe move the rules then refuse would leave the seat stalling the whole table: the
+// turn re-arms and the engine takes the seat on the next expiry instead of playing for
+// it. So the two are checked against each other on every turn of a whole match, the
+// between-hands deal included - that is the one timeout an absent player would
+// otherwise freeze the table with.
 func TestRules_TimeoutAction_IsAcceptedByValidateAction(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -407,9 +410,94 @@ func TestRules_TimeoutAction_IsAcceptedByValidateAction(t *testing.T) {
 	t.Cleanup(engine.Close)
 	require.NoError(t, engine.Start())
 
-	engine.WithState(func(state *game.State) {
-		action := rules.TimeoutAction(state)
-		require.NotNil(t, action, "a live hand must always have a safe move")
-		assert.NoError(t, rules.ValidateAction(state, action))
-	})
+	sawDeal := false
+	for range 500 {
+		if engine.IsFinished() {
+			break
+		}
+		var action game.Action
+		engine.WithState(func(state *game.State) {
+			action = rules.TimeoutAction(state)
+			require.NotNil(t, action, "a live table must always have a safe move")
+			require.NoError(t, rules.ValidateAction(state, action))
+		})
+		if _, isDeal := action.(ActionNextHand); isDeal {
+			sawDeal = true
+		}
+		require.NoError(t, engine.SubmitAction(engine.CurrentPlayerID(), action))
+	}
+
+	assert.True(t, engine.IsFinished(), "auto-playing every turn has to finish the match")
+	assert.True(t, sawDeal, "and that includes dealing for an absent dealer")
+}
+
+// Action names go into logs, metrics and the engine's event stream, so they are part
+// of the wire vocabulary rather than an implementation detail.
+func TestActionNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		action game.Action
+		want   string
+	}{
+		{ActionFold{}, "poker.Fold"},
+		{ActionCheck{}, "poker.Check"},
+		{ActionCall{}, "poker.Call"},
+		{ActionRaiseTo{Amount: 100}, "poker.RaiseTo"},
+		{ActionAllIn{}, "poker.AllIn"},
+		{ActionNextHand{}, "poker.NextHand"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.action.Name())
+		})
+	}
+}
+
+// Phase names are what the chip-conservation and bad-deal log lines are read by, so an
+// unnamed phase would make those unreadable rather than merely ugly.
+func TestRoundPhase_String(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		phase RoundPhase
+		want  string
+	}{
+		{PreFlop, "PREFLOP"},
+		{Flop, "FLOP"},
+		{Turn, "TURN"},
+		{River, "RIVER"},
+		{Showdown, "SHOWDOWN"},
+		{PhaseUnknown, "UNKNOWN"},
+		{RoundPhase(200), "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.want, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, tt.phase.String())
+		})
+	}
+}
+
+// Every rules hook reads State.Extra, and the engine hands it whatever the game put
+// there. Another game's state must be ignored rather than type-asserted into a panic.
+func TestRules_ForeignStateIsNotReadAsPoker(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := game.NewState(rules, []*game.Player{{ID: "a"}, {ID: "b"}}, deck.StandardDeck())
+	state.Extra = struct{ NotPoker bool }{}
+
+	assert.False(t, rules.CheckWinCondition(state))
+	assert.Nil(t, rules.Standings(state))
+	assert.Zero(t, rules.StandingScore(state, state.Players[0]))
+	assert.Nil(t, rules.TimeoutAction(state))
+	assert.Zero(t, rules.TurnTimeout(state))
+	require.ErrorIs(t, rules.ValidateAction(state, ActionFold{}), game.ErrInvalidState)
+	require.ErrorIs(t, rules.ApplyAction(state, ActionFold{}), game.ErrInvalidState)
+	require.ErrorIs(t, rules.AfterAction(state, ActionFold{}), game.ErrInvalidState)
+	assert.NotPanics(t, func() { rules.OnPlayerLeave(state, "a") })
+	assert.NotPanics(t, func() { rules.AfterPlayerRemoved(state, 0) })
 }

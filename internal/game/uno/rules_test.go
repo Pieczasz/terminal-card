@@ -33,7 +33,7 @@ func createMultiplayerState(t *testing.T, hands ...int) *game.State {
 	t.Helper()
 	rules := &Rules{}
 	stock := deck.New(initialDeck())
-	require.NoError(t, stock.Shuffle())
+	stock.Shuffle()
 
 	players := make([]*game.Player, 0, len(hands))
 	for i, n := range hands {
@@ -46,7 +46,7 @@ func createMultiplayerState(t *testing.T, hands ...int) *game.State {
 	require.True(t, ok)
 	for isWild(top.Rank) {
 		stock.AddCard(top)
-		require.NoError(t, stock.Shuffle())
+		stock.Shuffle()
 		top, ok = stock.Draw()
 		require.True(t, ok)
 	}
@@ -762,5 +762,139 @@ func TestRules_CardConservation(t *testing.T) {
 				require.GreaterOrEqual(rt, s.Discard.Size(), 1, "the card in play never leaves the pile")
 			})
 		}
+	})
+}
+
+func TestRules_TableSize(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	assert.Equal(t, 2, rules.MinPlayers(), "uno needs somebody to play against")
+	assert.Equal(t, 10, rules.MaxPlayers())
+	assert.Equal(t, "uno.PlayCard", ActionPlayCard{}.Name())
+	assert.Equal(t, "uno.DrawCard", ActionDrawCard{}.Name())
+}
+
+// Direction is an int8 whose zero value is neither clockwise nor counterclockwise:
+// advance would multiply every step by zero and hand the same seat the turn forever.
+// OnGameStart is the only thing standing between the table and that, so it is pinned.
+func TestRules_OnGameStart_StartsClockwise(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "a"}, {ID: "b"}, {ID: "c"}}
+	state := game.NewState(&Rules{}, players, initialDeck())
+	state.Deck.Shuffle()
+
+	require.NoError(t, (&Rules{}).OnGameStart(state))
+
+	extra := state.Extra.(*State)
+	// An opening Reverse legitimately turns the table the other way, so only the zero
+	// value is wrong - it would multiply every step by nothing.
+	assert.Contains(t, []int8{1, -1}, extra.Direction, "a zero direction never leaves the first seat")
+	assert.NotEqual(t, deck.NoSuit, extra.CurrentColor, "the opening card names a colour")
+}
+
+// A draw is unconditionally legal, and TimeoutAction plays one. Reading the top of the
+// discard before the switch made the validator reject it on a pile that came up empty,
+// which is the shape that turns a quiet seat into a kicked one.
+func TestRules_ValidateAction_DrawNeedsNoDiscard(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createTestState()
+	state.Discard = deck.New(nil)
+
+	require.NoError(t, rules.ValidateAction(state, ActionDrawCard{}))
+	assert.Error(t, rules.ValidateAction(state, ActionPlayCard{
+		Card: deck.Card{Rank: deck.Two, Suit: ColorRed},
+	}), "a card still needs something to match against")
+}
+
+// Heads-up the victim of a forced draw is also the next seat the skip lands on, so the
+// player who laid the card takes the turn straight back.
+func TestRules_ApplyAction_ForcedDrawHeadsUp(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		card deck.Card
+		drew int
+	}{
+		{name: "draw two", card: deck.Card{Rank: DrawTwo, Suit: ColorRed}, drew: 2},
+		{name: "wild draw four", card: deck.Card{Rank: WildDrawFour, Suit: ColorWild}, drew: 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := createMultiplayerState(t, 1, 1)
+			state.CurrentTurn = 0
+			state.Players[0].Cards = []deck.Card{tt.card}
+			state.Extra.(*State).CurrentColor = ColorRed
+			state.Discard = deck.New([]deck.Card{{Rank: deck.Two, Suit: ColorRed}})
+			victimBefore := len(state.Players[1].Cards)
+			total := cardsInPlay(state)
+
+			require.NoError(t, (&Rules{}).ApplyAction(state,
+				ActionPlayCard{Card: tt.card, ChosenColor: ColorBlue}))
+
+			assert.Len(t, state.Players[1].Cards, victimBefore+tt.drew)
+			require.NotNil(t, state.OverrideNextTurn)
+			assert.Equal(t, 0, *state.OverrideNextTurn, "two seats: the skip wraps back")
+			assert.Equal(t, total, cardsInPlay(state))
+		})
+	}
+}
+
+// Two seats left and the one on turn walks out: the survivor has nobody to pass to, and
+// an override naming a seat would tell the engine the table still has work to do, which
+// costs them the forfeit win.
+func TestRules_AfterPlayerRemoved_TwoSeatsCollapseToOne(t *testing.T) {
+	t.Parallel()
+	for _, dir := range []int8{1, -1} {
+		t.Run(fmt.Sprintf("direction %d", dir), func(t *testing.T) {
+			t.Parallel()
+			state := createMultiplayerState(t, 3, 3)
+			extra := state.Extra.(*State)
+			extra.Direction = dir
+			state.CurrentTurn = 0
+			extra.leaverWasOnTurn = true
+			state.Players = state.Players[1:] // the engine removes the seat first
+
+			(&Rules{}).AfterPlayerRemoved(state, 0)
+
+			assert.Nil(t, state.OverrideNextTurn, "one seat left has no next turn to take")
+			assert.False(t, extra.leaverWasOnTurn, "the flag is consumed, not left to fire again")
+		})
+	}
+}
+
+// The engine plays TimeoutAction for a seat that has gone quiet. A move ValidateAction
+// refuses is not a skipped turn: the clock re-arms and the seat is taken on the next
+// expiry, so a player is removed for a mistake the rules made.
+func TestSoak_TimeoutActionIsAlwaysLegal(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.IntRange(2, 6).Draw(rt, "players")
+		players := make([]*game.Player, n)
+		for i := range players {
+			players[i] = &game.Player{ID: fmt.Sprintf("p%d", i+1)}
+		}
+		engine := game.NewEngine(rules, players, initialDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		for step := range 400 {
+			if engine.IsFinished() {
+				return
+			}
+			id := engine.CurrentPlayerID()
+			var act game.Action
+			engine.WithState(func(s *game.State) {
+				act = rules.TimeoutAction(s)
+				require.NotNil(rt, act, "step %d: no move for %s", step, id)
+				require.NoError(rt, rules.ValidateAction(s, act),
+					"step %d: %s is not a legal move", step, act.Name())
+			})
+			require.NoError(rt, engine.SubmitAction(id, act))
+		}
+		rt.Fatalf("a table of %d that only ever draws never ran out of cards", n)
 	})
 }

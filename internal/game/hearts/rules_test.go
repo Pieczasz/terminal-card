@@ -4,12 +4,14 @@ import (
 	"fmt"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func fourPlayers(hands ...[]deck.Card) []*game.Player {
@@ -439,7 +441,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 	require.NoError(t, engine.Start())
 	t.Cleanup(engine.Close)
 
-	// Drive the opening pass (or skip if hand 1 somehow had PassNone — it won't).
+	// Drive the opening pass (or skip if hand 1 somehow had PassNone - it won't).
 	for {
 		var stage Stage
 		engine.WithState(func(s *game.State) {
@@ -468,7 +470,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 			engine.WithState(func(s *game.State) {
 				extra := s.Extra.(*State)
 				p := s.Players[s.CurrentTurn]
-				card, ok := firstLegalCard(s, extra, p)
+				card, ok := firstLegalCard(extra, p)
 				require.True(t, ok, "seat %s must have a legal card", id)
 				act = ActionPlayCard{Card: card}
 			})
@@ -560,7 +562,7 @@ func TestMatch_MoonFromRealTrickPlay(t *testing.T) {
 		for seat := range playerCount {
 			state.CurrentTurn = seat
 			p := state.Players[seat]
-			card, ok := firstLegalCard(state, extra, p)
+			card, ok := firstLegalCard(extra, p)
 			require.True(t, ok, "trick %d seat %d has no legal card", trick, seat)
 			require.NoError(t, rules.ValidateAction(state, ActionPlayCard{Card: card}))
 			rules.ApplyAction(state, ActionPlayCard{Card: card})
@@ -710,4 +712,207 @@ func TestRules_StandingScore_TiedSeatsShareAPlace(t *testing.T) {
 	require.Len(t, standings, playerCount)
 	assert.Equal(t, "p3", standings[0].ID, "the fewest points wins hearts")
 	assert.Equal(t, []int{1, 2, 2, 4}, places, "equal totals are one place, not two")
+}
+
+// A table that ends mid-hand on a disconnect has a live hand nobody has scored yet.
+// Those points decide the winner; once scoreHand folds them into the totals they must
+// not be counted a second time, or every completed match doubles its last hand.
+func TestRules_StandingScore_CountsTheLiveHandExactlyOnce(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	engine := game.NewEngine(rules, fourPlayers(), deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra := s.Extra.(*State)
+		extra.CumulativeScores = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 0}
+		extra.HandPoints = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 25}
+		extra.HandComplete = false
+
+		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "mid-hand, the live hand counts")
+		assert.Equal(t, 0, rules.StandingScore(s, s.Players[0]))
+
+		// scoreHand has run: totals now hold the hand, and HandPoints still does too.
+		extra.CumulativeScores["p4"] = 25
+		extra.HandComplete = true
+		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "scored once, not twice")
+	})
+}
+
+func TestRules_TableSize(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	assert.Equal(t, playerCount, rules.MinPlayers(), "hearts is a four-handed game either way")
+	assert.Equal(t, playerCount, rules.MaxPlayers())
+	assert.Len(t, rules.InitialDeck(), 52)
+	assert.Equal(t, "hearts.PassCards", ActionPassCards{}.Name())
+	assert.Equal(t, "hearts.PlayCard", ActionPlayCard{}.Name())
+	assert.Equal(t, "hearts.NextHand", ActionNextHand{}.Name())
+}
+
+// Two stages need longer than a play: choosing three cards to give away, and the
+// between-hands prompt, which is a decision rather than a move. Zero everywhere else
+// means "engine default", not "no clock" - returning a real duration there would
+// quietly redefine the turn length for every trick.
+func TestRules_TurnTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		stage Stage
+		want  time.Duration
+	}{
+		{name: "passing gets 45 seconds", stage: StagePassing, want: 45 * time.Second},
+		{name: "the hand-over prompt gets a minute", stage: StageHandOver, want: time.Minute},
+		{name: "trick play keeps the engine default", stage: StageTrickPlay},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := createTestState()
+			state.Extra.(*State).Stage = tt.stage
+			assert.Equal(t, tt.want, (&Rules{}).TurnTimeout(state))
+		})
+	}
+
+	t.Run("a state that is not a hearts state has no opinion", func(t *testing.T) {
+		t.Parallel()
+		assert.Zero(t, (&Rules{}).TurnTimeout(&game.State{}))
+	})
+}
+
+// A hearts match that ends on a disconnect is scored where it stood, and where it stood
+// includes the hand in progress: the totals alone would rank four seats that have all
+// played twelve tricks purely by who sat first. The seat that walked out ranks last
+// whatever they were holding.
+func TestStandings_MidHandLeaveCountsTheLiveHand(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+
+	engine.WithState(func(s *game.State) {
+		extra := s.Extra.(*State)
+		extra.Stage = StageTrickPlay
+		extra.HandComplete = false
+		extra.CumulativeScores = map[string]int{"p1": 10, "p2": 0, "p3": 10, "p4": 10}
+		// p3 took the queen this hand, so on the totals alone they would tie p1 and p4
+		// and place ahead of both on seat order.
+		extra.HandPoints = map[string]int{"p1": 0, "p2": 5, "p3": 13, "p4": 1}
+	})
+
+	engine.RemovePlayer("p2")
+
+	standings, places := engine.StandingsWithPlaces()
+	require.Len(t, standings, 4)
+	ids := make([]string, len(standings))
+	for i, p := range standings {
+		ids[i] = p.ID
+	}
+	assert.Equal(t, []string{"p1", "p4", "p3", "p2"}, ids,
+		"lowest live total first, and the leaver last whatever they scored")
+	assert.Equal(t, []int{1, 2, 3, 4}, places,
+		"p2 left on 5 points and must not tie anyone still at the table")
+}
+
+// The stage machine is what stops a client replaying a move from a phase that is over.
+func TestRules_ValidateAction_StageGates(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	tests := []struct {
+		name    string
+		stage   Stage
+		action  game.Action
+		wantErr string
+	}{
+		{
+			name: "a play during the pass phase", stage: StagePassing,
+			action: ActionPlayCard{}, wantErr: "must pass cards during passing phase",
+		},
+		{
+			name: "a pass during trick play", stage: StageTrickPlay,
+			action:  ActionPassCards{Cards: make([]deck.Card, cardsToPass)},
+			wantErr: "must play a card during trick play",
+		},
+		{
+			name: "any move once the hand is over", stage: StageHandOver,
+			action: ActionPlayCard{}, wantErr: "hand is over",
+		},
+		{
+			name: "the next hand while this one is live", stage: StageTrickPlay,
+			action: ActionNextHand{}, wantErr: "the hand is still being played",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := createTestState()
+			state.Extra.(*State).Stage = tt.stage
+			assert.ErrorContains(t, rules.ValidateAction(state, tt.action), tt.wantErr)
+		})
+	}
+
+	t.Run("the next hand once the match is over", func(t *testing.T) {
+		t.Parallel()
+		state := createTestState()
+		extra := state.Extra.(*State)
+		extra.Stage = StageHandOver
+		extra.MatchComplete = true
+		assert.ErrorContains(t, rules.ValidateAction(state, ActionNextHand{}), "the match is over")
+	})
+
+	t.Run("a state that is not a hearts state", func(t *testing.T) {
+		t.Parallel()
+		state := &game.State{}
+		require.ErrorIs(t, rules.ValidateAction(state, ActionNextHand{}), game.ErrInvalidState)
+		assert.Nil(t, rules.Standings(state))
+		assert.Zero(t, rules.StandingScore(state, &game.Player{ID: "p1"}))
+		assert.Nil(t, rules.TimeoutAction(state))
+	})
+}
+
+// PassDirection.String is the one label table the logs and the TUI banner share, so a
+// value neither of them expects still has to name itself.
+func TestPassDirection_String(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "left", PassLeft.String())
+	assert.Equal(t, "right", PassRight.String())
+	assert.Equal(t, "across", PassAcross.String())
+	assert.Equal(t, "hold", PassNone.String())
+	assert.Equal(t, "unknown", PassDirection(9).String())
+}
+
+// The engine plays TimeoutAction for a seat that has gone quiet. A move ValidateAction
+// refuses is not a skipped turn: the clock re-arms and the seat is taken on the next
+// expiry, so a player is removed for a mistake the rules made. Hearts is the hardest
+// case - the pass phase, the 2♣ lead, following suit and the first-trick point ban are
+// four different reasons a plausible move is illegal.
+func TestSoak_TimeoutActionIsAlwaysLegal(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+		engine := game.NewEngine(rules, players, deck.StandardDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		for step := range 2000 {
+			if engine.IsFinished() {
+				return
+			}
+			id := engine.CurrentPlayerID()
+			var act game.Action
+			engine.WithState(func(s *game.State) {
+				act = rules.TimeoutAction(s)
+				require.NotNil(rt, act, "step %d: no move for %s", step, id)
+				require.NoError(rt, rules.ValidateAction(s, act),
+					"step %d: %s is not a legal move", step, act.Name())
+			})
+			require.NoError(rt, engine.SubmitAction(id, act))
+		}
+		rt.Fatalf("a match played entirely by the clock never reached %d points", DefaultTargetScore)
+	})
 }

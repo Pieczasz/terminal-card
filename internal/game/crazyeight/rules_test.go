@@ -631,3 +631,109 @@ func TestRules_CardConservation(t *testing.T) {
 		}
 	})
 }
+
+func TestRules_TableSize(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	assert.Equal(t, 2, rules.MinPlayers(), "crazy eights needs somebody to play against")
+	assert.Equal(t, 6, rules.MaxPlayers())
+	assert.Equal(t, "crazyeight.PlayCard", ActionPlayCard{}.Name())
+	assert.Equal(t, "crazyeight.DrawCard", ActionDrawCard{}.Name())
+}
+
+// A draw is unconditionally legal, and TimeoutAction plays one. Reading the top of the
+// discard before the switch made the validator reject it on a pile that came up empty,
+// which is the shape that turns a quiet seat into a kicked one.
+func TestRules_ValidateAction_DrawNeedsNoDiscard(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state := createTestState()
+	state.Discard = deck.New(nil)
+
+	require.NoError(t, rules.ValidateAction(state, ActionDrawCard{}))
+	assert.Error(t, rules.ValidateAction(state, ActionPlayCard{
+		Card: state.Players[0].Cards[0],
+	}), "a card still needs something to match against")
+}
+
+// ApplyAction assigns the chosen suit to an eight unconditionally, which is only sound
+// because the validator refuses every suit that is not one of the four.
+func TestRules_ValidateAction_EightNeedsARealSuit(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	eight := deck.Card{Rank: deck.Eight, Suit: deck.Diamonds}
+
+	for _, suit := range []deck.Suit{deck.NoSuit, deck.Suit(200)} {
+		state := createTestState()
+		state.Players[0].Cards = append(state.Players[0].Cards, eight)
+
+		err := rules.ValidateAction(state, ActionPlayCard{Card: eight, Suit: suit})
+
+		require.ErrorContains(t, err, "must choose a suit when playing an eight",
+			"suit %d", suit)
+	}
+}
+
+// The generic cursor fix-up in the engine is the whole story here: crazy eights has no
+// direction to honour, so the hook must not move the turn.
+func TestRules_AfterPlayerRemoved_LeavesTheCursorAlone(t *testing.T) {
+	t.Parallel()
+	state := createMultiplayerState(t, 3, 3, 3)
+	state.CurrentTurn = 1
+
+	(&Rules{}).AfterPlayerRemoved(state, 0)
+
+	assert.Equal(t, 1, state.CurrentTurn)
+	assert.Nil(t, state.OverrideNextTurn)
+}
+
+// The table cannot open on an Eight, so a stock of nothing but eights has no opening
+// card at all. The deck has to come back whole: the caller reports a table that could
+// not start, and a lost stock would be a silently short deck on the next attempt.
+func TestRules_OnGameStart_AllEightsCannotOpen(t *testing.T) {
+	t.Parallel()
+	state := game.NewState(&Rules{}, []*game.Player{{ID: "a"}, {ID: "b"}}, []deck.Card{
+		{Rank: deck.Eight, Suit: deck.Spades},
+		{Rank: deck.Eight, Suit: deck.Hearts},
+	})
+
+	err := (&Rules{}).OnGameStart(state)
+
+	require.ErrorContains(t, err, "not enough cards to start")
+	assert.Equal(t, 2, state.Deck.Size(), "the stock comes back whole")
+}
+
+// The engine plays TimeoutAction for a seat that has gone quiet. A move ValidateAction
+// refuses is not a skipped turn: the clock re-arms and the seat is taken on the next
+// expiry, so a player is removed for a mistake the rules made.
+func TestSoak_TimeoutActionIsAlwaysLegal(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	rapid.Check(t, func(rt *rapid.T) {
+		n := rapid.IntRange(2, 6).Draw(rt, "players")
+		players := make([]*game.Player, n)
+		for i := range players {
+			players[i] = &game.Player{ID: fmt.Sprintf("p%d", i+1)}
+		}
+		engine := game.NewEngine(rules, players, deck.StandardDeck())
+		require.NoError(rt, engine.Start())
+		defer engine.Close()
+
+		for step := range 300 {
+			if engine.IsFinished() {
+				return
+			}
+			id := engine.CurrentPlayerID()
+			var act game.Action
+			engine.WithState(func(s *game.State) {
+				act = rules.TimeoutAction(s)
+				require.NotNil(rt, act, "step %d: no move for %s", step, id)
+				require.NoError(rt, rules.ValidateAction(s, act),
+					"step %d: %s is not a legal move", step, act.Name())
+			})
+			require.NoError(rt, engine.SubmitAction(id, act))
+		}
+		rt.Fatalf("a table of %d that only ever draws never ran out of cards", n)
+	})
+}

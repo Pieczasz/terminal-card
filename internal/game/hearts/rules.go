@@ -66,19 +66,16 @@ func (r *Rules) beginHand(state *game.State, extra *State, dealer int) error {
 	extra.DealerIndex = dealer
 
 	state.Deck = deck.New(deck.StandardDeck())
-	if err := state.Deck.Shuffle(); err != nil {
-		return fmt.Errorf("shuffle deck: %w", err)
-	}
+	state.Deck.Shuffle()
 	for _, p := range state.Players {
 		cards, ok := state.Deck.DrawNCards(cardsPerHand)
 		if !ok {
 			return errors.New("not enough cards to deal")
 		}
 		p.Cards = cards
-		extra.HandPoints[p.ID] = 0
 	}
 
-	extra.PassDirection = PassDirection((extra.HandNumber - 1) % 4)
+	extra.PassDirection = PassDirection((extra.HandNumber - 1) % 4) //nolint:gosec // G115: a value in 0..3 always fits
 	if extra.PassDirection == PassNone {
 		extra.Stage = StageTrickPlay
 		leader := findTwoOfClubs(state)
@@ -151,10 +148,10 @@ func validatePlay(state *game.State, extra *State, action game.Action) error {
 	if !ok {
 		return errors.New("must play a card during trick play")
 	}
-	return validatePlayCard(state, extra, state.Players[state.CurrentTurn], a.Card)
+	return validatePlayCard(extra, state.Players[state.CurrentTurn], a.Card)
 }
 
-func validatePlayCard(_ *game.State, extra *State, p *game.Player, card deck.Card) error {
+func validatePlayCard(extra *State, p *game.Player, card deck.Card) error {
 	if !slices.Contains(p.Cards, card) {
 		return errors.New("you don't have that card")
 	}
@@ -315,7 +312,7 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 		return ActionPassCards{Cards: threeLowestCards(p.Cards)}
 	case StageTrickPlay:
 		p := state.Players[state.CurrentTurn]
-		if card, ok := firstLegalCard(state, extra, p); ok {
+		if card, ok := firstLegalCard(extra, p); ok {
 			return ActionPlayCard{Card: card}
 		}
 		return nil
@@ -351,11 +348,20 @@ func (r *Rules) OnPlayerLeave(state *game.State, _ string) {
 func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 
 // StandingScore is the value Standings sorted by, so players who finished the match
-// on the same total are reported as the draw they are.
+// on the same total are reported as the draw they are. Mid-hand - a table that ended
+// on a disconnect - the live hand's points count too, or the winner is whoever sat
+// first. Once scoreHand has folded them into the totals they must not count twice.
 func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return 0
 	}
-	return extra.CumulativeScores[p.ID]
+	if extra.HandComplete {
+		return extra.CumulativeScores[p.ID]
+	}
+	return extra.CumulativeScores[p.ID] + extra.HandPoints[p.ID]
 }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)

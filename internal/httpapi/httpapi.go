@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -22,6 +23,9 @@ import (
 )
 
 const (
+	// 200 is also the repository's cache page size, so every limit this endpoint
+	// accepts is one the cache can serve. Raising it past that turns each request
+	// into its own database query.
 	maxLeaderboardLimit = 200
 	defaultLimit        = 5
 
@@ -68,6 +72,10 @@ type errorResponse struct {
 	Error string `json:"error"`
 }
 
+type healthResponse struct {
+	Status string `json:"status"`
+}
+
 type leaderboardEntry struct {
 	Rank     int    `json:"rank"`
 	Username string `json:"username"`
@@ -102,6 +110,10 @@ func Handler(deps Deps) http.Handler {
 		withCORS(deps.AllowOrigin, withRateLimit(limiter, clientAddr, mux)),
 		"stats-api",
 		otelhttp.WithSpanNameFormatter(routeSpanName),
+		// Without this, otelhttp labels every request metric with the client's own
+		// Host header - the same unbounded-cardinality hole routeSpanName closes
+		// for span names.
+		otelhttp.WithServerName("stats-api"),
 	)
 }
 
@@ -151,7 +163,10 @@ func leaderboardHandler(deps Deps) http.Handler {
 			return
 		}
 
-		rankings, err := deps.Users.BestPlayers(r.Context(), limit, r.URL.Query().Get("game"))
+		// No per-game filter: the only client never asked for one, and a caller-supplied
+		// game name is a cache miss by construction - one indexed join per request for
+		// any string that is not a real game.
+		rankings, err := deps.Users.BestPlayers(r.Context(), limit, "")
 		if err != nil {
 			slog.ErrorContext(r.Context(), "leaderboard query failed", "error", err)
 			writeError(w, r, http.StatusServiceUnavailable, "leaderboard unavailable")
@@ -183,13 +198,16 @@ func clientIPFunc(trustProxy bool) func(*http.Request) string {
 		return socketHost
 	}
 	return func(r *http.Request) string {
-		if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-			if first, _, found := strings.Cut(fwd, ","); found {
-				return strings.TrimSpace(first)
-			}
-			return strings.TrimSpace(fwd)
+		first, _, _ := strings.Cut(r.Header.Get("X-Forwarded-For"), ",")
+		first = strings.TrimSpace(first)
+		// Only an address the header actually parses as counts. A blank or malformed
+		// leftmost entry (", 10.0.0.1" and " " both reach here) would otherwise become
+		// NetKey("") and drop every such caller into one shared bucket, which is a
+		// rate limit anybody can either dodge or weaponise against everyone else.
+		if _, err := netip.ParseAddr(first); err != nil {
+			return socketHost(r)
 		}
-		return socketHost(r)
+		return first
 	}
 }
 
@@ -273,10 +291,8 @@ func healthHandler(deps Deps) http.HandlerFunc {
 				return
 			}
 		}
-		w.Header().Set("Content-Type", "application/json; charset=utf-8")
-		w.WriteHeader(http.StatusOK)
-		if r.Method != http.MethodHead {
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		}
+		// Not writeJSON: a cached health answer is a lie about a later moment.
+		w.Header().Set("Cache-Control", "no-store")
+		encodeJSON(w, r, http.StatusOK, healthResponse{Status: "ok"})
 	}
 }

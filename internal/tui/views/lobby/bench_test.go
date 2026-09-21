@@ -10,6 +10,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -26,7 +27,7 @@ func benchGlobal(m *lobby.Manager) router.GlobalContext {
 func BenchmarkJoinView_Render(b *testing.B) {
 	m := lobby.NewManager(context.Background(), nil)
 	for i := range 20 {
-		leader := &game.Player{ID: fmt.Sprintf("h%d", i), UserID: uint(i + 1), Name: fmt.Sprintf("h%d", i)}
+		leader := &game.Player{ID: fmt.Sprintf("h%d", i), UserID: testutil.UID(byte(i + 1)), Name: fmt.Sprintf("h%d", i)}
 		_, err := m.New(leader, lobby.WithPrivate(false), lobby.WithCardGame(testGameName))
 		require.NoError(b, err)
 	}
@@ -42,12 +43,12 @@ func BenchmarkJoinView_Render(b *testing.B) {
 // The in-lobby view redraws on every roster and settings event.
 func BenchmarkLobbyView_Render(b *testing.B) {
 	manager := lobby.NewManager(context.Background(), nil)
-	leader := &game.Player{ID: "1", UserID: 1, Name: "alice"}
+	leader := &game.Player{ID: testutil.SeatID(1), UserID: testutil.UID(1), Name: "alice"}
 	l, err := manager.New(leader, lobby.WithMaxPlayers(4), lobby.WithPrivate(false),
 		lobby.WithCardGame(testGameName))
 	require.NoError(b, err)
 	for i := 2; i <= 4; i++ {
-		g := &game.Player{ID: fmt.Sprint(i), UserID: uint(i), Name: fmt.Sprintf("p%d", i)}
+		g := &game.Player{ID: testutil.SeatID(i), UserID: testutil.UID(i), Name: fmt.Sprintf("p%d", i)}
 		require.NoError(b, manager.JoinLobbyByCode(l.Code(), g))
 	}
 

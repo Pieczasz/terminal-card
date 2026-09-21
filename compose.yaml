@@ -1,4 +1,20 @@
-# Cap every container's JSON log so stdout can't fill the host disk.
+# Sizing target: this whole stack fits in 6 GiB of a 12 GiB / 6-core VPS, leaving the
+# other half to the host. Every service therefore carries an explicit mem_limit, and
+# they add up on purpose:
+#
+#   backend 2048 + db 1536 + prometheus 512 + loki 512 + tempo 384
+#   + alloy 256 + grafana 256 + proxy 128                = 5632 MiB (5.5 GiB)
+#
+# migrate is not in that sum: it runs to completion before the backend starts, so it
+# never holds memory at the same time as anything it is listed beside.
+#
+# CPU works the other way round. `cpus` is a ceiling, not a reservation, and only two
+# services here can sustain load: backend (3.0) and db (1.5) = 4.5 of 6 cores. The
+# observability sidecars are capped tight (1.9 total, ~0.2 in practice) purely so that
+# none of them can ever compete with a game in progress.
+#
+# Go reads the cgroup CPU limit for GOMAXPROCS, so lowering the backend's `cpus` also
+# lowers its parallelism - see the GOGC note on that service before changing it.
 x-logging: &default-logging
   logging:
     driver: json-file
@@ -10,10 +26,18 @@ services:
   migrate:
     image: migrate/migrate:v4.18.3
     <<: *default-logging
+    mem_limit: 128m
+    cpus: 0.5
     volumes:
       - ./internal/db/migrations:/migrations:ro
-    # migrates scratch image has no shell, so the DSN must be passed as an arg.
-    # Prefer an external migrate job / Docker secret in hardened deployments.
+    # ACKNOWLEDGED DEBT: the password is in this argv, so it shows up in `ps` on the
+    # host and in `docker inspect`. migrate's image is FROM scratch - no shell - so it
+    # cannot read a Docker secret and assemble the DSN itself, and moving the value to
+    # an env_file changes nothing: compose interpolates it into argv either way.
+    # The two real fixes, neither done here because neither can be verified without
+    # bringing the stack up: (a) drop the password from the URL and pass PGPASSWORD,
+    # if the pinned migrate build's postgres driver honours it, or (b) run migrations
+    # from `make migrate-up` on the host and delete this service.
     command:
       [
         "-path=/migrations",
@@ -52,6 +76,9 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_SSLMODE=disable
       - ALLOW_INSECURE_DB=true
+      # Must stay at or under the db service's max_connections (50) minus migrate's
+      # one, or a saturated pool becomes "FATAL: sorry, too many clients already".
+      - DB_MAX_OPEN_CONNS=25
       - SSH_KEY_PATH=/data/ssh/server
       - OTEL_EXPORTER_OTLP_ENDPOINT=alloy:4317
       - OTEL_EXPORTER_OTLP_INSECURE=true
@@ -62,7 +89,8 @@ services:
       # MB, so the default GOGC=100 collects constantly and GC, not the cores, becomes
       # the ceiling: measured on 6 cores, GOGC=400 renders 62% more frames a second
       # than the default, while on 2 cores it is worth ~4%. Raise this with the core
-      # count, not the RAM.
+      # count, not the RAM - and note `cpus: 3.0` below is what the core count now is,
+      # because Go derives GOMAXPROCS from the cgroup quota.
       - GOGC=400
       # The backstop that makes the line above safe: collection is forced as the heap
       # approaches this, so a traffic spike cannot turn a relaxed GOGC into an OOM.
@@ -75,6 +103,7 @@ services:
     # The hard ceiling GOMEMLIMIT is 75% of; the kernel kills past this, Go GC
     # holds well under it.
     mem_limit: 2g
+    cpus: 3.0
     volumes:
       - ssh-keys:/data/ssh
     # A card server needs no privileges and writes nothing outside its volume.
@@ -85,9 +114,9 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      # The distroless image has no shell; the server binary probes its own
-      # stats API (-healthcheck -> GET /healthz, which pings the database).
-      # Plain compose only *marks* a container unhealthy; pair with an
+      # The image is FROM scratch - there is no shell and no wget - so the server
+      # binary probes its own stats API (-healthcheck -> GET /healthz, which pings the
+      # database). Plain compose only *marks* a container unhealthy; pair with an
       # auto-restarter (or Docker Swarm) if unattended recovery matters.
       test: ["CMD", "/usr/local/bin/backend", "-healthcheck"]
       interval: 15s
@@ -98,7 +127,7 @@ services:
     # API + 15s finalizers + a second 15s finalizer window + 5s OTel flush = 70s),
     # with headroom for the db close and final log writes, so a redeploy cannot
     # SIGKILL the process while a ranked match is still being persisted or
-    # telemetry flushed.
+    # telemetry flushed. cmd/server's waitForFinalizers comment depends on this number.
     stop_grace_period: 80s
     depends_on:
       db:
@@ -107,11 +136,36 @@ services:
         condition: service_completed_successfully
 
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     restart: always
     <<: *default-logging
+    mem_limit: 1536m
+    cpus: 1.5
+    # Postgres sizes nothing from the cgroup, so every number below is derived from
+    # the 1536m above by hand:
+    #   shared_buffers        25% of the limit
+    #   effective_cache_size  what the planner may assume is cached, ~2/3
+    #   work_mem              per sort node, not per connection: 50 x a few sorts at
+    #                         4MB still fits beside shared_buffers
+    #   maintenance_work_mem  one-off, for the migrate service's index builds
+    #   max_connections       backend pool (25) + migrate (1) + room for a psql,
+    #                         because each idle backend still costs several MB
+    command:
+      - postgres
+      - -c
+      - shared_buffers=384MB
+      - -c
+      - effective_cache_size=1GB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=96MB
+      - -c
+      - max_connections=50
+    # PG 18+ versions PGDATA under /var/lib/postgresql/<major>/docker; the volume
+    # is the parent so a later major upgrade can pg_upgrade in place.
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - db-data:/var/lib/postgresql
     environment:
       - POSTGRES_DB=${DB_NAME:-terminal_card}
       - POSTGRES_USER=${DB_USER:-postgres}
@@ -128,31 +182,39 @@ services:
     image: nginx:1.27-alpine
     restart: unless-stopped
     <<: *default-logging
+    mem_limit: 128m
+    cpus: 0.5
     volumes:
       - type: bind
         source: ./internal/config/nginx.conf
         target: /etc/nginx/nginx.conf
         read_only: true
-      # Built marketing site. Optional: nginx 404s if the directory is empty, so a
-      # deployment that only wants the game works unchanged.
-      - type: bind
-        source: ./web/dist
-        target: /srv/site
-        read_only: true
+    # The only ports this deployment publishes. Everything else talks over the compose
+    # network: publishing 6969 would let clients forge PROXY headers and defeat the
+    # per-network rate limiter, and publishing 6970 would let them forge
+    # X-Forwarded-For, which API_TRUST_PROXY=true above tells the backend to believe.
     ports:
       - 22:22
       - 80:80
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
     depends_on:
       - backend
 
-  # Observability stack (Alloy -> Loki/Tempo/Prometheus + Grafana).
+  # Observability stack (Alloy -> Loki/Tempo/Prometheus + Grafana). None of these
+  # publish a port: Grafana is the only one an operator ever opens, and it is reached
+  # on loopback (below) through an SSH tunnel to the host.
   alloy:
     image: grafana/alloy:v1.8.3
     restart: unless-stopped
     mem_limit: 256m
+    cpus: 0.4
     <<: *default-logging
     volumes:
-      - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy
+      - ./internal/config/alloy/config.alloy:/etc/alloy/config.alloy:ro
       # Read-only Docker socket so loki.source.docker can ship container
       # stdout/stderr (panic dumps and third-party logs) into Loki.
       - /var/run/docker.sock:/var/run/docker.sock:ro
@@ -160,9 +222,13 @@ services:
       - run
       - --server.http.listen-addr=0.0.0.0:12345
       - /etc/alloy/config.alloy
-    ports:
-      - "127.0.0.1:4317:4317"
-      - "127.0.0.1:4318:4318"
+    # The backend reaches these over the compose network as alloy:4317.
+    expose:
+      - 4317
+      - 4318
+    # No healthcheck: the alloy image carries no shell HTTP client (no wget, no curl,
+    # no nc), and a healthcheck whose command does not exist marks the container
+    # unhealthy forever, which is worse than none. Its /-/ready is scraped instead.
     depends_on:
       - loki
       - tempo
@@ -172,56 +238,109 @@ services:
     image: grafana/loki:3.4.2
     restart: unless-stopped
     mem_limit: 512m
+    cpus: 0.3
     <<: *default-logging
-    command: -config.file=/etc/loki/local-config.yaml
-    ports:
-      - "127.0.0.1:3100:3100"
+    command: -config.file=/etc/loki/loki.yaml
+    volumes:
+      # Replaces the image's local-config.yaml, which keeps logs forever and stores
+      # them in the container's writable layer. 14-day retention lives in this file.
+      - ./internal/config/loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    expose:
+      - 3100
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3100/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   tempo:
     image: grafana/tempo:2.7.1
     restart: unless-stopped
-    mem_limit: 512m
+    mem_limit: 384m
+    cpus: 0.2
     <<: *default-logging
     command: -config.file=/etc/tempo/tempo.yaml
     volumes:
       - ./internal/config/tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo-data:/var/tempo
-    ports:
-      - "127.0.0.1:3200:3200"
     expose:
+      - 3200
       - 4317
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3200/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   prometheus:
     image: prom/prometheus:v3.1.0
     restart: unless-stopped
     mem_limit: 512m
+    cpus: 0.3
     <<: *default-logging
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-remote-write-receiver
-      - --storage.tsdb.retention.time=7d
+      # 30 days. Metrics are the one store here with no personal data in it - every
+      # attribute is a bounded enum, enforced by internal/observability's tests - so
+      # this is a disk decision, not a privacy one, and a month of history is what
+      # makes "is this deploy slower than last month's" answerable.
+      - --storage.tsdb.retention.time=30d
+      # Belt and braces: whichever bound is hit first wins, so a cardinality mistake
+      # costs a gap in history rather than the host's disk.
+      - --storage.tsdb.retention.size=8GB
     volumes:
       - ./internal/config/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - ./internal/config/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
       - prometheus-data:/prometheus
-    ports:
-      - "127.0.0.1:9090:9090"
+    expose:
+      - 9090
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
   grafana:
     image: grafana/grafana:11.5.2
     restart: unless-stopped
     mem_limit: 256m
+    cpus: 0.2
     <<: *default-logging
     volumes:
-      - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources
-      - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards
-      - ./internal/config/grafana/dashboards:/var/lib/grafana/dashboards
+      - ./internal/config/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./internal/config/grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./internal/config/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
     environment:
+      # Anonymous Admin, no login form, no password: the gate is the VPS. This port is
+      # published on loopback only (below, and asserted in CI), so reaching Grafana at
+      # all means an SSH session on the host - and anyone with that already owns the
+      # database, the volumes and every secret in this file. A password here would
+      # protect nothing and add one more credential to rotate and forget. Never widen
+      # the binding without adding real authentication first.
       - GF_AUTH_ANONYMOUS_ENABLED=true
       - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
       - GF_AUTH_DISABLE_LOGIN_FORM=true
+      - GF_AUTH_BASIC_ENABLED=false
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+    # Loopback only, and the one exception to "nothing but the proxy publishes a
+    # port": reach it with `ssh -L 3000:127.0.0.1:3000 <host>`. It is never bound to
+    # 0.0.0.0 - the anonymous Admin above assumes exactly this, and CI asserts it.
     ports:
       - "127.0.0.1:3000:3000"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
     depends_on:
       - loki
       - tempo
@@ -230,5 +349,7 @@ services:
 volumes:
   db-data:
   ssh-keys:
+  loki-data:
   tempo-data:
   prometheus-data:
+  grafana-data:

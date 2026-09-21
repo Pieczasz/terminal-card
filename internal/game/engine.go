@@ -48,8 +48,11 @@ func WithTurnTimeout(d time.Duration) EngineOption {
 func NewEngine(rules Rules, players []*Player, cards []deck.Card, opts ...EngineOption) *Engine {
 	e := &Engine{
 		state: NewState(rules, players, cards),
-		// Headroom for non-player subscribers (the ranked-finalize watcher) and
-		// reconnect overlap; too small a cap freezes a real player's view.
+		// The argument is the subscriber cap, not a buffer size (that is fixed):
+		// headroom above the seat count for non-player subscribers (the
+		// ranked-finalize watcher) and for a reconnect overlapping the seat it
+		// replaces. Too small and a real player's Subscribe fails with
+		// ErrAtCapacity, leaving their view with no feed at all.
 		broadcaster: broadcaster.New[Event](len(players) + 8),
 		turnTimeout: DefaultTurnTimeout,
 		missedTurns: make(map[string]int, len(players)),
@@ -99,9 +102,6 @@ func (e *Engine) snapshotLocked() StateSnapshot {
 	}
 	snap.Players = make([]PlayerSnapshot, 0, len(state.Players))
 	for _, p := range state.Players {
-		if p == nil {
-			continue
-		}
 		snap.Players = append(snap.Players, PlayerSnapshot{
 			ID:       p.ID,
 			Username: p.DisplayName(),
@@ -120,7 +120,7 @@ func (e *Engine) Frame(playerID string, fn func(*State)) (StateSnapshot, []deck.
 	snap := e.snapshotLocked()
 	var hand []deck.Card
 	for _, p := range e.state.Players {
-		if p != nil && p.ID == playerID {
+		if p.ID == playerID {
 			hand = slices.Clone(p.Cards)
 			break
 		}
@@ -153,6 +153,10 @@ func (e *Engine) IsFinished() bool {
 
 // StandingsWithPlaces returns standings and 1-based finishing places in one lock hold.
 // Players the rules scored equally share a place; everything else counts up strictly.
+//
+// The *Player values alias live engine state, so only the fields nothing writes after
+// the seat was taken - ID, UserID, Name - are safe to read once the lock is gone.
+// Cards and anything the rules keep may change under a caller that holds them.
 func (e *Engine) StandingsWithPlaces() ([]*Player, []int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -162,6 +166,16 @@ func (e *Engine) StandingsWithPlaces() ([]*Player, []int) {
 }
 
 func (e *Engine) placesLocked(standings []*Player) []int {
+	// standingsLocked appends LeftPlayers after the seats the rules placed, so a
+	// leaver's StandingScore was measured against a state they are no longer in -
+	// tying it with a seated player turns a rage-quit into a rated draw. They rank
+	// strictly below everyone still at the table. Two leavers with the same score
+	// still share a place: splitting them mints Elo between people who both quit.
+	left := make(map[string]bool, len(e.state.LeftPlayers))
+	for _, p := range e.state.LeftPlayers {
+		left[p.ID] = true
+	}
+
 	places := make([]int, len(standings))
 	scorer, ok := e.state.Rules.(StandingScorer)
 	for i, p := range standings {
@@ -169,6 +183,7 @@ func (e *Engine) placesLocked(standings []*Player) []int {
 		case i == 0:
 			places[i] = 1
 		case ok && p != nil && standings[i-1] != nil &&
+			left[p.ID] == left[standings[i-1].ID] &&
 			scorer.StandingScore(e.state, p) == scorer.StandingScore(e.state, standings[i-1]):
 			places[i] = places[i-1]
 		default:
@@ -195,6 +210,8 @@ func (e *Engine) StandingsIDs() []string {
 func (e *Engine) standingsLocked() []*Player {
 	standings := e.state.Rules.Standings(e.state)
 
+	// State.Players holds no nils (Start deals into every seat, so one would panic
+	// there first), but Standings is the rules' own slice and may.
 	placed := make(map[string]bool, len(standings))
 	for _, p := range standings {
 		if p != nil {
@@ -205,7 +222,7 @@ func (e *Engine) standingsLocked() []*Player {
 	out := make([]*Player, 0, len(standings)+len(e.state.LeftPlayers))
 	out = append(out, standings...)
 	for _, p := range slices.Backward(e.state.LeftPlayers) {
-		if p != nil && !placed[p.ID] {
+		if !placed[p.ID] {
 			out = append(out, p)
 		}
 	}
@@ -244,9 +261,7 @@ func (e *Engine) Start() (err error) {
 		e.state.Phase = Waiting
 	}()
 
-	if err := e.state.Deck.Shuffle(); err != nil {
-		return fmt.Errorf("shuffle deck: %w", err)
-	}
+	e.state.Deck.Shuffle()
 
 	hands := make([][]deck.Card, len(e.state.Players))
 	for playerIdx := range e.state.Players {
@@ -412,7 +427,7 @@ func (e *Engine) removePlayerLocked(playerID string) {
 	}
 
 	playerIndex := slices.IndexFunc(e.state.Players, func(p *Player) bool {
-		return p != nil && p.ID == playerID
+		return p.ID == playerID
 	})
 	if playerIndex == -1 {
 		return
@@ -431,6 +446,8 @@ func (e *Engine) removePlayerLocked(playerID string) {
 	if e.state.CurrentTurn > playerIndex {
 		e.state.CurrentTurn--
 	}
+	// Before AfterPlayerRemoved, and it has to stay that way: the poker hook indexes
+	// Players by the clamped cursor and no longer guards the range itself.
 	e.clampTurnLocked()
 
 	if h, ok := e.state.Rules.(PlayerLeaveHandler); ok {

@@ -86,13 +86,7 @@ func (m *Model) renderPlayerSection() string {
 	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingSuit,
 		gameview.HandWidth(m.Global.Width), gameview.HandRows(m.Global.Height))
 
-	sections := []string{statusView, handView}
-	if m.lastActionErr != nil {
-		errView := m.Global.Theme.ErrorText.Render(m.lastActionErr.Error())
-		sections = append(sections, errView)
-	}
-
-	return lg.JoinVertical(lg.Center, sections...)
+	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, handView)
 }
 
 func (m *Model) renderSuitPicker() string {

@@ -1,7 +1,6 @@
 package lobby
 
 import (
-	"context"
 	"fmt"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/ratelimit"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,15 +57,15 @@ func TestConcurrent_JoinUpToCapacity(t *testing.T) {
 	)
 	freeSlots := maxPlayers - 1 // leader already occupies one slot
 
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(maxPlayers), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	guests := make([]*guestRef, joiners)
 	for i := range guests {
-		guests[i] = &guestRef{p: mockPlayer(fmt.Sprintf("g%d", i), uint(i+2))}
+		guests[i] = &guestRef{p: mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+2)))}
 	}
 
 	var (
@@ -131,15 +131,15 @@ func TestConcurrent_LeaderAndGuestsLeaveSimultaneously(t *testing.T) {
 
 	const players = 8 // leader + 7 guests
 
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(players), WithCardGame("TestGame"))
 	require.NoError(t, err)
 
 	all := []*game.Player{leader}
 	for i := 1; i < players; i++ {
-		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
+		g := mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+1)))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 		all = append(all, g)
 	}
@@ -188,15 +188,15 @@ func TestConcurrent_JoinRacingLastLeave(t *testing.T) {
 
 	runWithTimeout(t, 30*time.Second, func() {
 		for i := range iterations {
-			m := NewManager(context.Background(), nil)
+			m := newTestManager(t, nil)
 			unlimitedJoins(m)
 
-			leader := mockPlayer(fmt.Sprintf("leader-%d", i), uint(2*i+1))
+			leader := mockPlayer(fmt.Sprintf("leader-%d", i), testutil.UID(uint64(2*i+1)))
 			l, err := m.New(leader, WithMaxPlayers(4), WithCardGame("TestGame"))
 			require.NoError(t, err)
 			code := l.Code()
 
-			joiner := mockPlayer(fmt.Sprintf("joiner-%d", i), uint(2*i+2))
+			joiner := mockPlayer(fmt.Sprintf("joiner-%d", i), testutil.UID(uint64(2*i+2)))
 
 			var (
 				wg      sync.WaitGroup
@@ -250,15 +250,15 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 		perGoTurns = 40
 	)
 
-	m := NewManager(context.Background(), nil)
+	m := newTestManager(t, nil)
 	unlimitedJoins(m)
-	leader := mockPlayer("leader", 1)
+	leader := mockPlayer("leader", testutil.UID(1))
 	l, err := m.New(leader, WithMaxPlayers(members), WithCardGame("NeverStarts"))
 	require.NoError(t, err)
 
 	roster := []*game.Player{leader}
 	for i := 1; i < members; i++ {
-		g := mockPlayer(fmt.Sprintf("g%d", i), uint(i+1))
+		g := mockPlayer(fmt.Sprintf("g%d", i), testutil.UID(uint64(i+1)))
 		require.NoError(t, m.JoinLobbyByCode(l.Code(), g))
 		roster = append(roster, g)
 	}
@@ -302,4 +302,266 @@ func TestConcurrent_ToggleReady(t *testing.T) {
 		_ = l.IsReady(p) // must not race or panic
 		assert.True(t, l.HasPlayer(p), "member %q vanished from roster", p.ID)
 	}
+}
+
+// seatInvariant is the one thing that must hold after any interleaving of disconnect,
+// reconnect and expiry: the roster and the manager's index agree, and no timer is left
+// armed for a seat that is already gone. A seat held with no pending timer is a resumed
+// player; a seat gone with no index entry is an expired one. Never both, never neither.
+func seatInvariant(t *testing.T, m *Manager, l *Lobby, p *game.Player, iter int) {
+	t.Helper()
+	m.mu.RLock()
+	_, pending := m.grace.pending[p.ID]
+	indexed := m.playerLobby[p.ID]
+	m.mu.RUnlock()
+
+	// A closed lobby keeps its roster slice - RemoveLobby discards the object rather
+	// than emptying it - so the state, not the slice, is what says whether a seat
+	// exists. The manager's index is the authoritative membership record either way.
+	l.mu.RLock()
+	seated := l.state != Closed && l.hasPlayerLocked(p)
+	l.mu.RUnlock()
+
+	assert.False(t, pending, "iter %d: a grace timer is still armed after both paths settled", iter)
+	if seated {
+		assert.Equal(t, l, indexed, "iter %d: seat held but the index does not point at the lobby", iter)
+		return
+	}
+	assert.Nil(t, indexed, "iter %d: the seat is gone but the index still claims it", iter)
+}
+
+// The grace timer firing and the player reconnecting are the same seat from two
+// goroutines. Whoever loses must lose completely: a resume that hands back a lobby the
+// expiry has already emptied drops the player into a table that does not hold them.
+func TestConcurrent_GraceExpiryRacesReconnect(t *testing.T) {
+	t.Parallel()
+
+	const iterations = 200
+	runWithTimeout(t, 30*time.Second, func() {
+		for i := range iterations {
+			m, l, _, guest := startedGame(t)
+			m.DisconnectPlayer(guest)
+
+			var (
+				wg      sync.WaitGroup
+				gate    = make(chan struct{})
+				resumed *Lobby
+			)
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-gate
+				m.expireLeave(guest)
+			}()
+			go func() {
+				defer wg.Done()
+				<-gate
+				resumed = m.ResumePlayer(guest)
+			}()
+			close(gate)
+			wg.Wait()
+
+			seatInvariant(t, m, l, guest, i)
+			if resumed != nil {
+				assert.True(t, l.HasPlayer(guest), "iter %d: resumed into a seat that was given up", i)
+				assert.Equal(t, l, resumed, "iter %d: resumed into the wrong table", i)
+			}
+		}
+	})
+}
+
+// Two sessions for one account can both reach ResumePlayer - a takeover overlaps the
+// old session's teardown. Exactly one may cancel the grace, and neither may leave one
+// armed or come back with a lobby the player is not in.
+func TestConcurrent_ReconnectTwice(t *testing.T) {
+	t.Parallel()
+
+	const iterations = 200
+	runWithTimeout(t, 30*time.Second, func() {
+		for i := range iterations {
+			m, l, _, guest := startedGame(t)
+			m.DisconnectPlayer(guest)
+
+			var (
+				wg   sync.WaitGroup
+				gate = make(chan struct{})
+				got  [2]*Lobby
+			)
+			for slot := range got {
+				wg.Add(1)
+				go func(slot int) {
+					defer wg.Done()
+					<-gate
+					got[slot] = m.ResumePlayer(guest)
+				}(slot)
+			}
+			close(gate)
+			wg.Wait()
+
+			seatInvariant(t, m, l, guest, i)
+			for _, resumed := range got {
+				assert.Equal(t, l, resumed, "iter %d: a reconnecting session lost its own table", i)
+			}
+		}
+	})
+}
+
+// The match can finish while a seat is still being held for a reconnect. The reopened
+// table gives that seat up, and a resume landing at the same moment must not resurrect
+// it or leave the index pointing at a lobby that has already closed.
+func TestConcurrent_MatchEndsDuringTheGraceWindow(t *testing.T) {
+	t.Parallel()
+
+	const iterations = 200
+	runWithTimeout(t, 30*time.Second, func() {
+		for i := range iterations {
+			m, l, leader, guest := startedGame(t)
+			m.DisconnectPlayer(guest)
+
+			var (
+				wg   sync.WaitGroup
+				gate = make(chan struct{})
+			)
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-gate
+				m.LeaveLobby(leader) // last player out finishes the engine
+			}()
+			go func() {
+				defer wg.Done()
+				<-gate
+				m.ResumePlayer(guest)
+			}()
+			close(gate)
+			wg.Wait()
+
+			// The watcher goroutine does the release, so the settled state is eventual.
+			require.Eventually(t, func() bool {
+				m.mu.RLock()
+				defer m.mu.RUnlock()
+				_, pending := m.grace.pending[guest.ID]
+				return !pending
+			}, 2*time.Second, time.Millisecond, "iter %d: a grace timer outlived the match", i)
+			seatInvariant(t, m, l, guest, i)
+			assert.Nil(t, m.FindLobbyByPlayer(leader), "iter %d: the leader left a ghost entry", i)
+		}
+	})
+}
+
+// Shutdown walks the pending graces while a session is still dropping into one. The
+// drain must not leave a timer behind whichever order they land in.
+func TestConcurrent_DisconnectDuringShutdown(t *testing.T) {
+	t.Parallel()
+
+	const iterations = 200
+	runWithTimeout(t, 30*time.Second, func() {
+		for i := range iterations {
+			m, l, _, guest := startedGame(t)
+
+			var (
+				wg   sync.WaitGroup
+				gate = make(chan struct{})
+			)
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-gate
+				m.DisconnectPlayer(guest)
+			}()
+			go func() {
+				defer wg.Done()
+				<-gate
+				m.BeginShutdown()
+			}()
+			close(gate)
+			wg.Wait()
+
+			seatInvariant(t, m, l, guest, i)
+		}
+	})
+}
+
+// Kick, leave and join all rewrite the same two maps under the manager lock. A target
+// that is kicked while leaving, or joining elsewhere, must end up in exactly one place.
+func TestConcurrent_KickRacesLeaveAndJoin(t *testing.T) {
+	t.Parallel()
+
+	const iterations = 300
+	runWithTimeout(t, 30*time.Second, func() {
+		for i := range iterations {
+			m := newTestManager(t, nil)
+			unlimitedJoins(m)
+
+			host := mockPlayer("host", testutil.UID(1))
+			target := mockPlayer("target", testutil.UID(2))
+			other := mockPlayer("other", testutil.UID(3))
+
+			table, err := m.New(host, WithMaxPlayers(4), WithCardGame("TestGame"))
+			require.NoError(t, err)
+			elsewhere, err := m.New(other, WithMaxPlayers(4), WithCardGame("TestGame"))
+			require.NoError(t, err)
+			require.NoError(t, m.JoinLobbyByCode(table.Code(), target))
+
+			var (
+				wg   sync.WaitGroup
+				gate = make(chan struct{})
+			)
+			wg.Add(3)
+			go func() { defer wg.Done(); <-gate; _ = m.Kick(host, target) }()
+			go func() { defer wg.Done(); <-gate; m.LeaveLobby(target) }()
+			go func() { defer wg.Done(); <-gate; _ = m.JoinLobbyByCode(elsewhere.Code(), target) }()
+			close(gate)
+			wg.Wait()
+
+			// Every order of the three is legal, and which one wins is not the point.
+			// What must never happen is the player holding two seats, or the roster and
+			// the index disagreeing about which single seat they hold.
+			m.mu.RLock()
+			indexed := m.playerLobby[target.ID]
+			m.mu.RUnlock()
+
+			atTable, atElsewhere := table.HasPlayer(target), elsewhere.HasPlayer(target)
+			require.False(t, atTable && atElsewhere, "iter %d: seated at two tables at once", i)
+			switch {
+			case atTable:
+				assert.Equal(t, table, indexed, "iter %d: seated at the first table, indexed elsewhere", i)
+			case atElsewhere:
+				assert.Equal(t, elsewhere, indexed, "iter %d: seated at the second table, indexed elsewhere", i)
+			default:
+				assert.Nil(t, indexed, "iter %d: no seat anywhere, but the index still claims one", i)
+			}
+		}
+	})
+}
+
+// The browse cache clears its dirty flag before it snapshots the lobby set, never
+// after: a table created in between would otherwise set the flag, have it cleared by a
+// scan that could not see it, and stay hidden for the whole cache TTL.
+func TestConcurrent_BrowseCacheNeverSwallowsAnInvalidation(t *testing.T) {
+	t.Parallel()
+
+	const tables = 60
+	m := newTestManager(t, nil)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for range tables * 10 {
+			m.BrowseLobbies(nil, BrowseFilter{Limit: MaxBrowseLimit})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := range tables {
+			_, err := m.New(mockPlayer(fmt.Sprintf("p%d", i), testutil.UID(uint64(i+1))),
+				WithPrivate(false), WithCardGame("TestGame"))
+			assert.NoError(t, err)
+		}
+	}()
+	runWithTimeout(t, 30*time.Second, wg.Wait)
+
+	assert.Len(t, m.BrowseLobbies(nil, BrowseFilter{Limit: MaxBrowseLimit}), tables,
+		"a table created while a browse was scanning stayed hidden for the cache TTL")
 }

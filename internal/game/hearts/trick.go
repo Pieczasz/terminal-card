@@ -140,9 +140,9 @@ func threeLowestCards(hand []deck.Card) []deck.Card {
 	return sorted[:cardsToPass]
 }
 
-func firstLegalCard(state *game.State, extra *State, p *game.Player) (deck.Card, bool) {
+func firstLegalCard(extra *State, p *game.Player) (deck.Card, bool) {
 	for _, c := range p.Cards {
-		if validatePlayCard(state, extra, p, c) == nil {
+		if validatePlayCard(extra, p, c) == nil {
 			return c, true
 		}
 	}

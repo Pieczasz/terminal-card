@@ -6,7 +6,11 @@ import (
 	"time"
 )
 
-const defaultMaxKeys = 10_000
+const (
+	defaultMaxKeys = 10_000
+	// sweepEvery amortises the only full-table walk left over that many calls.
+	sweepEvery = 64
+)
 
 type SlidingWindowLimiter struct {
 	mu      sync.Mutex
@@ -15,7 +19,6 @@ type SlidingWindowLimiter struct {
 	logs    map[string][]time.Time
 	ops     uint64
 	maxKeys int
-	now     func() time.Time
 }
 
 func NewSlidingWindowLimiter(limit int, window time.Duration) *SlidingWindowLimiter {
@@ -24,7 +27,6 @@ func NewSlidingWindowLimiter(limit int, window time.Duration) *SlidingWindowLimi
 		window:  window,
 		logs:    make(map[string][]time.Time),
 		maxKeys: defaultMaxKeys,
-		now:     time.Now,
 	}
 }
 
@@ -40,7 +42,7 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	now := s.now()
+	now := time.Now()
 	threshold := now.Add(-s.window)
 
 	timestamps := filterExpired(s.logs[ip], threshold)
@@ -54,16 +56,14 @@ func (s *SlidingWindowLimiter) Allow(ip string) bool {
 		return false
 	}
 
-	_, exists := s.logs[ip]
-	if !exists && len(s.logs) >= s.maxKeys {
-		s.evictExpiredLocked(threshold)
-		s.evictLeastRecentLocked()
+	if _, exists := s.logs[ip]; !exists && len(s.logs) >= s.maxKeys {
+		s.evictOneLocked()
 	}
 
 	s.logs[ip] = append(timestamps, now)
 
 	s.ops++
-	if s.ops%64 == 0 {
+	if s.ops%sweepEvery == 0 {
 		s.evictExpiredLocked(threshold)
 	}
 	return true
@@ -87,21 +87,16 @@ func (s *SlidingWindowLimiter) evictExpiredLocked(threshold time.Time) {
 	}
 }
 
-func (s *SlidingWindowLimiter) evictLeastRecentLocked() {
-	var victim string
-	var oldest time.Time
-	for ip, timestamps := range s.logs {
-		if len(timestamps) == 0 {
-			delete(s.logs, ip)
-			continue
-		}
-		last := timestamps[len(timestamps)-1]
-		if victim == "" || last.Before(oldest) {
-			victim, oldest = ip, last
-		}
-	}
-	if len(s.logs) >= s.maxKeys && victim != "" {
-		delete(s.logs, victim)
+// evictOneLocked drops a single key in map order, which is O(1) and is the whole
+// point: a full table is reached by a flood of fresh addresses (one IPv6 /48 has
+// 65536 networks to spend), and picking the "best" victim meant walking all
+// maxKeys entries under the mutex on every one of those requests - the flood paid
+// for with our CPU. Go randomizes map iteration, so this is an arbitrary victim,
+// not LRU; during a flood any eviction is cheaper than walking the table.
+func (s *SlidingWindowLimiter) evictOneLocked() {
+	for ip := range s.logs {
+		delete(s.logs, ip)
+		return
 	}
 }
 

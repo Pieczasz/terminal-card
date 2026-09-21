@@ -320,13 +320,10 @@ func TestEngine_TurnTimeout_TimerActuallyFires(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond, "the armed timer must play the safe move on its own")
 }
 
-// A player's own action clears their miss count before the rules see it, because
-// someone sending a move is at the keyboard whether or not it was legal. But a
-// refused action returns without settling the cursor, so nothing on that path arms a
-// new clock - and the timer that got us here has already fired. removeIfStillIdle
-// finds the count cleared, declines to take the seat, and has to re-arm on its way
-// out or the table sits on this turn with a dead clock until someone else leaves.
-func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T) {
+// Spamming moves the rules refuse must not read as presence. A rejected action
+// clears nothing and settles no cursor, so turnSeq is unchanged and the seat still
+// goes - otherwise a client could sit out forever by sending garbage once per expiry.
+func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalStillLosesTheSeat(t *testing.T) {
 	t.Parallel()
 
 	rules := &timeoutRules{safe: namedAction{name: "safe"}}
@@ -341,10 +338,7 @@ func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T)
 	_, _, takeSeat := engine.resolveTurnTimeout(seq)
 	require.True(t, takeSeat, "one more miss reaches the limit")
 
-	// The seat spams a move the rules refuse in the window resolveTurnTimeout had
-	// to drop the locks for. A rejected action must not read as presence: clearing
-	// the count on any keypress would let a client dodge removal forever by
-	// sending garbage once per expiry.
+	// The refusal lands in the window resolveTurnTimeout had to drop the lock for.
 	rules.reject = true
 	require.Error(t, engine.SubmitAction(victim, namedAction{name: "refused"}))
 	require.Equal(t, MaxMissedTurns, engine.MissedTurns(victim),
@@ -362,4 +356,164 @@ func TestEngine_TurnTimeout_RefusedMoveBeforeRemovalRearmsTheClock(t *testing.T)
 		}
 		assert.False(t, seated, "garbage input is not playing: the seat is taken")
 	})
+}
+
+// The miss and the announcement of it have to land in the same lock hold. Published
+// afterwards, a player whose move lands in the gap gets the miss refunded while the
+// "timed out" they disproved still reaches every other client.
+func TestEngine_TurnTimeout_EventShipsWithTheMiss(t *testing.T) {
+	t.Parallel()
+
+	rules := &timeoutRules{safe: namedAction{name: "safe"}}
+	engine := newTimeoutEngine(t, rules, "a", "b")
+	// Subscribed after Start, so the feed holds nothing yet.
+	events, err := engine.Broadcaster().Subscribe()
+	require.NoError(t, err)
+
+	engine.mu.Lock()
+	seq := engine.turnSeq
+	engine.mu.Unlock()
+
+	expired, _, takeSeat := engine.resolveTurnTimeout(seq)
+	require.False(t, takeSeat)
+
+	select {
+	case ev := <-events:
+		assert.Equal(t, EventTurnTimedOut, ev.Type)
+		assert.Equal(t, expired, ev.PlayerID)
+	default:
+		t.Fatal("the expiry was charged without being announced")
+	}
+}
+
+// A seat that is taken for idling must not also be announced as merely slow: the view
+// treats EventPlayerIdle as the end of the session, and a stray timed-out event before
+// it would be rendered as a turn that is still in play.
+func TestEngine_TurnTimeout_TakingTheSeatSkipsTheTimedOutEvent(t *testing.T) {
+	t.Parallel()
+
+	rules := &timeoutRules{safe: namedAction{name: "safe"}}
+	engine := newTimeoutEngine(t, rules, "a", "b")
+
+	victim := engine.CurrentPlayerID()
+	engine.mu.Lock()
+	engine.missedTurns[victim] = MaxMissedTurns - 1
+	seq := engine.turnSeq
+	engine.mu.Unlock()
+
+	events, err := engine.Broadcaster().Subscribe()
+	require.NoError(t, err)
+
+	engine.onTurnTimeout(seq)
+
+	var types []EventType
+	for {
+		select {
+		case ev := <-events:
+			types = append(types, ev.Type)
+			continue
+		default:
+		}
+		break
+	}
+	assert.NotContains(t, types, EventTurnTimedOut)
+	assert.Contains(t, types, EventPlayerIdle)
+}
+
+// stretchedRules gives one phase of the game a longer clock, the way hearts does for
+// its pass phase and poker for the between-hands deal.
+type stretchedRules struct {
+	*timeoutRules
+	override time.Duration
+}
+
+func (r stretchedRules) TurnTimeout(*State) time.Duration { return r.override }
+
+func TestEngine_TurnTimeout_RulesCanStretchATurn(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		override time.Duration
+		wantMin  time.Duration
+	}{
+		{name: "a longer phase gets a longer clock", override: time.Hour, wantMin: 30 * time.Minute},
+		{name: "zero keeps the engine default", override: 0, wantMin: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			const engineDefault = time.Minute
+			rules := stretchedRules{
+				timeoutRules: &timeoutRules{safe: namedAction{name: "safe"}},
+				override:     tt.override,
+			}
+			engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}},
+				deck.StandardDeck(), WithTurnTimeout(engineDefault))
+			t.Cleanup(engine.Close)
+			require.NoError(t, engine.Start())
+
+			remaining := time.Until(engine.TurnDeadline())
+			assert.Greater(t, remaining, tt.wantMin)
+			assert.LessOrEqual(t, remaining, max(tt.override, engineDefault))
+		})
+	}
+}
+
+// A rules set can stretch a turn but cannot conjure a clock the engine was built
+// without: WithTurnTimeout(0) is the operator's off switch.
+func TestEngine_TurnTimeout_StretchCannotResurrectADisabledClock(t *testing.T) {
+	t.Parallel()
+
+	rules := stretchedRules{
+		timeoutRules: &timeoutRules{safe: namedAction{name: "safe"}},
+		override:     time.Hour,
+	}
+	engine := NewEngine(rules, []*Player{{ID: "a"}, {ID: "b"}},
+		deck.StandardDeck(), WithTurnTimeout(0))
+	t.Cleanup(engine.Close)
+	require.NoError(t, engine.Start())
+
+	assert.True(t, engine.TurnDeadline().IsZero())
+}
+
+// panickingRules is a rules bug in the one hook that runs on a timer goroutine.
+type panickingRules struct{ *timeoutRules }
+
+func (*panickingRules) TimeoutAction(*State) Action { panic("rules bug in auto-play") }
+
+// A panic inside TimeoutAction unwinds a time.AfterFunc goroutine, and an unrecovered
+// panic there kills the process: every table on the server, for one game's bug. The
+// engine has to catch it and end just this table, the way it ends one on a rules
+// error from SubmitAction.
+func TestEngine_TurnTimeout_RulesPanicEndsOnlyThisTable(t *testing.T) {
+	t.Parallel()
+
+	rules := &panickingRules{&timeoutRules{safe: namedAction{name: "safe"}}}
+	engine := newTimeoutEngine(t, rules, "a", "b")
+
+	events, err := engine.Broadcaster().Subscribe()
+	require.NoError(t, err)
+	engine.mu.Lock()
+	seq := engine.turnSeq
+	engine.mu.Unlock()
+
+	require.NotPanics(t, func() { engine.onTurnTimeout(seq) }, "the timer goroutine must recover")
+
+	assert.True(t, engine.IsFinished(), "the table with the buggy rules is over")
+	var ended *Event
+	for {
+		select {
+		case ev := <-events:
+			if ev.Type == EventGameEnded {
+				ended = &ev
+			}
+			continue
+		default:
+		}
+		break
+	}
+	require.NotNil(t, ended, "the end is announced so the lobby can finalize")
+	assert.Equal(t, EndReasonRulesError, ended.Reason, "a panic is a rules error: the match is not rated")
 }

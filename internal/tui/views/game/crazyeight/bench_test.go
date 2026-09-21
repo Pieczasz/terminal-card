@@ -11,6 +11,7 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
 	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,8 +22,7 @@ func benchTable(b *testing.B, n int) *Model {
 	players := make([]*game.Player, 0, n)
 	for i := range n {
 		players = append(players, &game.Player{
-			ID:     fmt.Sprint(i + 1),
-			UserID: uint(i + 1), Name: fmt.Sprintf("p%d", i+1),
+			ID: testutil.SeatID(i + 1), UserID: testutil.UID(i + 1), Name: fmt.Sprintf("p%d", i+1),
 		})
 	}
 	engine := game.NewEngine(&logic.Rules{}, players, deck.StandardDeck())
@@ -30,7 +30,7 @@ func benchTable(b *testing.B, n int) *Model {
 	b.Cleanup(engine.Close)
 
 	global := router.GlobalContext{
-		User:  &db.User{ID: 1, Username: "p1"},
+		User:  &db.User{ID: testutil.UID(1), Username: "p1"},
 		Width: 120, Height: 40, Theme: styles.NewTheme(true),
 	}
 	m, ok := New(global, engine).(*Model)

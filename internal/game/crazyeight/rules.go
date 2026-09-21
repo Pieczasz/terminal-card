@@ -40,33 +40,16 @@ func (r *Rules) InitialDealCount() int {
 func (r *Rules) OnGameStart(state *game.State) error {
 	extra := &State{CurrentSuit: deck.NoSuit}
 	state.Extra = extra
-	state.Discard = deck.New([]deck.Card{})
 
 	// An Eight is the wild card and the deck cannot name a suit for the one it turns
 	// up itself, which would leave the opening suit set by the card's own printed
 	// suit while every player sees a wild. Redraw until a plain card opens the pile,
 	// the same way uno refuses to open on a Wild.
-	var setAside []deck.Card
-	for {
-		card, ok := state.Deck.Draw()
-		if !ok {
-			state.Deck.AddCard(setAside...)
-			return errors.New("not enough cards to start the game")
-		}
-		if card.Rank != deck.Eight {
-			state.Discard.AddCard(card)
-			extra.CurrentSuit = card.Suit
-			break
-		}
-		setAside = append(setAside, card)
+	top, err := game.OpenDiscard(state, func(c deck.Card) bool { return c.Rank != deck.Eight })
+	if err != nil {
+		return fmt.Errorf("open the crazy eights discard pile: %w", err)
 	}
-	if len(setAside) > 0 {
-		state.Deck.AddCard(setAside...)
-		if err := state.Deck.Shuffle(); err != nil {
-			return fmt.Errorf("reshuffle eights: %w", err)
-		}
-	}
-
+	extra.CurrentSuit = top.Suit
 	return nil
 }
 
@@ -84,21 +67,7 @@ type ActionDrawCard struct{}
 
 func (a ActionDrawCard) Name() string { return "crazyeight.DrawCard" }
 
-func validSuit(s deck.Suit) bool {
-	switch s {
-	case deck.Spades, deck.Hearts, deck.Diamonds, deck.Clubs:
-		return true
-	default:
-		return false
-	}
-}
-
 func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
-	topCard, ok := state.Discard.Peek()
-	if !ok {
-		return errors.New("no cards in discard pile")
-	}
-
 	extra, ok := state.Extra.(*State)
 	if !ok {
 		return game.ErrInvalidState
@@ -106,6 +75,13 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 
 	switch action := action.(type) {
 	case ActionPlayCard:
+		// Peeked here, not above the switch: a draw is legal whatever is on the pile,
+		// and TimeoutAction plays a draw, so making it depend on the top card is what
+		// would freeze a seat on a board that somehow has no discard.
+		topCard, ok := state.Discard.Peek()
+		if !ok {
+			return errors.New("no cards in discard pile")
+		}
 		card := action.Card
 
 		if !slices.Contains(state.Players[state.CurrentTurn].Cards, card) {
@@ -113,7 +89,7 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 		}
 
 		if card.Rank == deck.Eight {
-			if !validSuit(action.Suit) {
+			if !deck.IsSuit(action.Suit) {
 				return errors.New("must choose a suit when playing an eight")
 			}
 			return nil
@@ -149,10 +125,12 @@ func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
 		p.Cards = deck.RemoveOne(p.Cards, card)
 		state.Discard.AddCard(card)
 
-		if card.Rank != deck.Eight {
-			extra.CurrentSuit = card.Suit
-		} else if action.Suit != deck.NoSuit {
+		// An Eight names its own suit; ValidateAction has already refused one that
+		// does not, so there is no "no suit chosen" case left to fall through.
+		if card.Rank == deck.Eight {
 			extra.CurrentSuit = action.Suit
+		} else {
+			extra.CurrentSuit = card.Suit
 		}
 		extra.Passes = 0
 
@@ -191,13 +169,11 @@ func (r *Rules) CheckWinCondition(state *game.State) bool {
 // OnPlayerLeave returns the departing player's cards to the stock so the deck
 // stays whole; the engine removes the player afterward.
 func (r *Rules) OnPlayerLeave(state *game.State, playerID string) {
-	// Passes counts turns nobody could draw on, and the returned hand refills the
-	// stock, so the count is stale. Left alone it would also be measured against a
-	// table one seat smaller and read as a deadlock that never happened.
-	if extra, ok := state.Extra.(*State); ok {
-		extra.Passes = 0
+	extra, ok := state.Extra.(*State)
+	if !ok {
+		return
 	}
-	game.ReturnHandToStock(state, playerID, "crazy eights")
+	game.LeaveShedGame(state, &extra.ShedState, playerID)
 }
 
 // AfterPlayerRemoved is a no-op; the engine's generic cursor handling suffices.
@@ -206,14 +182,10 @@ func (r *Rules) AfterPlayerRemoved(_ *game.State, _ int) {}
 // Standings ranks by fewest cards held. Deviation: the paper game scores a hand by
 // the pip value of the cards left in each hand, which needs a running match total
 // this table does not keep - one hand, and the shortest hand takes it.
-func (r *Rules) Standings(state *game.State) []*game.Player {
-	return game.StandingsByScore(state.Players, func(p *game.Player) int {
-		return r.StandingScore(state, p)
-	})
-}
+func (r *Rules) Standings(state *game.State) []*game.Player { return game.ShedStandings(state) }
 
-// StandingScore is the value Standings sorted by, so two players left holding the
-// same number of cards are reported as the draw they are.
-func (r *Rules) StandingScore(_ *game.State, p *game.Player) int {
-	return len(p.Cards)
-}
+func (r *Rules) StandingScore(_ *game.State, p *game.Player) int { return game.ShedScore(p) }
+
+// Compile-time proof of the optional hook: without it, deleting StandingScore still
+// compiles and the engine silently splits every draw by seat order.
+var _ game.StandingScorer = (*Rules)(nil)

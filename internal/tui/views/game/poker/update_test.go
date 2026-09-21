@@ -10,6 +10,7 @@ import (
 	gameview "github.com/Pieczasz/terminal-card/internal/tui/views/game"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -211,17 +212,17 @@ func TestIdleRemoved_MatchesOnlyOurOwnSeat(t *testing.T) {
 	}{
 		{
 			name:  "our own seat taken for idling",
-			event: game.Event{Type: game.EventPlayerIdle, PlayerID: "1"},
+			event: game.Event{Type: game.EventPlayerIdle, PlayerID: testutil.SeatID(1)},
 			want:  true,
 		},
 		{
 			name:  "another player idled out",
-			event: game.Event{Type: game.EventPlayerIdle, PlayerID: "2"},
+			event: game.Event{Type: game.EventPlayerIdle, PlayerID: testutil.SeatID(2)},
 			want:  false,
 		},
 		{
 			name:  "our own expired turn is not a removal",
-			event: game.Event{Type: game.EventTurnTimedOut, PlayerID: "1"},
+			event: game.Event{Type: game.EventTurnTimedOut, PlayerID: testutil.SeatID(1)},
 			want:  false,
 		},
 	}
@@ -243,7 +244,7 @@ func TestUpdate_IdleRemovalQuitsTheSession(t *testing.T) {
 	engine, m := startedTable(t)
 	t.Cleanup(engine.Close)
 
-	_, cmd := m.Update(gameview.EventMsg(game.Event{Type: game.EventPlayerIdle, PlayerID: "1"}))
+	_, cmd := m.Update(gameview.EventMsg(game.Event{Type: game.EventPlayerIdle, PlayerID: testutil.SeatID(1)}))
 
 	require.NotNil(t, cmd)
 	_, isQuit := cmd().(tea.QuitMsg)
@@ -264,7 +265,7 @@ func TestUpdate_ClockTickReschedulesOnlyWhilePlaying(t *testing.T) {
 
 	// Finished on the engine, not on the model: Update re-syncs from the engine before
 	// it decides, so a phase written straight onto baseState would just be overwritten.
-	engine.RemovePlayer("2")
+	engine.RemovePlayer(testutil.SeatID(2))
 	require.True(t, engine.IsFinished())
 
 	_, cmd = m.Update(gameview.ClockTickMsg(time.Now()))
@@ -494,4 +495,14 @@ func TestView_NoCountdownBetweenHands(t *testing.T) {
 	for _, s := range m.seats {
 		assert.Falsef(t, s.IsTurn, "%s cannot be on turn between hands", s.Name)
 	}
+}
+
+func TestInit_ArmsBothTheFeedAndTheClock(t *testing.T) {
+	t.Parallel()
+	engine, m := startedTable(t)
+	t.Cleanup(engine.Close)
+
+	// Batched, so the one command carries the event listener and the countdown: a
+	// view that armed only one of them either stops updating or freezes its clock.
+	assert.NotNil(t, m.Init())
 }

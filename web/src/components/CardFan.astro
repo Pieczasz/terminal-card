@@ -10,6 +10,13 @@
  * The resting rotation is emitted per card as data-rot so scripts/motion.ts can
  * spring each card to it from the deck position. The same value is set inline as a
  * fallback, so a hand still looks fanned if the motion bundle never runs.
+ *
+ * Two elements per card, not one: the outer div owns the resting fan rotation, which
+ * is an inline style that motion.ts also writes to. Hover and focus move `.card-face`
+ * inside it instead, so the two transforms compose rather than one clobbering the
+ * other - an inline transform always beats a stylesheet rule. The hover flavours live
+ * in global.css (keyed off data-flavour) because they are also driven by a hover on
+ * the surrounding card, which a scoped style cannot reach.
  */
 interface Card {
   rank: string;
@@ -18,10 +25,14 @@ interface Card {
 
 interface Props {
   cards: Card[];
+  /** Picks the hover choreography in global.css. */
+  flavour?: "eights" | "poker" | "uno" | "hearts" | "gin";
+  /** Make the fan a tab stop, so the hover flavour is reachable from a keyboard. */
+  focusable?: boolean;
   class?: string;
 }
 
-const { cards, class: className } = Astro.props;
+const { cards, flavour, focusable = false, class: className } = Astro.props;
 const isRed = (s: string) => s === "♥" || s === "♦";
 const rot = (i: number) => i * 3 - 3;
 
@@ -39,30 +50,34 @@ const fanWidth = `${CARD_W + (cards.length - 1) * (CARD_W - OVERLAP)}ch`;
 ---
 
 <div
-  class:list={["flex shrink-0 items-start py-[0.5ch]", className]}
+  class:list={["fan flex shrink-0 items-start py-[0.5ch]", className]}
   style={`width:${fanWidth}`}
   data-deal
+  data-flavour={flavour}
   role="img"
+  tabindex={focusable ? 0 : undefined}
   aria-label={cards.map((c) => `${c.rank} of ${c.suit}`).join(", ")}
 >
   {
     cards.map((c, i) => (
       <div
         data-rot={rot(i)}
-        style={`transform: rotate(${rot(i)}deg)`}
-        class="-ml-[1.4ch] flex aspect-5/7 w-[6ch] origin-bottom flex-col justify-between rounded-[3px] border border-face bg-bg p-[0.6ch] text-[0.95rem] leading-tight text-face transition-transform duration-200 first:ml-0"
+        style={`--rot:${rot(i)}deg; --i:${i}; transform: rotate(var(--rot))`}
+        class="-ml-[1.4ch] aspect-5/7 w-[6ch] origin-bottom first:ml-0"
       >
-        <span class="font-bold">{c.rank}</span>
-        {/* Bottom-left, not bottom-right: the next card in the fan overlaps the
-            right edge and would hide a suit placed there. */}
-        <span
-          class:list={[
-            "self-start text-[1.05rem]",
-            isRed(c.suit) ? "text-suit-red" : "text-suit-dark",
-          ]}
-        >
-          {c.suit}
-        </span>
+        <div class="card-face flex h-full w-full flex-col justify-between rounded-[3px] border border-face bg-bg p-[0.6ch] text-[0.95rem] leading-tight text-face">
+          <span class="font-bold">{c.rank}</span>
+          {/* Bottom-left, not bottom-right: the next card in the fan overlaps the
+              right edge and would hide a suit placed there. */}
+          <span
+            class:list={[
+              "suit self-start text-[1.05rem]",
+              isRed(c.suit) ? "text-suit-red" : "text-suit-dark",
+            ]}
+          >
+            {c.suit}
+          </span>
+        </div>
       </div>
     ))
   }

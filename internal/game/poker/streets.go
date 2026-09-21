@@ -144,6 +144,7 @@ func runShowdown(state *game.State, extra *State) error {
 	extra.ReachedShowdown = true
 	live := contenders(state, extra)
 	scores := handScores(live, extra)
+	refundUncalled(extra)
 	extra.Pots = buildSidePots(extra, live)
 	extra.HandComplete = true
 	extra.Winners = awardPots(extra, live, scores)
@@ -195,11 +196,10 @@ func buildSidePots(extra *State, live []*game.Player) []Pot {
 			}
 		}
 		prev = lvl
+		// A level always has at least one contributor sitting exactly on it - every
+		// level is somebody's contribution - and lvl > prev, so amount is never zero.
 		amount += orphan
 		orphan = 0
-		if amount == 0 {
-			continue
-		}
 		if len(eligible) == 0 {
 			// Dead money carries forward to the next pot layer.
 			orphan = amount
@@ -209,29 +209,38 @@ func buildSidePots(extra *State, live []*game.Player) []Pot {
 		pots = append(pots, Pot{Amount: amount, Eligible: eligible})
 	}
 	if orphan > 0 {
-		distributeOrphan(extra, pots, live, orphan)
+		// Levels above the largest eligible contribution can only hold money somebody
+		// matched - refundUncalled already took the unmatched part out - so this is
+		// dead money from players who folded, and it rides with the last live layer.
+		// A layer always formed: every contender had to match the big blind to be one.
+		pots[len(pots)-1].Amount += orphan
 	}
 	return pots
 }
 
-// distributeOrphan places chips no pot layer could claim. They ride along with the
-// last layer that formed; if none did, there is no pot left for anyone to win them
-// from, so they go straight into the stacks of whoever is still in the hand rather
-// than back through MainPool.
-func distributeOrphan(extra *State, pots []Pot, live []*game.Player, orphan uint) {
-	if len(pots) > 0 {
-		pots[len(pots)-1].Amount += orphan
+// refundUncalled hands back the slice of the biggest bet that nobody matched. Only the
+// single largest contributor can have one - everything at or below the second largest
+// contribution was matched by somebody - and it has to leave the pot before the side
+// pots are cut: a layer above every eligible player is unwinnable, and folding it into
+// the live pot would pay one player's uncalled chips to their opponents.
+func refundUncalled(extra *State) {
+	var topID string
+	var top, second uint
+	for id, contributed := range extra.TotalContributed {
+		switch {
+		case contributed > top:
+			topID, top, second = id, contributed, top
+		case contributed > second:
+			second = contributed
+		}
+	}
+	uncalled := top - second
+	if uncalled == 0 {
 		return
 	}
-	if len(live) == 0 {
-		return
-	}
-	ids := make([]string, 0, len(live))
-	for _, p := range live {
-		ids = append(ids, p.ID)
-	}
-	slices.Sort(ids)
-	splitEvenly(extra, ids, orphan)
+	extra.TotalContributed[topID] = second
+	extra.PlayerChips[topID] += uncalled
+	extra.MainPool -= uncalled
 }
 
 // splitEvenly hands amount to ids, the odd chips going one each to the front of the
@@ -255,6 +264,10 @@ func splitEvenly(extra *State, ids []string, amount uint) {
 // Eligibility is what makes this the authoritative winner list: the best hand at the
 // table can belong to a short stack who only paid into the main pot, so a global
 // best-hand scan would announce a winner the side pot did not go to.
+//
+// Every pot is cut from MainPool, so paying one takes it back out rather than the pool
+// being zeroed on trust: a layer that never reaches a stack is then still sitting in
+// MainPool for the conservation check in finishHand to find.
 func awardPots(extra *State, live []*game.Player, scores map[string]int) []*game.Player {
 	playerByID := make(map[string]*game.Player, len(live))
 	for _, p := range live {
@@ -263,15 +276,11 @@ func awardPots(extra *State, live []*game.Player, scores map[string]int) []*game
 
 	var winners []*game.Player
 	for _, pot := range extra.Pots {
-		if pot.Amount == 0 || len(pot.Eligible) == 0 {
-			continue
-		}
+		// Eligible is never empty and every ID in it is one of live: buildSidePots
+		// drops a layer nobody can win, and draws both from the same set.
 		bestScore := -1
 		var potWinners []string
 		for _, id := range pot.Eligible {
-			if playerByID[id] == nil {
-				continue
-			}
 			switch score := scores[id]; {
 			case score > bestScore:
 				bestScore = score
@@ -280,18 +289,15 @@ func awardPots(extra *State, live []*game.Player, scores map[string]int) []*game
 				potWinners = append(potWinners, id)
 			}
 		}
-		if len(potWinners) == 0 {
-			continue
-		}
 		slices.Sort(potWinners)
 		splitEvenly(extra, potWinners, pot.Amount)
+		extra.MainPool -= pot.Amount
 		for _, id := range potWinners {
 			if p := playerByID[id]; !slices.Contains(winners, p) {
 				winners = append(winners, p)
 			}
 		}
 	}
-	extra.MainPool = 0
 	return winners
 }
 
@@ -311,8 +317,35 @@ func handScores(players []*game.Player, extra *State) map[string]int {
 	return scores
 }
 
+// awardUncontested pays the last live player when everyone else folded or left. A
+// player can only win from an opponent what they risked themselves, so anything
+// nobody matched goes back first - refundUncalled does the same job on the showdown
+// path, and without this the fold-out path pays the winner chips no one called.
 func awardUncontested(extra *State, winner *game.Player) {
+	matched := extra.TotalContributed[winner.ID]
+	for id, contributed := range extra.TotalContributed {
+		if id == winner.ID || contributed <= matched {
+			continue
+		}
+		uncalled := contributed - matched
+		extra.PlayerChips[id] += uncalled
+		extra.MainPool -= uncalled
+	}
+
 	extra.PlayerChips[winner.ID] += extra.MainPool
+	extra.MainPool = 0
+	extra.Pots = nil
+}
+
+// refundContributions unwinds the hand, handing every chip in the pool back to whoever
+// put it in. It is the only honest exit from a hand that cannot be played out - a deal
+// that runs the deck dry leaves chips no showdown will ever award, and finishHand would
+// otherwise strand them. Nothing has been paid at that point, so MainPool is still
+// exactly the sum of the contributions.
+func refundContributions(extra *State) {
+	for id, contributed := range extra.TotalContributed {
+		extra.PlayerChips[id] += contributed
+	}
 	extra.MainPool = 0
 	extra.Pots = nil
 }
@@ -342,12 +375,24 @@ func rankPlayers(state *game.State, extra *State) []*game.Player {
 	return slices.Concat(seated, left)
 }
 
-// resultOrder compares two players by: chips desc, bust-out hand desc, active
-// before folded, hand score desc, ID asc. Chips lead because a match is decided by
-// the stack a player walks away with; everyone who busted is level on chips, so how
-// long they lasted is what separates them. The hand-level keys only matter for
-// players who finished holding equal stacks.
+// resultOrder is resultLevel with the ID as a final tiebreak, so Standings is a total
+// order and a chop renders in a stable sequence.
 func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
+	level := resultLevel(state, extra)
+	return func(a, b *game.Player) int {
+		if c := level(a, b); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ID, b.ID)
+	}
+}
+
+// resultLevel compares two players by what they actually did: chips desc, bust-out
+// hand desc, active before folded, hand score desc. Chips lead because a match is
+// decided by the stack a player walks away with; everyone who busted is level on
+// chips, so how long they lasted is what separates them. The hand-level keys only
+// matter for players who finished holding equal stacks. Zero is a genuine draw.
+func resultLevel(state *game.State, extra *State) func(a, b *game.Player) int {
 	scores := handScores(slices.Concat(state.Players, state.LeftPlayers), extra)
 	return func(a, b *game.Player) int {
 		if c := cmp.Compare(extra.PlayerChips[b.ID], extra.PlayerChips[a.ID]); c != 0 {
@@ -364,10 +409,8 @@ func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
 			return -1
 		}
 		if !fa && len(extra.Table) >= 3 {
-			if c := cmp.Compare(scores[b.ID], scores[a.ID]); c != 0 {
-				return c
-			}
+			return cmp.Compare(scores[b.ID], scores[a.ID])
 		}
-		return cmp.Compare(a.ID, b.ID)
+		return 0
 	}
 }

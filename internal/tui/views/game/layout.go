@@ -30,9 +30,14 @@ func FansHand(handSize, maxWidth, maxRows int) bool {
 	return handSize > 0 && components.FanTuck(handSize, maxWidth) != 0 && fanFits(maxRows)
 }
 
-// RenderHand draws the hero's hand into at most maxWidth columns and maxRows rows, with
-// an index row under it. A hand that fits no fan falls back to the rank-and-suit strip,
-// which has no index row to line up.
+// RenderHand draws the hero's hand into at most maxWidth columns, with an index row
+// under it. A hand that fits no fan falls back to the rank-and-suit strip, which has no
+// index row to line up.
+//
+// maxRows bounds the fan only. The strip wraps to however many rows the hand needs: a
+// forty-card Uno hand on a short terminal costs the table a row or two, which the frame
+// absorbs by clamping, and that is the better trade - cards cut out of a player's own
+// hand are cards they cannot play.
 func RenderHand(
 	t styles.Theme,
 	hand []deck.Card,
@@ -278,11 +283,28 @@ func RenderOpponentMinimal(t styles.Theme, o game.PlayerSnapshot, isCurrentTurn 
 	return lg.JoinHorizontal(lg.Center, nameView, " ", cardsCountView)
 }
 
+// RenderHeroBand is the bottom band every table builds the same way: the turn status,
+// whatever the game stacks under it, then the last action the engine rejected. Empty
+// rows are dropped rather than joined as blank ones - the band's height comes straight
+// off the middle band's, so a stray line costs a row of the table.
+func RenderHeroBand(t styles.Theme, actionErr error, rows ...string) string {
+	parts := make([]string, 0, len(rows)+1)
+	for _, row := range rows {
+		if row != "" {
+			parts = append(parts, row)
+		}
+	}
+	if actionErr != nil {
+		parts = append(parts, t.ErrorText.Render(actionErr.Error()))
+	}
+	return lg.JoinVertical(lg.Center, parts...)
+}
+
 // RenderStatus names whose turn it is, with the countdown on the same line: a second row
 // would grow botHeight and shove the discard pile every time the clock arms.
 func RenderStatus(t styles.Theme, currentPlayer string, isMyTurn bool, remaining time.Duration) string {
 	statusStyle := t.Dim.MarginTop(1).MarginBottom(1)
-	statusStr := fmt.Sprintf("Current turn: %s", currentPlayer)
+	statusStr := "Current turn: " + currentPlayer
 	if isMyTurn {
 		statusStyle = statusStyle.Foreground(t.Success).Bold(true)
 		statusStr = "> YOUR TURN <"
@@ -367,7 +389,7 @@ func ClockTick() tea.Cmd { return ClockTickFor(0, false) }
 
 func RenderWaitingScreen(g router.GlobalContext, phase game.Phase, winner string) string {
 	innerWidth := styles.InnerWidth(g.Width)
-	titleFig := styles.RenderFigureASCII("Active Game", innerWidth)
+	titleFig := styles.RenderFigureASCII("Active Game", innerWidth, styles.TitleHeightBudget(g.Height))
 	header := g.Theme.Title.Render(titleFig)
 	footer := g.Theme.RenderActionFooter(styles.GlobalActions)
 

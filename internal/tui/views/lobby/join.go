@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,8 +24,27 @@ import (
 // once, the tables are scanned once per window and no more.
 const browseRefresh = 2 * time.Second
 
-// visibleRows is how much of the list is on screen at a time.
-const visibleRows = 10
+const (
+	// maxVisibleRows is the most of the list ever on screen at once. visibleRows
+	// shrinks it to what the terminal can hold - a fixed ten plus its chrome did not
+	// fit an 80x24 terminal, let alone the declared 64x20 minimum.
+	maxVisibleRows = 10
+	// listChrome is what the screen spends around the rows: the filter line, a blank,
+	// the table's titles and rule, the pager, a blank, the code prompt and its input.
+	// compactListChrome drops the two blanks.
+	listChrome        = 8
+	compactListChrome = 6
+)
+
+// listLayout splits a content budget between the rows and the chrome around them,
+// dropping the optional spacing first when even one row would not otherwise fit.
+func listLayout(contentHeight int) (rows int, compact bool) {
+	chrome := listChrome
+	if contentHeight-listChrome < 1 {
+		chrome, compact = compactListChrome, true
+	}
+	return min(max(contentHeight-chrome, 1), maxVisibleRows), compact
+}
 
 type refreshMsg time.Time
 
@@ -65,7 +85,7 @@ func NewJoin(global router.GlobalContext) tea.Model {
 		textInput: ti,
 		// Full tables are hidden by default: the reason to open this screen is to
 		// find a seat, and a table with none is not one. Limit is the hard cap on
-		// how many matching tables we keep; only visibleRows show at once.
+		// how many matching tables we keep; only a screenful shows at once.
 		filter: lobby.BrowseFilter{OnlyWithRoom: true, Limit: lobby.MaxBrowseLimit},
 	}
 	m.refresh()
@@ -153,7 +173,9 @@ func (m *joinModel) handleBrowsing(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.writingCode = true
 		m.textInput.Focus()
 		return m, textinput.Blink
-	case "enter", " ":
+	// "space", not " ": KeyPressMsg.String() normalises the spacebar to the name, so
+	// the literal never matched and space on the browse list did nothing at all.
+	case "enter", "space":
 		return m.joinSelected()
 	}
 	return m, nil
@@ -265,8 +287,7 @@ var browseTable = components.Table{
 		{Title: "Mode", Width: colMode},
 		{Title: "Elo", Width: colRating},
 	},
-	Lead:  " ",
-	PadTo: visibleRows,
+	Lead: " ",
 }
 
 // renderRow lays the cells out itself rather than through Table.Cells: the mode cell
@@ -285,7 +306,7 @@ func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 		styles.PadTruncate(entry.GameName, colGame),
 		styles.PadTruncate(fmt.Sprintf("%d/%d", entry.Players, entry.MaxPlayers), colSeats),
 		modeRendered,
-		styles.PadTruncate(fmt.Sprint(entry.AvgElo), colRating),
+		styles.PadTruncate(strconv.FormatUint(uint64(entry.AvgElo), 10), colRating),
 	)
 
 	marker := " "
@@ -296,56 +317,60 @@ func (m *joinModel) renderRow(entry lobby.BrowseEntry, selected bool) string {
 }
 
 // visibleWindow is the slice of rows on screen, scrolled to keep the cursor in view.
-func (m *joinModel) visibleWindow() (start, end int) {
+func (m *joinModel) visibleWindow(rows int) (start, end int) {
 	start = 0
-	if m.cursor >= visibleRows {
-		start = m.cursor - visibleRows + 1
+	if m.cursor >= rows {
+		start = m.cursor - rows + 1
 	}
-	return start, min(start+visibleRows, len(m.entries))
+	return start, min(start+rows, len(m.entries))
 }
 
-func (m *joinModel) renderList() string {
+func (m *joinModel) renderList(rows int) string {
 	if len(m.entries) == 0 {
 		return m.global.Theme.Muted.Render("No tables match right now - press g, m or o to widen the filters.")
 	}
 
-	start, end := m.visibleWindow()
-	rows := make([]string, 0, end-start)
+	start, end := m.visibleWindow(rows)
+	cells := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
-		rows = append(rows, m.renderRow(m.entries[i], !m.writingCode && m.cursor == i))
+		cells = append(cells, m.renderRow(m.entries[i], !m.writingCode && m.cursor == i))
 	}
 	pager := m.global.Theme.Dim.Render(
 		fmt.Sprintf(" %d-%d of %d  ↑/↓ scroll", start+1, end, len(m.entries)))
-	return browseTable.Render(m.global.Theme, rows) + "\n" + pager
+	tbl := browseTable
+	tbl.PadTo = rows
+	return tbl.Render(m.global.Theme, cells) + "\n" + pager
 }
 
 func (m *joinModel) View() tea.View {
 	if key := m.renderKey(); key == m.lastKey && m.lastView != "" {
 		return tea.NewView(m.lastView)
 	}
+	actions := []string{"c - Enter Code", "g - Game", "m - Mode", "o - Seats"}
+	rendered := views.RenderScreen(m.global, "Join Game", actions, m.renderContent)
+	m.lastKey, m.lastView = m.renderKey(), rendered
+	return tea.NewView(rendered)
+}
+
+func (m *joinModel) renderContent(contentHeight int) string {
 	codeInputStr := "Or press 'c' to enter a private lobby code:"
 	if m.writingCode {
 		codeInputStr = "Entering private lobby code (press ESC to cancel):"
 	}
 
-	content := lg.JoinVertical(lg.Left,
-		m.filterLine(),
-		"",
-		m.renderList(),
-		"",
-		m.global.Theme.Muted.Render(codeInputStr),
-		m.textInput.View(),
-	)
+	rows, compact := listLayout(contentHeight)
+	parts := []string{m.filterLine(), "", m.renderList(rows), "",
+		m.global.Theme.Muted.Render(codeInputStr), m.textInput.View()}
+	if compact {
+		parts = []string{m.filterLine(), m.renderList(rows),
+			m.global.Theme.Muted.Render(codeInputStr), m.textInput.View()}
+	}
+	content := lg.JoinVertical(lg.Left, parts...)
 
 	if m.err != nil {
 		content += m.global.Theme.ErrorText.Render(fmt.Sprintf("\nError: %v", m.err))
 	}
-
-	actions := []string{"c - Enter Code", "g - Game", "m - Mode", "o - Seats"}
-	rendered := views.RenderScreen(m.global, "Join Game", actions,
-		func(int) string { return content })
-	m.lastKey, m.lastView = m.renderKey(), rendered
-	return tea.NewView(rendered)
+	return content
 }
 
 // renderKey is every input View reads, cheap enough to build per frame. The entry

@@ -6,32 +6,35 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
-// applyLayoffs extends knockerMelds with opponent deadwood cards that attach
-// legally. Repeats until no card attaches (an earlier layoff can open a new end).
-// laidOff is what moved, in the order it was consumed: reconstructing it afterwards
-// by diffing the two hands is guesswork about something this loop already knew.
+// applyLayoffs lays opponent deadwood off onto knockerMelds, repeating until no card
+// attaches: an earlier layoff can open a new end. The grown melds are scaffolding for
+// that loop and nothing reads them afterwards, so only the two answers a score needs
+// come back. laidOff is what moved, in the order it was consumed: reconstructing it by
+// diffing the two hands is guesswork about something this loop already knew.
+//
+// knockerMelds is cloned: the caller's copy is the knocker's scored arrangement and
+// appending to it in place would grow the melds the hand is settled on.
 func applyLayoffs(
 	opponentDeadwood []deck.Card, knockerMelds [][]deck.Card,
-) (extended [][]deck.Card, remaining, laidOff []deck.Card) {
-	extended = cloneMelds(knockerMelds)
+) (remaining, laidOff []deck.Card) {
+	melds := cloneMelds(knockerMelds)
 	remaining = slices.Clone(opponentDeadwood)
 
 	for changed := true; changed; {
 		changed = false
 		for i := 0; i < len(remaining); {
-			idx, ok := findAttach(remaining[i], extended)
+			idx, ok := findAttach(remaining[i], melds)
 			if !ok {
 				i++
 				continue
 			}
-			extended[idx] = append(extended[idx], remaining[i])
-			sortMeld(extended[idx])
+			melds[idx] = append(melds[idx], remaining[i])
 			laidOff = append(laidOff, remaining[i])
 			remaining = slices.Delete(remaining, i, i+1)
 			changed = true
 		}
 	}
-	return extended, remaining, laidOff
+	return remaining, laidOff
 }
 
 // findAttach picks the meld a card lays off onto, runs before sets. A run has two
@@ -70,13 +73,4 @@ func canAttach(card deck.Card, meld []deck.Card) bool {
 	hi := deck.RunOrder(sorted[len(sorted)-1].Rank)
 	v := deck.RunOrder(card.Rank)
 	return v == lo-1 || v == hi+1
-}
-
-func sortMeld(meld []deck.Card) {
-	if isSet(meld) {
-		return
-	}
-	slices.SortFunc(meld, func(a, b deck.Card) int {
-		return deck.RunOrder(a.Rank) - deck.RunOrder(b.Rank)
-	})
 }

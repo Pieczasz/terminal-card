@@ -17,6 +17,7 @@ import (
 
 const (
 	keyHintsPlay = "<-/h: left | ->/l: right | enter: play | esc: leave"
+	//nolint:gosec // G101: "Pass" is the card pass, not a credential
 	keyHintsPass = "<-/h: left | ->/l: right | space: toggle | enter: pass 3 | esc: leave"
 	keyHintsOver = "enter: next hand | esc: leave match"
 )
@@ -202,11 +203,7 @@ func (m *Model) renderPlayerSection() string {
 		handView = gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false, handWidth, handRows)
 	}
 
-	sections := []string{statusView, handView}
-	if m.lastActionErr != nil {
-		sections = append(sections, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	return lg.JoinVertical(lg.Center, sections...)
+	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, handView)
 }
 
 func (m *Model) renderHandOver() string {
@@ -216,7 +213,7 @@ func (m *Model) renderHandOver() string {
 		title = m.Global.Theme.Accented.Render("MATCH COMPLETE")
 		hint = "esc / enter -> lobby"
 		if m.Base.Winner != "" {
-			title = m.Global.Theme.Accented.Render("MATCH COMPLETE — " + m.Base.Winner + " wins")
+			title = m.Global.Theme.Accented.Render("MATCH COMPLETE - " + m.Base.Winner + " wins")
 		}
 	}
 

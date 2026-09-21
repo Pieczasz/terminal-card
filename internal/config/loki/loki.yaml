@@ -1,0 +1,64 @@
+# Replaces the image's local-config.yaml, which ships no retention at all: logs there
+# are kept forever. That is the wrong default anywhere, and illegal here - these logs
+# carry client IP addresses and player IDs (see docs/data-inventory.md), and
+# GDPR storage limitation means a stated, enforced period.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  # The default is "info", which logs a line per push - into the very store those
+  # lines are pushed to. Alloy already drops loki's own container output for the same
+  # reason; this stops the volume at the source.
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 14 days. The retention period the privacy notice states, enforced by the
+  # compactor below - retention_period alone only affects queries.
+  retention_period: 336h
+  # One misbehaving container must not be able to fill the disk or the 512MiB this
+  # service is given. Steady state for this stack is a few hundred KB/s.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  max_streams_per_user: 5000
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  # Without these two the retention above is advisory: chunks stay on disk forever.
+  retention_enabled: true
+  delete_request_store: filesystem
+
+# Nothing in this deployment writes alerting rules, and the ruler's default is to
+# look for a remote store and log about it every cycle.
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+
+analytics:
+  reporting_enabled: false

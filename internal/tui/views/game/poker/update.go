@@ -96,7 +96,10 @@ func (m *Model) stepRaise(direction int) {
 // confirm deals the next hand, leaves a finished match, or commits the pending raise.
 func (m *Model) confirm() (tea.Model, tea.Cmd) {
 	if m.matchComplete {
-		return m, m.Leave()
+		// Separate statement on purpose: m is returned by value and Leave mutates it
+		// through the pointer receiver; the order of those two in one return is unspecified.
+		cmd := m.Leave()
+		return m, cmd
 	}
 	if m.canDeal() {
 		return m.submit(logic.ActionNextHand{})
@@ -141,7 +144,10 @@ func (m *Model) handleEscape() (tea.Model, tea.Cmd) {
 		m.raising = false
 		return m, nil
 	}
-	return m, m.Leave()
+	// Separate statement on purpose: m is returned by value and Leave mutates it
+	// through the pointer receiver; the order of those two in one return is unspecified.
+	cmd := m.Leave()
+	return m, cmd
 }
 
 // Close comes from the embedded Session. Without it a mid-game disconnect never runs

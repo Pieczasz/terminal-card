@@ -3,11 +3,21 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/Pieczasz/terminal-card/internal/catalog"
 	"github.com/Pieczasz/terminal-card/internal/config"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
 
 	charmssh "charm.land/ssh"
 	"github.com/stretchr/testify/assert"
@@ -15,18 +25,33 @@ import (
 )
 
 type fakeServer struct {
-	serveErr    error
+	// serveErr blocks until it is written to, which is what a real accept loop does;
+	// a nil channel blocks forever, so a test that never writes one keeps Serve parked.
+	serveErr    chan error
 	shutdownErr error
 	closeErr    error
 	closed      bool
+	closeOnce   sync.Once
 }
 
-func (f *fakeServer) Serve(net.Listener) error       { return f.serveErr }
+func (f *fakeServer) Serve(net.Listener) error       { return <-f.serveErr }
 func (f *fakeServer) Shutdown(context.Context) error { return f.shutdownErr }
 
 func (f *fakeServer) Close() error {
 	f.closed = true
+	// A real Close unblocks the accept loop. Leaving Serve parked is a goroutine
+	// leak in the fake, not in the code under test, and goleak is right to say so.
+	if f.serveErr != nil {
+		f.closeOnce.Do(func() { close(f.serveErr) })
+	}
 	return f.closeErr
+}
+
+// errOnce is a Serve that returns the given error immediately, once.
+func errOnce(err error) chan error {
+	ch := make(chan error, 1)
+	ch <- err
+	return ch
 }
 
 func testConfig() *config.Config {
@@ -52,7 +77,7 @@ func runServe(t *testing.T, server sshServer) error {
 func TestServe_AcceptLoopFailureIsReturned(t *testing.T) {
 	t.Parallel()
 	boom := errors.New("listener exploded")
-	err := runServe(t, &fakeServer{serveErr: boom})
+	err := runServe(t, &fakeServer{serveErr: errOnce(boom)})
 
 	require.Error(t, err)
 	require.ErrorIs(t, err, boom, "the cause must survive so operators can see it")
@@ -85,7 +110,7 @@ func TestStopServer_ClosesOnEveryPath(t *testing.T) {
 
 func TestServe_UnexpectedCleanStopIsReturned(t *testing.T) {
 	t.Parallel()
-	err := runServe(t, &fakeServer{serveErr: charmssh.ErrServerClosed})
+	err := runServe(t, &fakeServer{serveErr: errOnce(charmssh.ErrServerClosed)})
 
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "accept loop failed")
@@ -100,7 +125,7 @@ func TestServe_StatsAPIFailureStopsTheServer(t *testing.T) {
 	apiErr := make(chan error, 1)
 	apiErr <- boom
 
-	server := &fakeServer{}
+	server := &fakeServer{serveErr: make(chan error)}
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- serve(context.Background(), serveDeps{
@@ -116,5 +141,148 @@ func TestServe_StatsAPIFailureStopsTheServer(t *testing.T) {
 		assert.True(t, server.closed, "the ssh server was left running")
 	case <-time.After(5 * time.Second):
 		t.Fatal("a stats api failure never reached the error path")
+	}
+}
+
+// The signal channel belongs to run, which keeps it armed for the whole shutdown
+// drain; serve only reads it. Handing serve a nil channel (the other tests) must not
+// change that, and a signal on it must end the accept loop cleanly.
+func TestServe_SignalDrainsAndReturnsCleanly(t *testing.T) {
+	t.Parallel()
+	signals := make(chan os.Signal, 1)
+	signals <- syscall.SIGTERM
+
+	server := &fakeServer{serveErr: make(chan error)}
+	var shutdownCalled bool
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve(context.Background(), serveDeps{
+			config:     testConfig(),
+			sshServer:  server,
+			signals:    signals,
+			onShutdown: func() { shutdownCalled = true },
+		})
+	}()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err, "a requested shutdown is not a failure")
+		assert.True(t, shutdownCalled, "live matches were never told the server is going away")
+		assert.True(t, server.closed, "the ssh server was left running")
+	case <-time.After(5 * time.Second):
+		t.Fatal("serve ignored the signal")
+	}
+}
+
+func TestHealthcheck(t *testing.T) {
+	tests := []struct {
+		name    string
+		status  int
+		noServe bool
+		want    int
+	}{
+		{name: "healthy", status: http.StatusOK, want: 0},
+		{name: "unhealthy", status: http.StatusServiceUnavailable, want: 1},
+		{name: "nothing listening", noServe: true, want: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(tt.status)
+			}))
+			t.Cleanup(srv.Close)
+
+			_, port, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+			require.NoError(t, err)
+			if tt.noServe {
+				srv.Close() // the port is now free, so the dial fails rather than hangs
+			}
+			t.Setenv("API_PORT", port)
+
+			assert.Equal(t, tt.want, healthcheck())
+		})
+	}
+}
+
+// The drain is what stands between a finished ranked match and losing it, so the
+// happy path has to actually return rather than burn both windows on every shutdown.
+func TestWaitForFinalizers_ReturnsWhenThereIsNothingToWaitFor(t *testing.T) {
+	t.Parallel()
+	manager := lobby.NewManager(context.Background(), nil)
+
+	start := time.Now()
+	waitForFinalizers(manager)
+
+	assert.Less(t, time.Since(start), finalizeDrainTimeout,
+		"an idle manager must not spend a drain window")
+}
+
+// buildRegistry is the seam between the catalog and the engine: a game missing here
+// is a game nobody can start, and the catalog is the only place it is declared.
+func TestBuildRegistry_HasEveryCatalogGame(t *testing.T) {
+	t.Parallel()
+	registry := buildRegistry()
+
+	require.NotEmpty(t, catalog.All)
+	for _, e := range catalog.All {
+		rules, err := registry.Create(e.Name)
+		require.NoErrorf(t, err, "%q is in the catalog but not in the registry", e.Name)
+		assert.NotNil(t, rules)
+	}
+}
+
+// installLogging replaces the process default, so it runs alone.
+//
+//nolint:paralleltest // mutates the slog default
+func TestInstallLogging_LevelIsLiveAndGatesBothSinks(t *testing.T) {
+	previous := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	level := installLogging()
+	require.NotNil(t, level)
+
+	assert.False(t, slog.Default().Enabled(context.Background(), slog.LevelDebug),
+		"debug must be off until configuration says otherwise")
+
+	// config.Load is read after the handler is installed, so the level has to be
+	// changeable afterwards or LOG_LEVEL=DEBUG would never take effect.
+	level.Set(slog.LevelDebug)
+	assert.True(t, slog.Default().Enabled(context.Background(), slog.LevelDebug))
+}
+
+// The stats api runs on its own goroutine, and a bind failure there used to be a log
+// line nobody reads. This pins the whole small lifecycle: it binds, it answers, it stops.
+func TestStartStatsAPI_ServesAndStops(t *testing.T) {
+	t.Parallel()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := listener.Addr().(*net.TCPAddr).Port
+	require.NoError(t, listener.Close())
+
+	cfg := &config.Config{ServerHost: "127.0.0.1", APIPort: port, APIRequestsPerMinute: 100}
+	stop, serveErr := startStatsAPI(cfg, nil, nil, nil, func(context.Context) error { return nil })
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/healthz", port)
+	require.Eventually(t, func() bool {
+		req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+		if reqErr != nil {
+			return false
+		}
+		resp, doErr := http.DefaultClient.Do(req)
+		if doErr != nil {
+			return false
+		}
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode == http.StatusOK
+	}, 5*time.Second, 20*time.Millisecond, "the stats api never came up")
+
+	stop()
+
+	select {
+	case err := <-serveErr:
+		t.Fatalf("a clean shutdown reported an error: %v", err)
+	default:
 	}
 }

@@ -10,14 +10,13 @@ import (
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 
+	"uuid"
+
 	"github.com/jackc/pgx/v5/pgconn"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"gorm.io/gorm"
-)
-
-var (
-	ErrUserNotFound = errors.New("user not found")
+	"gorm.io/gorm/clause"
 )
 
 const (
@@ -53,7 +52,7 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 	ctx context.Context, fingerprint string,
 ) (_ *db.User, _ *db.PublicKey, err error) {
 	ctx, span := tracer.Start(ctx, "db.LoadUserByFingerprint")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	var dbKey db.PublicKey
 	err = q.db.WithContext(ctx).Where("fingerprint = ?", fingerprint).
@@ -70,8 +69,8 @@ func (q *gormUserRepository) LoadUserByFingerprint(
 
 	// The Preload applies deleted_at IS NULL while the public_keys row still matches, so
 	// a soft-deleted account arrives as a zero-valued association rather than a miss -
-	// handing that back authenticates the key as user 0.
-	if dbKey.User.ID == 0 {
+	// handing that back authenticates the key as the zero user.
+	if dbKey.User.ID == uuid.Nil() {
 		return nil, nil, nil
 	}
 	return &dbKey.User, &dbKey, nil
@@ -81,7 +80,7 @@ func (q *gormUserRepository) RegisterUserWithKey(
 	ctx context.Context, username, fingerprint string,
 ) (_ *db.User, _ *db.PublicKey, err error) {
 	ctx, span := tracer.Start(ctx, "db.RegisterUserWithKey")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	if err := db.ValidateUsername(username); err != nil {
 		return nil, nil, fmt.Errorf("%w: %w", db.ErrInvalidUsername, err)
@@ -142,11 +141,11 @@ func (q *gormUserRepository) RegisterUserWithKey(
 }
 
 // Read lock only: the database query must never run while the mutex is held.
-func (q *gormUserRepository) cachedBestPlayers(gameName string, limit int) ([]db.Ranking, bool) {
+func (q *gormUserRepository) cachedBestPlayers(gameSlug string, limit int) ([]db.Ranking, bool) {
 	q.bestPlayersCacheMutex.RLock()
 	defer q.bestPlayersCacheMutex.RUnlock()
 
-	entry, ok := q.bestPlayersCache[gameName]
+	entry, ok := q.bestPlayersCache[gameSlug]
 	if !ok || time.Since(entry.at) >= bestPlayersCacheTTL {
 		return nil, false
 	}
@@ -154,10 +153,10 @@ func (q *gormUserRepository) cachedBestPlayers(gameName string, limit int) ([]db
 }
 
 func (q *gormUserRepository) BestPlayers(
-	ctx context.Context, limit int, gameName string,
+	ctx context.Context, limit int, gameSlug string,
 ) (_ []db.Ranking, err error) {
 	ctx, span := tracer.Start(ctx, "db.BestPlayers", trace.WithAttributes(attribute.Int("limit", limit)))
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	limit = max(limit, 0)
 
@@ -165,7 +164,7 @@ func (q *gormUserRepository) BestPlayers(
 	// from it and must not be stored into it: later callers would get a truncated board.
 	cacheable := limit <= bestPlayersCacheSize
 	if cacheable {
-		if out, fresh := q.cachedBestPlayers(gameName, limit); fresh {
+		if out, fresh := q.cachedBestPlayers(gameSlug, limit); fresh {
 			return out, nil
 		}
 	}
@@ -175,12 +174,20 @@ func (q *gormUserRepository) BestPlayers(
 		fetch = limit
 	}
 
+	// Provisional accounts stay on the board: a player's first ranked win should show
+	// up, and hiding it made the board empty on a young server. The anti-farm rules
+	// live in the finalize path - an established player gains nothing from a fresh
+	// account - so a pumped alt cannot carry rating anywhere that matters.
+	//
+	// user_id breaks the tie: equal Elo is common at the starting rating, and without
+	// it Postgres is free to return those rows in a different order every time the
+	// cache expires, so the board visibly reshuffles between refreshes.
 	query := q.db.WithContext(ctx).Preload("User").Preload("Game").
-		Order("elo desc").
+		Order("rankings.elo desc, rankings.user_id").
 		Limit(fetch)
-	if gameName != "" {
+	if gameSlug != "" {
 		query = query.Joins("JOIN games ON games.id = rankings.game_id AND games.deleted_at IS NULL").
-			Where("games.name = ?", gameName)
+			Where("games.slug = ?", gameSlug)
 	}
 
 	var rankings []db.Ranking
@@ -189,33 +196,33 @@ func (q *gormUserRepository) BestPlayers(
 	}
 	span.SetAttributes(attribute.Int("rows", len(rankings)))
 
-	// Not caching an empty result is what bounds this map: gameName is caller-controlled,
+	// Not caching an empty result is what bounds this map: gameSlug is caller-controlled,
 	// and an unknown game returns no rows, so it never becomes a key.
 	if cacheable && len(rankings) > 0 {
 		at := time.Now()
 		q.bestPlayersCacheMutex.Lock()
-		if entry, ok := q.bestPlayersCache[gameName]; !ok || entry.at.Before(at) {
-			q.bestPlayersCache[gameName] = bestPlayersCacheEntry{rankings: rankings, at: at}
+		if entry, ok := q.bestPlayersCache[gameSlug]; !ok || entry.at.Before(at) {
+			q.bestPlayersCache[gameSlug] = bestPlayersCacheEntry{rankings: rankings, at: at}
 		}
 		q.bestPlayersCacheMutex.Unlock()
 	}
 	return slices.Clone(rankings[:min(limit, len(rankings))]), nil
 }
 
-func (q *gormUserRepository) UserProfile(ctx context.Context, userID uint) (_ *db.User, err error) {
+func (q *gormUserRepository) UserProfile(ctx context.Context, userID uuid.UUID) (_ *db.User, err error) {
 	ctx, span := tracer.Start(ctx, "db.UserProfile",
-		trace.WithAttributes(attribute.Int64("user_id", int64(userID))))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.String("user_id", userID.String())))
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	var user db.User
 	err = q.db.WithContext(ctx).Preload("PublicKeys").
 		Preload("Rankings").
 		Preload("Rankings.Game").
-		First(&user, userID).Error
+		Where("id = ?", userID.String()).
+		First(&user).Error
 	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, ErrUserNotFound
-		}
+		// gorm.ErrRecordNotFound, wrapped: a second "not found" sentinel in this
+		// package only gave callers a second thing to compare against.
 		return nil, fmt.Errorf("get user profile: %w", err)
 	}
 	return &user, nil
@@ -227,29 +234,35 @@ func (q *gormUserRepository) UpdateUserActivity(
 	ctx context.Context, user *db.User, key *db.PublicKey,
 ) (err error) {
 	ctx, span := tracer.Start(ctx, "db.UpdateUserActivity")
-	defer func() { endSpan(span, err) }()
+	defer func() { recordSpanResult(span, err); span.End() }()
 
-	if err = q.db.WithContext(ctx).Model(user).Update("LastSeenAt", time.Now()).Error; err != nil {
+	// Omit(clause.Associations) on both: user arrives with Rankings and their Games
+	// preloaded and key with its User, and GORM's save hooks upsert every association
+	// it can see - so stamping a timestamp on login re-wrote each of that player's
+	// ranking rows. "User" alone was not enough, and it was the wrong association.
+	if err = q.db.WithContext(ctx).Model(user).Omit(clause.Associations).
+		Update("LastSeenAt", time.Now()).Error; err != nil {
 		return fmt.Errorf("update last seen: %w", err)
 	}
-	if err = q.db.WithContext(ctx).Model(key).Omit("User").Update("LastUsedAt", time.Now()).Error; err != nil {
+	if err = q.db.WithContext(ctx).Model(key).Omit(clause.Associations).
+		Update("LastUsedAt", time.Now()).Error; err != nil {
 		return fmt.Errorf("update key last used: %w", err)
 	}
 	return nil
 }
 
 func (q *gormUserRepository) UserMatchHistory(
-	ctx context.Context, userID uint, limit int,
+	ctx context.Context, userID uuid.UUID, limit int,
 ) (_ []db.MatchParticipant, err error) {
 	ctx, span := tracer.Start(ctx, "db.UserMatchHistory",
-		trace.WithAttributes(attribute.Int64("user_id", int64(userID)), attribute.Int("limit", limit)))
-	defer func() { endSpan(span, err) }()
+		trace.WithAttributes(attribute.String("user_id", userID.String()), attribute.Int("limit", limit)))
+	defer func() { recordSpanResult(span, err); span.End() }()
 
 	// GORM reads a negative Limit as "no limit", which would stream the whole history.
 	limit = max(limit, 0)
 
 	var history []db.MatchParticipant
-	err = q.db.WithContext(ctx).Where("user_id = ?", userID).
+	err = q.db.WithContext(ctx).Where("user_id = ?", userID.String()).
 		Preload("Match").
 		Preload("Match.Game").
 		Order("match_id desc").
@@ -260,4 +273,59 @@ func (q *gormUserRepository) UserMatchHistory(
 	}
 	span.SetAttributes(attribute.Int("rows", len(history)))
 	return history, nil
+}
+
+// DeleteAccount is the player-facing erasure. The users row survives on purpose: it
+// is the parent of match_participants rows that belong to the *other* players at
+// those tables, and their history has to keep resolving to a name.
+func (q *gormUserRepository) DeleteAccount(ctx context.Context, userID uuid.UUID) (err error) {
+	ctx, span := tracer.Start(ctx, "db.DeleteAccount",
+		trace.WithAttributes(attribute.String("user_id", userID.String())))
+	defer func() { recordSpanResult(span, err); span.End() }()
+
+	if err = q.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		return eraseUserLocked(tx, userID)
+	}); err != nil {
+		// The sentinel is the contract callers compare against, so it is handed back
+		// as-is; anything else is a database failure and gets the usual context.
+		if errors.Is(err, db.ErrUserNotFound) {
+			return db.ErrUserNotFound
+		}
+		return fmt.Errorf("delete account transaction: %w", err)
+	}
+
+	// The board is keyed by game slug and this player may sit on any of them, so the
+	// whole map goes: a five-minute TTL is five minutes of an erased name on screen.
+	q.bestPlayersCacheMutex.Lock()
+	clear(q.bestPlayersCache)
+	q.bestPlayersCacheMutex.Unlock()
+	return nil
+}
+
+func eraseUserLocked(tx *gorm.DB, userID uuid.UUID) error {
+	// Unscoped, not a soft delete: the fingerprint column is unique, so a lingering
+	// key row would keep the returning player from ever registering again - and a
+	// soft-deleted ranking still holds the (user_id, game_id) primary key.
+	if err := tx.Unscoped().Where("user_id = ?", userID.String()).Delete(&db.PublicKey{}).Error; err != nil {
+		return fmt.Errorf("delete public keys: %w", err)
+	}
+	if err := tx.Unscoped().Where("user_id = ?", userID.String()).Delete(&db.Ranking{}).Error; err != nil {
+		return fmt.Errorf("delete rankings: %w", err)
+	}
+
+	// A column update keyed on the id, not Save on a loaded User: the save hooks would
+	// walk the associations this transaction has just deleted and write them back.
+	anonymised := tx.Model(&db.User{}).Where("id = ?", userID.String()).Updates(map[string]any{
+		"username": db.AnonymisedUsername(userID),
+		// NULL rather than a zero timestamp: "never seen" is what an erased row means,
+		// and the column is nullable precisely so it can say that.
+		"last_seen_at": nil,
+	})
+	if anonymised.Error != nil {
+		return fmt.Errorf("anonymise user: %w", anonymised.Error)
+	}
+	if anonymised.RowsAffected == 0 {
+		return db.ErrUserNotFound
+	}
+	return nil
 }

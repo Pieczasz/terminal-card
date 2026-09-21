@@ -13,7 +13,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
-// TopDiscard from the base state is unused — Hearts has no discard pile.
+// TopDiscard from the base state is unused - Hearts has no discard pile.
 type Model struct {
 	gameview.Session
 

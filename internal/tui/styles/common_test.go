@@ -24,7 +24,7 @@ func TestSizing_NeverNegative(t *testing.T) {
 			assert.GreaterOrEqual(t, styles.BoxWidth(size), 0, "BoxWidth")
 			assert.GreaterOrEqual(t, styles.BoxHeight(size), 0, "BoxHeight")
 			assert.GreaterOrEqual(t, styles.InnerWidth(size), 0, "InnerWidth")
-			assert.GreaterOrEqual(t, styles.AvailableContentHeight(size, "hdr", "ftr"), 0, "AvailableContentHeight")
+			assert.GreaterOrEqual(t, styles.AvailableContentHeight(size, size, "hdr", "ftr"), 0, "AvailableContentHeight")
 		})
 	}
 }
@@ -135,18 +135,19 @@ func TestAvailableContentHeight_ExactSizes(t *testing.T) {
 		footer       string
 		want         int
 	}{
-		// BoxHeight(30) is 28, less the 4 cells of frame leaves 24 for content.
-		{name: "one-line header and footer", screenHeight: 30, header: "h", footer: "f", want: 22},
-		{name: "a two-line header costs a row", screenHeight: 30, header: "h\nh", footer: "f", want: 21},
-		{name: "a two-line footer costs a row too", screenHeight: 30, header: "h", footer: "f\nf", want: 21},
-		{name: "no header or footer", screenHeight: 30, want: 22},
+		// BoxHeight(30) is 28, less the 4 cells of frame leaves 24 for content, less
+		// the two blank lines RenderMainLayout appends for optical centering.
+		{name: "one-line header and footer", screenHeight: 30, header: "h", footer: "f", want: 20},
+		{name: "a two-line header costs a row", screenHeight: 30, header: "h\nh", footer: "f", want: 19},
+		{name: "a two-line footer costs a row too", screenHeight: 30, header: "h", footer: "f\nf", want: 19},
+		{name: "no header or footer", screenHeight: 30, want: 20},
 		{name: "a header taller than the screen cannot go negative", screenHeight: 24, header: strings.Repeat("h\n", 40), want: 0},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			assert.Equal(t, tt.want, styles.AvailableContentHeight(tt.screenHeight, tt.header, tt.footer))
+			assert.Equal(t, tt.want, styles.AvailableContentHeight(100, tt.screenHeight, tt.header, tt.footer))
 		})
 	}
 }
@@ -168,7 +169,7 @@ func TestRenderFigureASCII_CacheIsCapped(t *testing.T) {
 	styles.ResetFigureCacheForTest()
 
 	for i := range 2000 {
-		got := styles.RenderFigureASCII(fmt.Sprintf("user%d", i), 80)
+		got := styles.RenderFigureASCII(fmt.Sprintf("user%d", i), 80, 10)
 		require.NotEmpty(t, got)
 	}
 
@@ -183,13 +184,30 @@ func TestRenderFigureASCII_CacheIsCapped(t *testing.T) {
 func TestRenderFigureASCII_StaysCorrectPastTheCap(t *testing.T) {
 	styles.ResetFigureCacheForTest()
 
-	want := styles.RenderFigureASCII("Terminal Cards", 80)
+	want := styles.RenderFigureASCII("Terminal Cards", 80, 10)
 	for i := range 1000 {
-		styles.RenderFigureASCII(fmt.Sprintf("filler%d", i), 80)
+		styles.RenderFigureASCII(fmt.Sprintf("filler%d", i), 80, 10)
 	}
 
-	assert.Equal(t, want, styles.RenderFigureASCII("Terminal Cards", 80), "cached entry")
-	uncached := styles.RenderFigureASCII("Join Game", 80)
-	assert.Equal(t, uncached, styles.RenderFigureASCII("Join Game", 80),
+	assert.Equal(t, want, styles.RenderFigureASCII("Terminal Cards", 80, 10), "cached entry")
+	uncached := styles.RenderFigureASCII("Join Game", 80, 10)
+	assert.Equal(t, uncached, styles.RenderFigureASCII("Join Game", 80, 10),
 		"and one past the cap still renders consistently")
+}
+
+// The banner is decoration. On a short terminal it has to give way to plain text so
+// the content gets the lines back; on a tall one the biggest fitting font still wins.
+func TestRenderFigureASCII_FallsBackByHeightToo(t *testing.T) {
+	t.Parallel()
+	plain := styles.RenderFigureASCII("Join Game", 120, 1)
+	assert.Equal(t, "Join Game", plain, "a one-line budget is plain text")
+
+	short := styles.RenderFigureASCII("Join Game", 120, 3)
+	assert.Equal(t, 3, lg.Height(short), "the mini font is the tallest that fits three lines")
+
+	tall := styles.RenderFigureASCII("Join Game", 120, 10)
+	assert.Equal(t, 5, lg.Height(tall), "with room, the slant font")
+
+	assert.Equal(t, 2, styles.TitleHeightBudget(styles.MinHeight),
+		"the declared minimum terminal gets a plain title")
 }

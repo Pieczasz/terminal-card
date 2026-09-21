@@ -81,8 +81,7 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 		global.Theme = styles.NewTheme(msg.IsDark())
 		return true, nil
 	case tea.KeyPressMsg:
-		switch msg.String() {
-		case "ctrl+c":
+		if msg.String() == "ctrl+c" {
 			return true, tea.Quit
 		}
 	}
@@ -95,9 +94,24 @@ func HandleCommonMsg(msg tea.Msg, global *router.GlobalContext) (bool, tea.Cmd) 
 // slices.Concat, never append: styles.GlobalActions is shared by every session, and
 // appending writes into the array the others are reading.
 func RenderScreen(g router.GlobalContext, title string, localActions []string, content func(height int) string) string {
-	header := g.Theme.Title.Render(styles.RenderFigureASCII(title, styles.InnerWidth(g.Width)))
-	footer := g.Theme.RenderActionFooter(slices.Concat(localActions, styles.GlobalActions))
-	return RenderCenteredLayout(g, header, content(styles.AvailableContentHeight(g.Height, header, footer)), footer)
+	header, footer := screenFrame(g, title, localActions)
+	return RenderCenteredLayout(g, header, content(styles.AvailableContentHeight(g.Width, g.Height, header, footer)), footer)
+}
+
+// ScreenContentHeight is the height RenderScreen will hand its content callback for
+// this title and these actions. A view that has to *page* its rows needs that budget
+// in Update, before render time, so this is the one computation both share - deriving
+// it twice is how a board ends up paging by twenty and drawing however many fit.
+func ScreenContentHeight(g router.GlobalContext, title string, localActions []string) int {
+	header, footer := screenFrame(g, title, localActions)
+	return styles.AvailableContentHeight(g.Width, g.Height, header, footer)
+}
+
+func screenFrame(g router.GlobalContext, title string, localActions []string) (header, footer string) {
+	header = g.Theme.Title.Render(styles.RenderFigureASCII(
+		title, styles.InnerWidth(g.Width), styles.TitleHeightBudget(g.Height)))
+	footer = g.Theme.RenderActionFooter(slices.Concat(localActions, styles.GlobalActions))
+	return header, footer
 }
 
 // RenderCenteredLayout frames content for a full-screen view.

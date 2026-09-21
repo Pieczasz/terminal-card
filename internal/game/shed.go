@@ -2,8 +2,6 @@ package game
 
 import (
 	"errors"
-	"fmt"
-	"log/slog"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
@@ -12,15 +10,10 @@ import (
 var errStockNotEmpty = errors.New("stock is not empty")
 
 // ReshuffleDiscardIntoStock moves the discard pile, except the card in play, back into
-// an empty stock and shuffles, conserving every card. On shuffle failure the discard is
-// restored and the stock dropped, so an unshuffled order can never reach play; that
-// only conserves cards while the stock was empty, hence the refusal above.
+// an empty stock and shuffles, conserving every card. It refuses a non-empty stock:
+// that is a caller reshuffling too early, and merging two piles would lose the order of
+// the one still in play.
 func ReshuffleDiscardIntoStock(state *State) error {
-	return reshuffleDiscardIntoStock(state, (*deck.Pile).Shuffle)
-}
-
-// shuffle is a parameter so the failure path is reachable without breaking crypto/rand.
-func reshuffleDiscardIntoStock(state *State, shuffle func(*deck.Pile) error) error {
 	if !state.Deck.IsEmpty() {
 		return errStockNotEmpty
 	}
@@ -31,33 +24,20 @@ func reshuffleDiscardIntoStock(state *State, shuffle func(*deck.Pile) error) err
 	rest := state.Discard.Cards()
 	state.Discard = deck.New([]deck.Card{top})
 	state.Deck.AddCard(rest...)
-	if err := shuffle(state.Deck); err != nil {
-		state.Discard = restoreDiscard(rest, top)
-		state.Deck = deck.New(nil)
-		return fmt.Errorf("shuffle stock after reshuffling discard: %w", err)
-	}
+	state.Deck.Shuffle()
 	return nil
-}
-
-// Top card last: Peek and Draw read the end of the pile, so the other order rotates the
-// discard and leaves a card nobody played sitting in play.
-func restoreDiscard(rest []deck.Card, top deck.Card) *deck.Pile {
-	return deck.New(append(rest, top))
 }
 
 // ReturnHandToStock keeps the deck whole when a player leaves, reshuffling so the cards
 // they were seen holding are not the next ones dealt.
-func ReturnHandToStock(state *State, playerID, gameName string) {
+func ReturnHandToStock(state *State, playerID string) {
 	for _, p := range state.Players {
 		if p == nil || p.ID != playerID {
 			continue
 		}
 		state.Deck.AddCard(p.Cards...)
 		p.Cards = nil
-		if err := state.Deck.Shuffle(); err != nil {
-			slog.Error("shuffle after leave failed",
-				"error", err, "game", gameName, "player_id", playerID)
-		}
+		state.Deck.Shuffle()
 		return
 	}
 }
@@ -71,4 +51,61 @@ func HandEmptyOrAllPassed(state *State, passes int) bool {
 		}
 	}
 	return len(state.Players) > 0 && passes >= len(state.Players)
+}
+
+// ShedState is the state every shedding game keeps identically. Embed it in the game's
+// own Extra type rather than copying the field and its reasoning per game.
+type ShedState struct {
+	// Passes counts consecutive turns where a draw yielded nothing because both the
+	// stock and the discard are exhausted. At one per seat the hand is deadlocked and
+	// ends, scored by fewest cards held. A forced draw that comes up empty charges the
+	// count too, even though the victim never had a turn: it is the board that is out
+	// of cards, and the seat it happened to is beside the point.
+	Passes int
+}
+
+// ShedScore ranks a shedding game by cards still held, fewest first, so two players
+// left holding the same number are reported as the draw they are.
+func ShedScore(p *Player) int { return len(p.Cards) }
+
+// ShedStandings is Rules.Standings for a shedding game.
+func ShedStandings(state *State) []*Player {
+	return StandingsByScore(state.Players, ShedScore)
+}
+
+// LeaveShedGame is a shedding game's OnPlayerLeave: the hand goes back to the stock and
+// the deadlock counter resets. Left alone the count would be stale - the returned cards
+// refill the stock - and measured against a table one seat smaller, which reads as a
+// deadlock that never happened.
+func LeaveShedGame(state *State, shed *ShedState, playerID string) {
+	shed.Passes = 0
+	ReturnHandToStock(state, playerID)
+}
+
+// OpenDiscard starts the discard pile on the first card the game may legally open on,
+// setting the rest aside and shuffling them back into the stock: uno cannot open on a
+// Wild and crazy eights cannot open on an Eight, because neither card names the suit
+// every player would then be matching against.
+func OpenDiscard(state *State, playable func(deck.Card) bool) (deck.Card, error) {
+	var setAside []deck.Card
+	for {
+		card, ok := state.Deck.Draw()
+		if !ok {
+			// Every card was set aside, so the stock has to come back whole before
+			// the caller reports a table it cannot open.
+			state.Deck.AddCard(setAside...)
+			return deck.Card{}, errors.New("not enough cards to start")
+		}
+		if !playable(card) {
+			setAside = append(setAside, card)
+			continue
+		}
+		state.Discard = deck.New([]deck.Card{card})
+		if len(setAside) == 0 {
+			return card, nil
+		}
+		state.Deck.AddCard(setAside...)
+		state.Deck.Shuffle()
+		return card, nil
+	}
 }

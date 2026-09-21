@@ -183,15 +183,14 @@ func (m *Model) renderCenter(compact bool) string {
 func (m *Model) renderBoard(compact bool) string {
 	slots := make([]string, 5)
 	for i := range 5 {
-		if i < len(m.board) {
-			if compact {
-				slots[i] = renderMiniCard(m.Global.Theme, m.board[i])
-			} else {
-				slots[i] = components.RenderCard(m.Global.Theme, m.board[i], false)
-			}
-		} else if compact {
+		switch {
+		case i < len(m.board) && compact:
+			slots[i] = renderMiniCard(m.Global.Theme, m.board[i])
+		case i < len(m.board):
+			slots[i] = components.RenderCard(m.Global.Theme, m.board[i], false)
+		case compact:
 			slots[i] = components.MiniCardSlot(m.Global.Theme)
-		} else {
+		default:
 			slots[i] = renderEmptySlot(m.Global.Theme)
 		}
 	}
@@ -323,11 +322,7 @@ func (m *Model) renderHero(compact bool) string {
 	status := gameview.RenderStatus(m.Global.Theme, m.Base.CurrentPlayer, m.Base.MyTurn, m.Base.TurnRemaining)
 	actions := m.renderActionBar()
 
-	parts := []string{seatBlock, status, actions}
-	if m.lastActionErr != nil {
-		parts = append(parts, m.Global.Theme.ErrorText.Render(m.lastActionErr.Error()))
-	}
-	block := lg.JoinVertical(lg.Center, parts...)
+	block := gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, seatBlock, status, actions)
 	if !compact {
 		return lg.NewStyle().MarginBottom(1).Render(block)
 	}

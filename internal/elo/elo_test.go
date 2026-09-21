@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"pgregory.net/rapid"
 )
 
 func TestClampRating(t *testing.T) {
@@ -504,4 +506,162 @@ func TestCalculate_DuplicateIDsCollapse(t *testing.T) {
 	assert.Contains(t, got, "other")
 	assert.Contains(t, logged.String(), "duplicate player id",
 		"a lost rating change has to be visible somewhere")
+}
+
+// A fresh account is free to mint, so beating one pays nothing - but losing to one
+// still costs, or seating an alt would freeze a rating in place. The rule is per
+// pair: the rest of the table is rated normally.
+func TestCalculate_ProvisionalIsUnpaidPerPairNotPerTable(t *testing.T) {
+	t.Parallel()
+
+	t.Run("established winner gains nothing from a provisional loser", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "vet", Rating: 1500},
+			{ID: "new", Rating: 1500, Provisional: true},
+		})
+		assert.InDelta(t, 1500, out["vet"], 1e-9, "no gain from the fresh account")
+		assert.Less(t, out["new"], 1500.0, "the fresh account still converges")
+	})
+
+	t.Run("established loser still pays a provisional winner", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "new", Rating: 1500, Provisional: true},
+			{ID: "vet", Rating: 1500},
+		})
+		assert.Less(t, out["vet"], 1500.0, "a loss to an alt is not free")
+		assert.Greater(t, out["new"], 1500.0)
+	})
+
+	t.Run("seats not paired with the provisional are rated normally", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "a", Rating: 1500},
+			{ID: "new", Rating: 1450, Provisional: true},
+			{ID: "c", Rating: 1300},
+			{ID: "d", Rating: 1100},
+		})
+		assert.InDelta(t, 1500, out["a"], 1e-9, "a only faces the provisional, so a gains nothing")
+		assert.Less(t, out["c"], 1300.0, "c lost to the provisional and to nobody else it beat pays")
+		assert.Less(t, out["d"], 1100.0, "d lost to c - an ordinary pair, rated as usual")
+		assert.Greater(t, out["c"], out["c"]-KFactor, "c's loss is bounded by one pair")
+	})
+
+	t.Run("two provisionals play each other normally", func(t *testing.T) {
+		t.Parallel()
+		out := Calculate([]Player{
+			{ID: "p", Rating: 1500, Provisional: true},
+			{ID: "q", Rating: 1500, Provisional: true},
+		})
+		assert.Greater(t, out["p"], 1500.0)
+		assert.Less(t, out["q"], 1500.0)
+	})
+}
+
+// eloField is a table of distinct players whose ratings sit far enough inside the
+// bounds that no clamp can bind: the biggest transfer a single pair can make is
+// KFactor, and a seat plays at most two neighbours.
+func eloField(t *rapid.T, minRating, maxRating float64) []Player {
+	n := rapid.IntRange(2, 6).Draw(t, "seats")
+	players := make([]Player, 0, n)
+	for i := range n {
+		players = append(players, Player{
+			ID:          fmt.Sprintf("p%d", i),
+			Rating:      rapid.Float64Range(minRating, maxRating).Draw(t, fmt.Sprintf("rating%d", i)),
+			Place:       i + 1,
+			Provisional: rapid.Bool().Draw(t, fmt.Sprintf("provisional%d", i)),
+		})
+	}
+	return players
+}
+
+func TestCalculate_Properties(t *testing.T) {
+	t.Parallel()
+
+	// The ladder is stored as a uint32 in [MinRating, MaxRating]; a result outside
+	// that band is a rating the database silently rewrites.
+	t.Run("every result stays inside the ladder", func(t *testing.T) {
+		t.Parallel()
+		rapid.Check(t, func(t *rapid.T) {
+			players := eloField(t, MinRating, MaxRating)
+			got := Calculate(players)
+
+			require.Len(t, got, len(players), "every seat is rated exactly once")
+			for _, p := range players {
+				require.GreaterOrEqual(t, got[p.ID], MinRating, p.ID)
+				require.LessOrEqual(t, got[p.ID], MaxRating, p.ID)
+			}
+		})
+	})
+
+	// Elo only moves rating between players. The two documented exceptions are a
+	// clamp at the bounds and a pair involving a provisional account, so this holds
+	// the field away from both.
+	t.Run("an established field only transfers rating", func(t *testing.T) {
+		t.Parallel()
+		rapid.Check(t, func(t *rapid.T) {
+			players := eloField(t, MinRating+2*KFactor, MaxRating-2*KFactor)
+			var net float64
+			for i := range players {
+				players[i].Provisional = false
+				net -= players[i].Rating
+			}
+
+			for _, rating := range Calculate(players) {
+				net += rating
+			}
+			require.InDelta(t, 0.0, net, 1e-9)
+		})
+	})
+
+	// Standings hand ties over in whatever order the rules sorted them, which for a
+	// genuine draw is arbitrary. The result must not depend on it.
+	t.Run("a draw settles the same in any order", func(t *testing.T) {
+		t.Parallel()
+		rapid.Check(t, func(t *rapid.T) {
+			players := eloField(t, MinRating, MaxRating)
+			for i := range players {
+				players[i].Place = 1
+			}
+			shuffled := rapid.Permutation(players).Draw(t, "order")
+
+			want := Calculate(players)
+			for id, rating := range Calculate(shuffled) {
+				require.InDelta(t, want[id], rating, 1e-9, id)
+			}
+		})
+	})
+
+	// Identity is a free SSH keypair, so an established account must never gain from
+	// one - otherwise a player farms their own alts. Losing to one still costs.
+	t.Run("an established player never gains against a provisional one", func(t *testing.T) {
+		t.Parallel()
+		rapid.Check(t, func(t *rapid.T) {
+			established := Player{
+				ID:     "established",
+				Rating: rapid.Float64Range(MinRating, MaxRating).Draw(t, "established"),
+				Place:  1,
+			}
+			fresh := Player{
+				ID:          "fresh",
+				Rating:      rapid.Float64Range(MinRating, MaxRating).Draw(t, "fresh"),
+				Place:       2,
+				Provisional: true,
+			}
+			if rapid.Bool().Draw(t, "freshWins") {
+				established.Place, fresh.Place = 2, 1
+				got := Calculate([]Player{fresh, established})
+				require.LessOrEqual(t, got["established"], ClampRating(established.Rating),
+					"beaten by a fresh account, the established side pays")
+				return
+			}
+
+			got := Calculate([]Player{established, fresh})
+			require.InDelta(t, ClampRating(established.Rating), got["established"], 1e-9,
+				"beating a fresh account pays nothing")
+			require.LessOrEqual(t, got["fresh"], ClampRating(fresh.Rating),
+				"and the fresh account still moves, so it converges on real games")
+		})
+	})
 }

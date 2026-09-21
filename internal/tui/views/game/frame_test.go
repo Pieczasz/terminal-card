@@ -160,7 +160,7 @@ func hasClockTick(cmd tea.Cmd) bool {
 	case ClockTickMsg:
 		return true
 	case tea.BatchMsg:
-		return slices.ContainsFunc(msg, func(child tea.Cmd) bool { return hasClockTick(child) })
+		return slices.ContainsFunc(msg, hasClockTick)
 	}
 	return false
 }

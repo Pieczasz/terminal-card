@@ -195,7 +195,7 @@ func TestBeginHandOrFinish_ClosesAHandTheDealAlreadyFinished(t *testing.T) {
 	assert.Equal(t, Showdown, extra.Phase, "the hand was closed, not left hanging")
 	assert.NotEmpty(t, extra.Winners, "somebody took the chips")
 	// finishHand either ends the match (one funded seat) or parks the next dealer
-	// on turn — never leaves OverrideNextTurn nil while the match is still live.
+	// on turn - never leaves OverrideNextTurn nil while the match is still live.
 	if extra.MatchComplete {
 		assert.True(t, (&Rules{}).CheckWinCondition(state))
 		assert.Nil(t, state.OverrideNextTurn)
@@ -285,4 +285,48 @@ func TestBeginHand_BustedPlayerSitsOut(t *testing.T) {
 	assert.NotEqual(t, 1, extra.SBIndex)
 	assert.NotEqual(t, 1, extra.BBIndex)
 	assert.NotEqual(t, 1, state.CurrentTurn, "the turn cursor skips the empty seat")
+}
+
+// A big blind too short to post in full is all-in for less, but the bring-in stays at
+// the full big blind and the shortfall is dead money. Letting CurrentBet follow what
+// was actually posted opened the betting below the blind and dragged the first legal
+// raise down with it, since MinRaise is measured from CurrentBet.
+func TestBeginHand_AShortBigBlindDoesNotLowerTheBringIn(t *testing.T) {
+	t.Parallel()
+	// Button on seat 0, so seat 1 posts the small blind and seat 2 owes the big blind
+	// with only 30 chips to post it with.
+	state, extra := tableWithChips(1000, 1000, 30)
+	rules := &Rules{}
+
+	require.NoError(t, rules.beginHand(state, extra, 0))
+
+	require.Equal(t, 0, state.CurrentTurn, "the seat after the big blind is under the gun")
+	assert.Equal(t, uint(30), extra.PlayerBets["p2"], "the short blind posts what it has")
+	assert.True(t, extra.PlayersAllIn["p2"], "and is all-in for it")
+	assert.Equal(t, DefaultBigBlind, extra.CurrentBet, "the bring-in is still a full big blind")
+	assert.Equal(t, DefaultBigBlind, ToCall(extra, "p0"))
+
+	require.ErrorContains(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 99}),
+		"minimum raise is 50", "a raise under a full blind on top of the bring-in is not one")
+	require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 100}))
+}
+
+// Nobody can be raised past what they are able to put in. A raise above the largest
+// opponent stack is chips no one can call, and the showdown would only hand them
+// straight back, so it is refused at the point the player asks for it.
+func TestValidateAction_RaiseIsCappedByTheLargestOpponentStack(t *testing.T) {
+	t.Parallel()
+	// Seat 0 is deep, its two opponents are short; the blinds leave p1 all-in.
+	state, extra := tableWithChips(1000, 20, 300)
+	rules := &Rules{}
+
+	require.NoError(t, rules.beginHand(state, extra, 0))
+	require.Equal(t, 0, state.CurrentTurn)
+
+	// p2 posted the big blind of 50 out of 300, so 300 is the most it can ever have out.
+	require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 300}))
+	require.ErrorContains(t, rules.ValidateAction(state, ActionRaiseTo{Amount: 301}),
+		"no opponent can call more than 300")
+	// Shoving stays legal: the uncalled part is refunded rather than staged.
+	require.NoError(t, rules.ValidateAction(state, ActionAllIn{}))
 }
