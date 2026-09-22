@@ -1,4 +1,4 @@
-# Terminal Card
+# tty.cards
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/Pieczasz/terminal-card)](https://go.dev/)
 [![License](https://img.shields.io/github/license/Pieczasz/terminal-card)](./LICENSE)
