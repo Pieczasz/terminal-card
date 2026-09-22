@@ -109,10 +109,10 @@ with it held. So rules may mutate `*State` freely and must **never** call back
 into the engine. That holds structurally today: `Rules` methods receive only
 `*State`, which carries no engine handle.
 
-*The order inside `submitActionLocked`.* phase check → turn check →
-`ValidateAction` → clear the missed-turn count → `ApplyAction` → `AfterAction` →
-broadcast `EventActionApplied` → `CheckWinCondition` → `applyNextTurnLocked(true)`
-→ broadcast `EventTurnAdvanced`. An error from `ApplyAction` or `AfterAction`
+*The order inside `submitActionLocked`.* phase check -> turn check ->
+`ValidateAction` -> clear the missed-turn count -> `ApplyAction` -> `AfterAction` ->
+broadcast `EventActionApplied` -> `CheckWinCondition` -> `applyNextTurnLocked(true)`
+-> broadcast `EventTurnAdvanced`. An error from `ApplyAction` or `AfterAction`
 finishes the game as `EndReasonRulesError` with state possibly half-applied, so
 **anything checkable up front belongs in `ValidateAction`**.
 
@@ -378,8 +378,8 @@ the view's named, testable job.
 ## 8. The SSH server
 
 **Files.** `internal/ssh/auth.go` (81) first, then `internal/ssh/server.go` (646)
-in this order: `SessionTracker` → `SetupServer` → `sessionLifecycle` →
-`sessionModel` → `releaseSession` → `recoverSession` / `reportingModel`.
+in this order: `SessionTracker` -> `SetupServer` -> `sessionLifecycle` ->
+`sessionModel` -> `releaseSession` -> `recoverSession` / `reportingModel`.
 
 **Understand.**
 
@@ -448,9 +448,9 @@ asserted. Then `internal/ratelimit/netkey_test.go`
 **Understand.** `catalog.All` is the only place a game is declared, and each
 entry carries the rules factory **and** the TUI view constructor. `main.go`
 builds the `game.Registry` from it; `internal/tui/app.go` registers routes from
-it. `main.go` now reads as a summary of everything above: `config.Load` → OTel →
-`db.Connect` → repositories → `lobby.NewManager` → registry → `ssh.SetupServer`
-→ `serve`, with the `defer`s ordered so LIFO unwinding drains match writes before
+it. `main.go` now reads as a summary of everything above: `config.Load` -> OTel ->
+`db.Connect` -> repositories -> `lobby.NewManager` -> registry -> `ssh.SetupServer`
+-> `serve`, with the `defer`s ordered so LIFO unwinding drains match writes before
 closing the DB handle they write through.
 
 **Invariant to check.** A catalog entry without a view does not compile past
@@ -561,15 +561,15 @@ Engine.armTurnTimerLocked --time.AfterFunc--> onTurnTimeout
 | How does a key become a user? | `ssh/auth.go`, `repository/user.go` |
 | Second SSH session for the same account? | `SessionTracker.Connect` - it displaces |
 | Mid-game wifi drop? | `lobby/disconnect.go`, `DisconnectPlayer`, `ResumePlayer` |
-| Who writes Elo? | `lobby/finalize.go` → `repository/match.go` |
+| Who writes Elo? | `lobby/finalize.go` -> `repository/match.go` |
 | Why did Elo not move? | shutdown / `EndReasonRulesError` / `EndReasonAbandoned` / pairing damp / provisional |
 | Soft-deleted ranking broke finalize? | `seedRankingRows` revive |
 | How is a game registered? | `catalog/catalog.go` `All` |
 | Turn auto-play / idle kick? | `game/turnclock.go` |
-| TUI reading engine state? | `gameview.Session.Sync` → `BoundEngine.Frame` |
+| TUI reading engine state? | `gameview.Session.Sync` -> `BoundEngine.Frame` |
 | Where is state redacted for the screen? | `views/game/poker/model.go` `buildSeats` |
 | Browse list sorting? | `lobby/browse.go` |
-| Lock order? | manager → lobby → engine; `State` has no lock |
+| Lock order? | manager -> lobby -> engine; `State` has no lock |
 | Rate limiting on IPv6? | `ratelimit/netkey.go`; fail-closed in `ssh.netKeyFor` |
 | Why can I not register? | `registrationLimit` in `ssh/server.go`; `mapRegisterError` |
 | Add a migration? | `make migrate-create`, files under `db/migrations/` |

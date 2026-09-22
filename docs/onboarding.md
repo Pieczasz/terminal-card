@@ -49,7 +49,7 @@ Named here so you recognise them on sight, not as an inventory.
 | Elm architecture (Model/Update/View) | every `internal/tui/views/**` model |
 | Fan-out broadcaster (observer) | `internal/broadcaster.Broadcaster[T]` - latest-wins, per-subscriber buffered channel |
 | Strategy | `game.Rules`, implemented by all five rules packages; the engine calls rules, never the reverse |
-| Factory + single registration point | `internal/catalog.All` → `game.Registry` |
+| Factory + single registration point | `internal/catalog.All` -> `game.Registry` |
 | Functional options | `lobby.Option` (`WithCardGame`, `WithMaxPlayers`, `WithPrivate`, `WithRanked`), `game.EngineOption` (`WithTurnTimeout`) |
 | Facade | `game.BoundEngine` via `game.Bind(engine, playerID)` - nil-safe throughout |
 | Embedded base type | `gameview.Session` in every game view's `Model` |
@@ -77,8 +77,8 @@ correctness tool in `cmd/server/main.go`; `goleak` `TestMain` in 22 packages.
 terminal-card/
 ├── cmd/
 │   ├── server/
-│   │   ├── main.go             process entry: logging → config → OTel → DB → repos
-│   │   │                       → lobby → registry → SSH server → stats API → serve
+│   │   ├── main.go             process entry: logging -> config -> OTel -> DB -> repos
+│   │   │                       -> lobby -> registry -> SSH server -> stats API -> serve
 │   │   └── Dockerfile          3 stages, final image FROM scratch, USER nonroot
 │   └── loadtest/               SSH concurrency harness (prints numbers, asserts none)
 ├── internal/
@@ -115,7 +115,7 @@ terminal-card/
 │   │   ├── action.go           Action, Event, EndReason, StateSnapshot
 │   │   ├── bound.go            BoundEngine - the per-player façade
 │   │   ├── shed.go             what crazy eights and uno share
-│   │   ├── registry.go         name → Module lookup
+│   │   ├── registry.go         name -> Module lookup
 │   │   ├── crazyeight/         rules.go, state.go
 │   │   ├── uno/                rules.go, state.go, deck.go
 │   │   ├── hearts/             rules.go, state.go, trick.go
@@ -129,13 +129,13 @@ terminal-card/
 │   │   ├── finalize.go         persist a finished match; the rating gate
 │   │   ├── disconnect.go       the 90s mid-game grace state machine
 │   │   ├── browse.go           BrowseEntry/BrowseFilter/BrowseLobbies
-│   │   └── player.go           db.User → game.Player, the only such place
+│   │   └── player.go           db.User -> game.Player, the only such place
 │   ├── observability/
 │   │   ├── otel.go             SetupOTel: logs + traces + metrics over OTLP gRPC
 │   │   └── metrics.go          counters + histograms; metrics_test pins the attrs
 │   ├── ratelimit/
 │   │   ├── limiter.go          sliding window; a full table evicts, it does not refuse
-│   │   └── netkey.go           NetKey: IPv6 → /64, unmaps v4-in-v6
+│   │   └── netkey.go           NetKey: IPv6 -> /64, unmaps v4-in-v6
 │   ├── repository/             the GORM implementations (only cmd/server imports it)
 │   │   ├── user.go             register, profile, leaderboard cache, DeleteAccount
 │   │   └── match.go            FinalizeRankedMatch: advisory locks, SELECT … FOR UPDATE

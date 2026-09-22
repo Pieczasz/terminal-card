@@ -223,7 +223,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) actions() []string {
-	return []string{"g/←/→ - Filter: " + m.filterLabel(), "↑/↓ - Page"}
+	return []string{"g/←/-> - Filter: " + m.filterLabel(), "↑/↓ - Page"}
 }
 
 func (m model) View() tea.View {

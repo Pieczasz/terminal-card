@@ -50,7 +50,7 @@ func spaces(n int) string {
 }
 ```
 
-In isolation: 82,255 ns → 4,199 ns, 1,239 allocs → 2.
+In isolation: 82,255 ns -> 4,199 ns, 1,239 allocs -> 2.
 
 It is held to lipgloss's output by a `rapid` property test over random content, widths,
 heights and all nine positions - which caught the first version being wrong. lipgloss
@@ -78,7 +78,7 @@ The palette collapses to one bool because every colour in a `Theme` is a functio
 fan, which mattered more: every row of every card was re-emitting its own colour escape
 sequence each frame.
 
-Poker 4,151 → 930. Crazy Eights 4,310 → 563.
+Poker 4,151 -> 930. Crazy Eights 4,310 -> 563.
 
 ## The unbenchmarked views were worse
 
@@ -134,7 +134,7 @@ Which is why the benchmarks call `View()` and not the helpers.
 ## Allocations are the ceiling
 
 Allocation rate decides whether more cores become more players. On the parallel benchmark,
-`GOGC=100` turned 2→6 cores into 1.4×; GC was the ceiling, not CPU. `GOGC=400` turned the
+`GOGC=100` turned 2->6 cores into 1.4×; GC was the ceiling, not CPU. `GOGC=400` turned the
 same jump into 2.2×. Compose sets that, with `GOMEMLIMIT=1GiB` as the backstop.
 
 | | before | after |

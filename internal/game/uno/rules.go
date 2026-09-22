@@ -219,7 +219,7 @@ func (r *Rules) applyVoluntaryDraw(state *game.State, extra *State) {
 	state.OverrideNextTurn = &next
 }
 
-// drawCardsInto draws up to n cards into the seat, reshuffling discard→stock
+// drawCardsInto draws up to n cards into the seat, reshuffling discard->stock
 // when needed. Returns false only when zero cards were drawn (deadlock).
 func drawCardsInto(state *game.State, playerIdx, n int) bool {
 	if playerIdx < 0 || playerIdx >= len(state.Players) || n <= 0 {

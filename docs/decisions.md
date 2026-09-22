@@ -70,7 +70,7 @@ an ordering to get right on every path.
 **Consequences.** Coarse: a `Frame` from one session briefly blocks a `Submit`
 from another. That is acceptable because everything under the lock is in-memory
 map and slice work; nothing does I/O. In exchange there is exactly one lock order
-to remember (manager → lobby → engine) and no fourth level.
+to remember (manager -> lobby -> engine) and no fourth level.
 
 **Where.** `internal/game/engine.go` - the comment on the `Engine` struct says it.
 `internal/game/state.go` says the same from the other side.
@@ -423,7 +423,7 @@ all-ready.
 
 **Where.** `internal/lobby/manager.go` (`DisconnectGrace`, `DisconnectPlayer`,
 `ResumePlayer`, `releaseHeldSeats`, `BeginShutdown`),
-`internal/lobby/disconnect.go` (`pending` → `expiring`).
+`internal/lobby/disconnect.go` (`pending` -> `expiring`).
 
 ---
 
@@ -633,7 +633,7 @@ run".
 |---|---|---|
 | `public_keys` | hard delete (`Unscoped`) | the unique `fingerprint` on a soft-deleted row would lock the person out of ever registering again; with the keys gone nothing can authenticate as the account |
 | `rankings` | hard delete (`Unscoped`) | a soft-deleted ranking still holds the `(user_id, game_id)` primary key |
-| `users` | **kept, anonymised**: `username` → `deleted_` + 32 hex of the UUID, `last_seen_at` → NULL | other players' history has to keep resolving to a name |
+| `users` | **kept, anonymised**: `username` -> `deleted_` + 32 hex of the UUID, `last_seen_at` -> NULL | other players' history has to keep resolving to a name |
 | `match_participants` | untouched | those rows are the other players' history, not this one's |
 
 **Consequences.** Erasure is irreversible and does **not** remove the person from
@@ -649,7 +649,7 @@ minutes of an erased name on screen.
 **Where.** `internal/repository/user.go` `DeleteAccount` / `eraseUserLocked`,
 `internal/db/users.go` `AnonymisedUsername` / `ValidateUsername`,
 `internal/db/migrations/000001_init.up.sql` (`username_valid`),
-`internal/tui/views/profile/profile.go` (the `x` → type `DELETE` flow).
+`internal/tui/views/profile/profile.go` (the `x` -> type `DELETE` flow).
 
 ---
 

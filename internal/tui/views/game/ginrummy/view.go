@@ -121,7 +121,7 @@ func (m *Model) renderHandResult() string {
 	}
 
 	winnerName := m.seatNames[r.Winner]
-	delta := m.Global.Theme.SuccessText.Render(fmt.Sprintf("+%d → %s", r.ScoreDelta, winnerName))
+	delta := m.Global.Theme.SuccessText.Render(fmt.Sprintf("+%d -> %s", r.ScoreDelta, winnerName))
 
 	knockerMelds := m.renderMeldGroups("knocker melds", r.KnockerMelds, false)
 	oppDead := m.renderCardRow("opponent deadwood", r.OpponentDeadwood, false)

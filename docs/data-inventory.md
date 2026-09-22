@@ -8,7 +8,7 @@ Scope: the SSH game server (`cmd/server`), its stats API (`internal/httpapi`), t
 observability stack (`compose.yaml` + `internal/config/`), and the marketing site
 (`web/`). Accurate as of the tree this file is committed in.
 
-## 1. Stored indefinitely — the database
+## 1. Stored indefinitely - the database
 
 One Postgres instance, `db` in `compose.yaml`, on an internal network with no
 published port. Schema is `internal/db/migrations/`.
@@ -29,7 +29,7 @@ published port. Schema is `internal/db/migrations/`.
 Two things to say plainly in a notice:
 
 - **The fingerprint is a cross-service correlator.** It is a hash, not the key, and
-  the raw public key is never stored — `internal/ssh/auth.go` turns it into a digest
+  the raw public key is never stored - `internal/ssh/auth.go` turns it into a digest
   at the door and the repository interface (`internal/db/repository.go`) only accepts
   a string. But the same SSH key is usually the one on GitHub, so the fingerprint is
   stable and linkable across services. It is authentication data, not a pseudonym.
@@ -49,7 +49,7 @@ table, and the session ends afterwards.
 |---|---|---|
 | `public_keys` | **hard**-deleted (`Unscoped`) | the fingerprint column is unique, so a soft-deleted row would lock the person out of ever registering again. With the keys gone, nothing can authenticate as the account |
 | `rankings` | **hard**-deleted (`Unscoped`) | a soft-deleted ranking still holds the `(user_id, game_id)` primary key |
-| `users` | **kept, anonymised**: `username` → `db.AnonymisedUsername(userID)` (`deleted_` + 32 hex), `last_seen_at` → NULL | it is the parent of `match_participants` rows belonging to *other* players, whose history has to keep resolving to a name |
+| `users` | **kept, anonymised**: `username` -> `db.AnonymisedUsername(userID)` (`deleted_` + 32 hex), `last_seen_at` -> NULL | it is the parent of `match_participants` rows belonging to *other* players, whose history has to keep resolving to a name |
 | `match_participants` | untouched | same reason; the erased player shows as `deleted_` plus hex |
 
 Two details a notice should state plainly: erasure is **not** reversible and does not
@@ -57,12 +57,12 @@ remove the person from other players' match history, only their name from it; an
 leaderboard cache is cleared wholesale on deletion, because its 5-minute TTL would
 otherwise be five more minutes of an erased name on screen.
 
-## 2. Processed transiently — never written to disk
+## 2. Processed transiently - never written to disk
 
 | Item | Where | Lifetime |
 |---|---|---|
-| Client IP, as a rate-limit key | `internal/ratelimit` — an in-memory map, IPv6 collapsed to its /64 by `NetKey` | one window: 1s for SSH auth, **1 hour for new-account registration** (`registrationWindow`, `internal/ssh/server.go`), 60s for the API. Swept every 64 calls, capped at 10 000 keys |
-| Client IP, from the PROXY protocol header | `cmd/server` → `github.com/pires/go-proxyproto` | the TCP connection |
+| Client IP, as a rate-limit key | `internal/ratelimit` - an in-memory map, IPv6 collapsed to its /64 by `NetKey` | one window: 1s for SSH auth, **1 hour for new-account registration** (`registrationWindow`, `internal/ssh/server.go`), 60s for the API. Swept every 64 calls, capped at 10 000 keys |
+| Client IP, from the PROXY protocol header | `cmd/server` -> `github.com/pires/go-proxyproto` | the TCP connection |
 | Client IP, from `X-Forwarded-For` | `internal/httpapi` `clientIPFunc`, only when `API_TRUST_PROXY=true` | the request |
 
 Nothing here is persisted or exported. The limiter's map is the whole of it.
@@ -70,17 +70,17 @@ Nothing here is persisted or exported. The limiter's map is the whole of it.
 ## 3. Reaches the observability stack
 
 Everything below is in the one Docker network; none of these services publishes a
-port (`docker compose config` — only `proxy` 22/80 and Grafana on `127.0.0.1:3000`).
+port (`docker compose config` - only `proxy` 22/80 and Grafana on `127.0.0.1:3000`).
 
-### Logs → Loki. **14 days** (`internal/config/loki/loki.yaml`, `retention_period: 336h`, compactor retention enabled)
+### Logs -> Loki. **14 days** (`internal/config/loki/loki.yaml`, `retention_period: 336h`, compactor retention enabled)
 
 Two sources reach Loki:
 
-1. **The application**, via `slog` → the OTLP bridge (`cmd/server/main.go` installs a
+1. **The application**, via `slog` -> the OTLP bridge (`cmd/server/main.go` installs a
    MultiHandler: JSON to stderr *and* `otelslog`). The stderr copy is dropped in Alloy
    (`internal/config/alloy/config.alloy`, `stage.drop`) so structured records are not
    stored twice.
-2. **Container stdout/stderr** for everything that is not a structured record —
+2. **Container stdout/stderr** for everything that is not a structured record -
    panic dumps, Postgres, nginx.
 
 Personal data in those logs today:
@@ -88,18 +88,18 @@ Personal data in those logs today:
 - **Client network** under `client_net`, at **INFO on every connect and every
   disconnect**: `internal/ssh/server.go` (`clientNet`, which is `ratelimit.NetKey` with
   `"unknown"` as the fallback). This is a complete connection log of the user base with
-  durations, but at /64 granularity for IPv6 and full-address granularity for IPv4 —
+  durations, but at /64 granularity for IPv6 and full-address granularity for IPv4 -
   where a single address is already what a household shares.
-- **Full `remote_addr` on WARN and ERROR only** — an unkeyable address, a rate-limit
+- **Full `remote_addr` on WARN and ERROR only** - an unkeyable address, a rate-limit
   rejection, a failed session, a panic. Abuse investigation keeps what it needs; the
   routine path does not.
-- **`client_version`** alongside both — the SSH client string, a weak fingerprinting
+- **`client_version`** alongside both - the SSH client string, a weak fingerprinting
   signal.
 - **`player_id` = `users.id`**, at INFO and above, across `internal/lobby/manager.go`
   (disconnect, grace, resume), `internal/game/turnclock.go`, `internal/game/shed.go`,
   `internal/elo/elo.go`, `internal/tui/views/...`, and per-hand summaries in
   `internal/game/hearts/trick.go` and `internal/game/ginrummy/rules.go`.
-- **Lobby codes** in `internal/lobby/finalize.go` and `lobby.go` — a live join code
+- **Lobby codes** in `internal/lobby/finalize.go` and `lobby.go` - a live join code
   for a private room, which is a secret more than it is personal data.
 - **Not logged anywhere: the SSH fingerprint and the username.** `internal/ssh/auth.go`
   logs neither, including on its failure paths.
@@ -108,7 +108,7 @@ nginx no longer contributes: `internal/config/nginx.conf` sets a `log_format pri
 that omits `$remote_addr` and the User-Agent (the compiled-in default was `combined`,
 which has both), and the `stream` block states `access_log off`.
 
-### Traces → Tempo. **48 hours** (`internal/config/tempo/tempo.yaml`, `block_retention: 48h`)
+### Traces -> Tempo. **48 hours** (`internal/config/tempo/tempo.yaml`, `block_retention: 48h`)
 
 Deliberately the shortest retention here, because Tempo used to hold the strongest
 link in the system: the `ssh.session` span carried the client address and the username
@@ -120,7 +120,7 @@ comment in `startSession` states the reason.
 What remains: the username on `ssh.session` for 48h, and `user_id` on repository spans
 (`internal/repository/user.go`, including `db.DeleteAccount`).
 
-### Metrics → Prometheus. **30 days** (`compose.yaml`, `--storage.tsdb.retention.time=30d`, plus an 8GB size cap)
+### Metrics -> Prometheus. **30 days** (`compose.yaml`, `--storage.tsdb.retention.time=30d`, plus an 8GB size cap)
 
 **No personal data**, and that is enforced rather than asserted:
 `internal/observability/metrics_test.go` collects every instrument and fails if any
@@ -136,14 +136,14 @@ bound, not a time bound; Loki's 14 days is the retention that counts.
 
 `web/` is a static Astro site on GitHub Pages behind Cloudflare.
 
-- **No cookies, no localStorage, no analytics or tracking script of any kind** — no
+- **No cookies, no localStorage, no analytics or tracking script of any kind** - no
   Google Analytics, Plausible, Umami, Fathom, Sentry, PostHog, Matomo, Clarity or
   Hotjar. Dependencies are build-time only.
 - **No third-party fonts or CDN**: `web/src/styles/global.css` uses a local system
   font stack; icons and images are self-hosted.
 - **Exactly one external origin at runtime**: `https://tty.cards/api`.
   `web/src/components/LiveStats.astro` fetches `/v1/stats` and
-  `/v1/leaderboard?limit=5` — GET, no credentials — lazily on scroll, then every 30s
+  `/v1/leaderboard?limit=5` - GET, no credentials - lazily on scroll, then every 30s
   while the tab is visible.
 - Consequences to state anyway: that fetch sends the visitor's IP to our API on a 30s
   cadence (used only as a rate-limit key, §2), the leaderboard response contains
@@ -154,7 +154,7 @@ bound, not a time bound; Loki's 14 days is the retention that counts.
 
 `internal/httpapi` is read-only, unauthenticated, and returns only what any player
 already sees in the TUI: aggregate counts (`/v1/stats`) and the top of the leaderboard
-— rank, username, game, Elo (`/v1/leaderboard`, `limit` 1-200, default 5). No
+- rank, username, game, Elo (`/v1/leaderboard`, `limit` 1-200, default 5). No
 per-user endpoint, no writes, no auth.
 
 ## 6. Retention, in one table
@@ -168,15 +168,15 @@ per-user endpoint, no writes, no auth.
 | Metrics | Prometheus | **30 days**, 8 GB cap | `compose.yaml` (`--storage.tsdb.retention.time=30d`) |
 | Container stdout on disk | Docker json-file | 3 × 10 MB, size-bound not time-bound | `compose.yaml` `x-logging` |
 | Rate-limit counters | process memory | one window (1s SSH auth, 1h registration, 60s API) | `internal/ratelimit` |
-| Live session and table state | process memory | until disconnect / match end | — |
+| Live session and table state | process memory | until disconnect / match end | - |
 
 ## 7. Known gaps, for whoever picks them up
 
 1. **`player_id` (= `users.id`) at INFO across lobby, engine and TUI logs**, for 14
    days. It survives account deletion, because the `users` row does. Correlating it
    back to a person needs database access, so this is a lower-grade identifier than
-   what was here before — but it is still one. (lobby / game)
-2. **Lobby codes at INFO** — `internal/lobby/finalize.go`, `lobby.go`. A live join code
+   what was here before - but it is still one. (lobby / game)
+2. **Lobby codes at INFO** - `internal/lobby/finalize.go`, `lobby.go`. A live join code
    for a private room is a secret more than it is personal data. (lobby)
 3. **The username on the `ssh.session` span** for 48h. Nothing joins it to an address
    any more, so this is the weakest of the three and may be worth keeping. (ssh)

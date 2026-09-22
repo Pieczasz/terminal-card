@@ -137,17 +137,17 @@ Order matters so deferred teardown runs correctly (LIFO):
 
 1. `installLogging()` - **first**, before config, so a config failure is a
    structured record rather than a default-handler line
-2. `config.Load()` → validated `*config.Config`
+2. `config.Load()` -> validated `*config.Config`
 3. `observability.SetupOTel` (defer shutdown)
 4. `db.Connect` (defer close)
-5. Repositories → `lobby.NewManager(ctx, matchRepo)`
+5. Repositories -> `lobby.NewManager(ctx, matchRepo)`
 6. `defer waitForFinalizers(lobbyManager)` - registered **after** the DB-close
    defer, so LIFO drains match writes before closing the handle they write
    through
 7. `game.Registry` from `catalog.All`
-8. `ssh.SetupServer` → `serve(...)`
+8. `ssh.SetupServer` -> `serve(...)`
 
-`serve` stacks `tcp → LimitListener → proxyproto.Listener`, runs `Serve` in a
+`serve` stacks `tcp -> LimitListener -> proxyproto.Listener`, runs `Serve` in a
 goroutine, and blocks on a signal, an accept error or an API error. Every exit
 path calls `drainServer` (`BeginShutdown` + graceful SSH stop), so ranked matches
 interrupted by a deploy are recorded **without** Elo.
@@ -175,22 +175,22 @@ logging middleware, which writes through the charm logger and so never reaches
 the OTLP handler.
 
 1. **Auth.** Any public key is accepted; identity is
-   `cryptossh.FingerprintSHA256` → `SHA256:<fingerprint>`. The rate limiter runs
+   `cryptossh.FingerprintSHA256` -> `SHA256:<fingerprint>`. The rate limiter runs
    in the public-key callback, before a session exists.
 2. **`LoadOrRegisterUser`.** First connection claims the SSH login name as the
    username. It takes an `allowRegister func() bool` and consults it **only** on
    the `user == nil` branch, so a returning player never spends the registration
    budget.
-3. **`tracker.Connect(userID, conn)` → generation.** A second session for the
+3. **`tracker.Connect(userID, conn)` -> generation.** A second session for the
    same account **displaces** the first *and closes its connection*, outside the
    tracker lock (a wedged peer must not hold every other account's `Connect`
-   behind it). Capacity → `ErrServerFull`. The TUI model is built **before** the
+   behind it). Capacity -> `ErrServerFull`. The TUI model is built **before** the
    slot is claimed, so a panic there cannot strand a slot nothing releases.
 4. **Per-session state** (`user`, `model`, `gen`, span, trace context) goes in a
    session-keyed `sync.Map`, never on `s.Context()`, which is per-**connection**
    and shared by every channel.
-5. **Teardown** is `closeSessionModel` → `releaseSession` → `recoverSession` →
-   `finishSession` → `releaseChannelSlot`. `releaseSession` gives up the lobby
+5. **Teardown** is `closeSessionModel` -> `releaseSession` -> `recoverSession` ->
+   `finishSession` -> `releaseChannelSlot`. `releaseSession` gives up the lobby
    seat **before** the tracker slot: the other order lets a fast reconnect take
    the slot and then have its seat torn down by the old session. A displaced
    generation touches neither.
@@ -235,10 +235,10 @@ Navigation is a message, not a call: a view returns a `router.ChangeViewMsg` and
 the router performs the swap in `Goto`, closing the outgoing view if it
 implements `router.Closer`.
 
-Initial route: `ResumePlayer` → a mid-game reconnect lands back at the table;
+Initial route: `ResumePlayer` -> a mid-game reconnect lands back at the table;
 otherwise home, or the waiting lobby.
 
-Game routes come from `catalog.All` via `router.GameRoute(slug)` →
+Game routes come from `catalog.All` via `router.GameRoute(slug)` ->
 `"game_<slug>"`. `internal/game` knows nothing about routes.
 
 **A seated player cannot navigate away from their table.** `RouteHome`,
@@ -311,7 +311,7 @@ dirty flag):
 
 | From | To | Trigger |
 |---|---|---|
-| `Waiting` | `InGame` | `ToggleReady` with everyone ready → `startGameLocked` |
+| `Waiting` | `InGame` | `ToggleReady` with everyone ready -> `startGameLocked` |
 | `InGame` | `Waiting` | `releaseFinishedGameLocked`, once the engine `IsFinished()` |
 | any | `Closed` | `detachPlayerLocked`: the leader leaves and there are no guests |
 
@@ -332,10 +332,10 @@ dirty flag):
   kick mid-hand can farm Elo by dropping whoever is winning and letting the
   engine finish the match without them.
 
-**Starting a game.** `startGameLocked` → `registry.Create(name)` →
-`game.NewEngine(rules, players, rules.InitialDeck())` → `engine.Start()` →
-`l.startedAt = time.Now()` → `watchGameLocked(engine, db.GameRef{...})` →
-`setStateLocked(InGame)` → broadcast `EventGameStarted` carrying the `*game.Engine`.
+**Starting a game.** `startGameLocked` -> `registry.Create(name)` ->
+`game.NewEngine(rules, players, rules.InitialDeck())` -> `engine.Start()` ->
+`l.startedAt = time.Now()` -> `watchGameLocked(engine, db.GameRef{...})` ->
+`setStateLocked(InGame)` -> broadcast `EventGameStarted` carrying the `*game.Engine`.
 The leader is always seat 0.
 
 **The finalize snapshot is taken when the game starts, not when it ends.**
@@ -359,10 +359,10 @@ drop it - the loop falls through to `engine.IsFinished()` and does the same thin
 with `EndReasonUnknown`.
 
 **Mid-game disconnect.** `DisconnectPlayer` arms **`DisconnectGrace` (90 s)** via
-`disconnectGrace` (`disconnect.go`: `pending` timers → `expiring` claim →
+`disconnectGrace` (`disconnect.go`: `pending` timers -> `expiring` claim ->
 `LeaveLobby`). `ResumePlayer` cancels a pending leave, or returns the seat on a
 takeover with no pending leave. Waiting-lobby seats and any seat during shutdown
-still leave immediately. `expireLeave` moves `pending` → `expiring` under the
+still leave immediately. `expireLeave` moves `pending` -> `expiring` under the
 manager lock so a reconnect cannot resume a seat about to vanish.
 
 **The hold is released at two more points, both in `manager.go`:**
@@ -388,14 +388,14 @@ key -> view.Update -> BoundEngine.Submit(action)
                    broadcast Event*
 ```
 
-Views sync with `Session.Sync(fn)` → `BoundEngine.Frame(fn func(*State))`: one
+Views sync with `Session.Sync(fn)` -> `BoundEngine.Frame(fn func(*State))`: one
 lock hold for the snapshot, the player's own hand, the turn clock and the live
 `*State`. `State.Extra` is unredacted - copy what you keep.
 
 ### 3.6 Finish - `Manager.finalizeFinishedGame`
 
-The lobby watcher sees `EventGameEnded` → `requestFinalize` (using the snapshot
-taken at game start) → **`Manager.finalizeFinishedGame`** (`finalize.go`):
+The lobby watcher sees `EventGameEnded` -> `requestFinalize` (using the snapshot
+taken at game start) -> **`Manager.finalizeFinishedGame`** (`finalize.go`):
 
 1. `registerFinalizer` **first** - every statement between observing the end and
    that call is a window for shutdown to begin, and a refusal then drops a
@@ -426,7 +426,7 @@ engine's.
   handle. Do not add one.
 - Rules may mutate `*State` freely under the engine lock.
 - `ValidateAction` rejects cleanly; an error from `ApplyAction` or `AfterAction`
-  finishes the game as `EndReasonRulesError` (state may be half-applied) →
+  finishes the game as `EndReasonRulesError` (state may be half-applied) ->
   **unrated** persistence. Anything checkable up front belongs in
   `ValidateAction`.
 - Optional, probed by type assertion: `PlayerLeaveHandler`,
@@ -704,7 +704,7 @@ upgrade means recreating the volume or running `pg_upgrade`.
 
 Schema changes are SQL files in `internal/db/migrations/`, up **and** down,
 applied with golang-migrate. `internal/db/migrations.go` embeds them, and
-`testutil.SetupTestDB` applies the same files **up → down → up**, so every down
+`testutil.SetupTestDB` applies the same files **up -> down -> up**, so every down
 migration is exercised in CI and the tested schema cannot drift from the deployed
 one. Nothing calls `AutoMigrate`.
 
@@ -761,7 +761,7 @@ place, because splitting them mints Elo between two people who both quit.
 
 ### 6.5 Ranked finalize - one transaction
 
-`FinalizeRankedMatch` → `updateRankingsTx` (`internal/repository/match.go`):
+`FinalizeRankedMatch` -> `updateRankingsTx` (`internal/repository/match.go`):
 
 1. **`lockPairing`** - `pg_advisory_xact_lock` **per seat**, in user-id order. Not
    per exact participant set: the cap below is per *pair*, and two different sets
@@ -842,7 +842,7 @@ bypasses the cache entirely, which is also why the HTTP endpoint caps there.
 - The leaderboard cache is cleared wholesale afterwards - a five-minute TTL is
   five minutes of an erased name on screen.
 
-The TUI path is Profile → `x` → type `DELETE`, refused while seated, session ends
+The TUI path is Profile -> `x` -> type `DELETE`, refused while seated, session ends
 after.
 
 ---
@@ -894,11 +894,11 @@ Lobby file split:
 | File | Role |
 |---|---|
 | `manager.go` | maps, join / new / kick, grace release, shutdown, finalizer drain |
-| `lobby.go` | roster, ready, start, watcher → `requestFinalize` |
+| `lobby.go` | roster, ready, start, watcher -> `requestFinalize` |
 | `finalize.go` | persist finished matches, the rating gate |
 | `disconnect.go` | the mid-game grace state machine |
 | `browse.go` | public list, Elo-distance sort, `GameNames` |
-| `player.go` | `db.User` → `game.Player` |
+| `player.go` | `db.User` -> `game.Player` |
 
 ---
 
@@ -1049,20 +1049,20 @@ without bringing the stack up.
 
 1. Never publish `:6969` (PROXY trust) or `:6970` (`API_TRUST_PROXY`).
 2. `sessionLifecycle` outermost; recover is a **direct** defer; the bubbletea
-   path is `reportingModel` → `s.Stderr()`.
+   path is `reportingModel` -> `s.Stderr()`.
 3. A displaced session must not `LeaveLobby` or free the tracker slot. `Connect`
    closes the displaced connection **outside** the tracker lock.
 4. A mid-game drop calls `DisconnectPlayer`, not `LeaveLobby`. The hold is
    released on hand end and on shutdown, not only by its timer.
 5. Finalize lives on the Manager and uses the snapshot taken at game **start**.
-   Rules error, abandoned and shutdown → history without Elo.
+   Rules error, abandoned and shutdown -> history without Elo.
 6. Soft-deleted rankings must be revived before the seed, or finalize aborts.
 7. Advisory locks are per seat and sorted; the 24-hour damp count is per pair,
    across games.
 8. Any view that subscribes implements `router.Closer`; the router and
    `releaseSession` call it.
 9. Anything kept after `Frame`/`Sync` must be copied, not aliased.
-10. Lock order is manager → lobby → engine. `State` has no lock.
+10. Lock order is manager -> lobby -> engine. `State` has no lock.
 11. A catalog entry is rules **and** view; the slug is persisted, so changing one
     is a data migration.
 12. An accept-loop or API failure still runs `drainServer`.
@@ -1098,7 +1098,7 @@ Lobby.startGameLocked -> watchGameLocked -> handleBroadcasterEvents
 ```
 
 **Generation fencing and grace fencing are two different mechanisms that must
-agree.** `Owns`/`Release` on the SSH side, `pending` → `expiring` on the lobby
+agree.** `Owns`/`Release` on the SSH side, `pending` -> `expiring` on the lobby
 side. A reconnect race is what happens when they disagree.
 
 ```

@@ -51,7 +51,7 @@ unnoticed for so long.
 ### Changed - identity
 
 - **Account ids are UUIDv7.** Postgres 18 generates them with `uuidv7()`; the
-  Go side uses the stdlib `uuid` package. Recreate the Postgres volume: 16→18
+  Go side uses the stdlib `uuid` package. Recreate the Postgres volume: 16->18
   is a major upgrade, and the rewritten `000001` will checksum-fail otherwise.
 
 ### Changed - ratings and payouts

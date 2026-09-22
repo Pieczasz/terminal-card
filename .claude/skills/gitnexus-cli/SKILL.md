@@ -5,13 +5,13 @@ description: "Use when the user needs to run GitNexus CLI commands like analyze/
 
 # GitNexus CLI Commands
 
-Commands below use `node .gitnexus/run.cjs <command>` — the project-local runner `gitnexus analyze` drops next to the index. It auto-selects an available runner at call time (global `gitnexus`, else `pnpm dlx`, else `bunx`, else `npx`), so no package-manager assumption and no global install is required — including on a bun-only machine, which has no npm, npx or pnpm at all.
+Commands below use `node .gitnexus/run.cjs <command>` - the project-local runner `gitnexus analyze` drops next to the index. It auto-selects an available runner at call time (global `gitnexus`, else `pnpm dlx`, else `bunx`, else `npx`), so no package-manager assumption and no global install is required - including on a bun-only machine, which has no npm, npx or pnpm at all.
 
-> **Not analyzed yet, or `node .gitnexus/run.cjs` reports `Cannot find module`** (the gitignored runner is absent — e.g. a fresh clone or `git clean`)? (Re)generate it with `npx gitnexus analyze` from the project root, or `bunx gitnexus@latest analyze` on a bun-only machine. On **npm 11.x**, if `npx` crashes during install (`node.target is null`), install once with `npm i -g gitnexus` (then `gitnexus analyze`), or use `bunx gitnexus@latest analyze`, or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@latest analyze`. See [#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939).
+> **Not analyzed yet, or `node .gitnexus/run.cjs` reports `Cannot find module`** (the gitignored runner is absent - e.g. a fresh clone or `git clean`)? (Re)generate it with `npx gitnexus analyze` from the project root, or `bunx gitnexus@latest analyze` on a bun-only machine. On **npm 11.x**, if `npx` crashes during install (`node.target is null`), install once with `npm i -g gitnexus` (then `gitnexus analyze`), or use `bunx gitnexus@latest analyze`, or `pnpm --allow-build=@ladybugdb/core --allow-build=gitnexus --allow-build=tree-sitter dlx gitnexus@latest analyze`. See [#1939](https://github.com/abhigyanpatwari/GitNexus/issues/1939).
 
 ## Commands
 
-### analyze — Build or refresh the index
+### analyze - Build or refresh the index
 
 ```bash
 node .gitnexus/run.cjs analyze
@@ -30,13 +30,13 @@ Run from the project root. This parses all source files, builds the knowledge gr
 | `--spring-actuator <path>` | Import opt-in Spring Boot Actuator mappings, beans, conditions, configprops, and env snapshots. Forces a full rebuild; unsupported with `--watch`. |
 | `--asyncapi-spec <path>` | Read opt-in AsyncAPI 3.x documents (directory or single file) and mint `Destination` nodes from their operations. 2.x is refused, not mapped. Unsupported with `--watch`. |
 
-**When to run:** First time in a project, after major code changes, or when `gitnexus://repo/{name}/context` reports the index is stale. In Claude Code, a PostToolUse hook detects staleness after `git commit` and `git merge` and notifies the agent to run `analyze` — the hook does not run analyze itself, to avoid blocking the agent for up to 120s and risking KuzuDB corruption on timeout.
+**When to run:** First time in a project, after major code changes, or when `gitnexus://repo/{name}/context` reports the index is stale. In Claude Code, a PostToolUse hook detects staleness after `git commit` and `git merge` and notifies the agent to run `analyze` - the hook does not run analyze itself, to avoid blocking the agent for up to 120s and risking KuzuDB corruption on timeout.
 
 For Spring runtime enrichment, pass a JSON bundle, one endpoint JSON file, or a directory containing endpoint files. Route evidence is authoritative only when `runtimeConfirmed === true`; `runtimeSource` records provenance and may also accompany `handler-conflict`. Env/configprops values are never persisted.
 
 Use `node .gitnexus/run.cjs analyze --watch` for a long-lived local Git repository. It performs an initial analysis, queues scanner-admitted file changes, and retries intact failed batches with bounded backoff. Watch refreshes update only the graph: they skip AGENTS.md / CLAUDE.md injection and standard skill installation, so run a one-shot `analyze` when those generated files need updating. Watch rejects one-shot or context-output flags including `--force`, embedding flags, `--skills`, `--default-branch`, `--skip-agents-md`, `--skip-skills`, `--no-stats`, `--self-commit`, `--index-only`, and `--skip-git`. It never pulls remotes. Scheduled remote clone/pull is a different command: `gitnexus auto-sync`. Bare `gitnexus watch` is reserved and does not start either job. Running MCP and `serve` processes periodically check for a published replacement and reopen it without a restart. MCP checks are throttled to once every five seconds, so a tool call before the next check can briefly use the previous index.
 
-### status — Check index freshness
+### status - Check index freshness
 
 ```bash
 node .gitnexus/run.cjs status
@@ -44,7 +44,7 @@ node .gitnexus/run.cjs status
 
 Shows whether the current repo has a GitNexus index, when it was last updated, and symbol/relationship counts. Use this to check if re-indexing is needed.
 
-### clean — Delete the index
+### clean - Delete the index
 
 ```bash
 node .gitnexus/run.cjs clean
@@ -57,7 +57,7 @@ Deletes the `.gitnexus/` directory and unregisters the repo from the global regi
 | `--force` | Skip confirmation prompt                          |
 | `--all`   | Clean all indexed repos, not just the current one |
 
-### wiki — Generate documentation from the graph
+### wiki - Generate documentation from the graph
 
 ```bash
 node .gitnexus/run.cjs wiki
@@ -78,7 +78,7 @@ Generates repository documentation from the knowledge graph using an LLM. HTTP p
 | `--lang <lang>`     | Output language for generated documentation (e.g. english, chinese, spanish, japanese) |
 | `--gist`            | Publish wiki as a public GitHub Gist      |
 
-### list — Show all indexed repos
+### list - Show all indexed repos
 
 ```bash
 node .gitnexus/run.cjs list

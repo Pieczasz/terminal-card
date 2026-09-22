@@ -196,7 +196,7 @@ that budget.
 
 ## Observability
 
-Alloy → Loki / Tempo / Prometheus → Grafana, all in the same compose file, none
+Alloy -> Loki / Tempo / Prometheus -> Grafana, all in the same compose file, none
 of it published beyond Grafana's loopback binding. The app **pushes** OTLP; Alloy
 scrapes only the host.
 
@@ -218,8 +218,8 @@ Retention is explicit: **logs 14 days** (`internal/config/loki/loki.yaml`),
 5. `docker compose up -d --build`.
 6. Optional: install `zstd` and cron `./scripts/backup.sh` (see its header).
    Protect `backups/`.
-7. Smoke test: register a new key → create a lobby → play each game → drop
-   mid-hand → reconnect → check profile and leaderboard.
+7. Smoke test: register a new key -> create a lobby -> play each game -> drop
+   mid-hand -> reconnect -> check profile and leaderboard.
 
 Notes worth reading before you deploy:
 
