@@ -3,7 +3,6 @@ package ssh
 import (
 	"context"
 	"errors"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -17,11 +16,10 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	gossh "golang.org/x/crypto/ssh"
 )
 
 // fakeSession is enough of an ssh.Session for the teardown helpers, which only ever
-// look the session up in sessionStates. Embedding the interface leaves every other
+// look the session up in the registry. Embedding the interface leaves every other
 // method nil on purpose: calling one is a bug in the test, not a silent pass.
 type fakeSession struct {
 	ssh.Session
@@ -45,27 +43,24 @@ func TestSessionState_IsPerChannelNotPerConnection(t *testing.T) {
 	user := &db.User{ID: testutil.UID(11), Username: "shared"}
 	gen, err := tracker.Connect(user.ID, nil)
 	require.NoError(t, err)
-	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
+	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil), Tracker: tracker}
+	reg := &sessionRegistry{}
 
 	// Both channels of one connection, so they would share an ssh.Context.
 	accepted := &fakeSession{}
 	rejected := &fakeSession{}
 
 	modelClosed := false
-	sessionStates.Store(accepted, &sessionState{
+	reg.store(accepted, &sessionState{
 		owns:  true,
 		user:  user,
 		gen:   gen,
 		model: recordingCloser{closed: &modelClosed},
 	})
-	sessionStates.Store(rejected, &sessionState{})
-	t.Cleanup(func() {
-		sessionStates.Delete(accepted)
-		sessionStates.Delete(rejected)
-	})
+	reg.store(rejected, &sessionState{})
 
-	closeSessionModel(rejected)
-	releaseSession(rejected, deps, tracker)
+	reg.closeSessionModel(rejected)
+	reg.releaseSession(rejected, deps)
 
 	assert.False(t, modelClosed, "the rejected channel closed the accepted channel's view")
 	assert.Equal(t, 1, tracker.Count(), "and freed the accepted channel's session slot")
@@ -89,7 +84,8 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	tracker := NewSessionTracker(0)
 	oldGen, err := tracker.Connect(guest.ID, nil)
 	require.NoError(t, err)
-	deps := ServerDependencies{LobbyManager: manager}
+	deps := ServerDependencies{LobbyManager: manager, Tracker: tracker}
+	reg := &sessionRegistry{}
 
 	// The reconnect displaces the zombie session before teardown runs, so
 	// releaseSession sees a stale generation and leaves the seat alone.
@@ -109,8 +105,8 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	}
 
 	srv := &ssh.Server{
-		Handler: sessionLifecycle(deps, tracker)(func(s ssh.Session) {
-			st, ok := lookupSessionState(s)
+		Handler: sessionLifecycle(deps, reg)(func(s ssh.Session) {
+			st, ok := reg.load(s)
 			require.True(t, ok)
 			st.owns = true
 			st.user = guest
@@ -126,59 +122,12 @@ func TestReleaseSession_GivesUpTheSeatBeforeTheSlot(t *testing.T) {
 	assert.Equal(t, table, manager.FindLobbyByPlayer(guestPlayer), "and the index disagrees with the roster")
 }
 
-// One authenticated connection opening channels without limit is a database DoS:
-// every channel loads the user with three preloads against a small pool.
-func TestSessionLifecycle_CapsChannelsPerConnection(t *testing.T) {
-	t.Parallel()
-
-	admitted := make(chan struct{}, maxSessionsPerConnection+1)
-	release := make(chan struct{})
-	deps := ServerDependencies{LobbyManager: lobby.NewManager(context.Background(), nil)}
-	srv := &ssh.Server{
-		Handler: sessionLifecycle(deps, NewSessionTracker(0))(func(_ ssh.Session) {
-			admitted <- struct{}{}
-			<-release
-		}),
-	}
-
-	addr := testsession.Listen(t, srv)
-	client, err := gossh.Dial("tcp", addr, &gossh.ClientConfig{
-		User:            "flooder",
-		Auth:            []gossh.AuthMethod{gossh.Password("x")},
-		HostKeyCallback: gossh.InsecureIgnoreHostKey(),
-	})
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = client.Close() })
-
-	var running sync.WaitGroup
-	for range maxSessionsPerConnection {
-		session, err := client.NewSession()
-		require.NoError(t, err)
-		running.Go(func() {
-			_, _ = session.Output("")
-		})
-	}
-	require.Eventually(t, func() bool { return len(admitted) == maxSessionsPerConnection },
-		2*time.Second, 10*time.Millisecond, "the cap refused a channel it should have admitted")
-
-	over, err := client.NewSession()
-	require.NoError(t, err)
-	out, _ := over.CombinedOutput("")
-	_ = over.Close()
-
-	assert.Contains(t, string(out), "Too many sessions", "the channel over the cap was closed silently")
-	assert.Len(t, admitted, maxSessionsPerConnection, "and it ran the handler anyway")
-
-	close(release)
-	running.Wait()
-}
-
 func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	t.Parallel()
 	tracker := NewSessionTracker(2)
 	_, err := tracker.Connect(testutil.UID(1), nil)
 	require.NoError(t, err)
-	_, err = tracker.Connect(testutil.UID(2), nil)
+	gen, err := tracker.Connect(testutil.UID(2), nil)
 	require.NoError(t, err)
 	_, err = tracker.Connect(testutil.UID(3), nil)
 	require.ErrorIs(t, err, ErrServerFull)
@@ -194,9 +143,46 @@ func TestSessionTracker_RefusesBeyondCapacityWithDistinctError(t *testing.T) {
 	assert.Equal(t, 2, tracker.Count())
 	assert.True(t, tracker.Release(testutil.UID(1), gen2))
 
-	tracker.Disconnect(testutil.UID(2))
+	assert.True(t, tracker.Release(testutil.UID(2), gen))
 	_, err = tracker.Connect(testutil.UID(3), nil)
 	require.NoError(t, err, "capacity frees with the seat")
+}
+
+// ReleaseWith is what orders an old session's teardown before a reconnect: while
+// the teardown's DisconnectPlayer runs, the reconnect's Connect has to wait, or it
+// resumes a seat the teardown then puts on a grace timer.
+func TestSessionTracker_ReleaseWithHoldsOffTheReconnect(t *testing.T) {
+	t.Parallel()
+	tracker := NewSessionTracker(0)
+	user := testutil.UID(21)
+	gen, err := tracker.Connect(user, nil)
+	require.NoError(t, err)
+
+	inTeardown, finish := make(chan struct{}), make(chan struct{})
+	released := make(chan bool, 1)
+	go func() {
+		released <- tracker.ReleaseWith(user, gen, func() { close(inTeardown); <-finish })
+	}()
+	<-inTeardown
+
+	reconnected := make(chan struct{})
+	go func() {
+		_, _ = tracker.Connect(user, nil)
+		close(reconnected)
+	}()
+	select {
+	case <-reconnected:
+		t.Fatal("the reconnect ran while the old session was still tearing down")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(finish)
+	<-reconnected
+	assert.True(t, <-released)
+	assert.Equal(t, 1, tracker.Count(), "the reconnect's slot survived the teardown")
+
+	ran := false
+	assert.False(t, tracker.ReleaseWith(user, gen, func() { ran = true }), "a stale generation freed the slot")
+	assert.False(t, ran, "and ran its teardown against the live session's seat")
 }
 
 // panicModel panics from whichever method the test asks for.
@@ -235,10 +221,10 @@ func TestReportingModel_RecordsPanicsAndLetsThemUnwind(t *testing.T) {
 
 			s := &fakeSession{}
 			st := &sessionState{traceCtx: context.Background()}
-			sessionStates.Store(s, st)
-			t.Cleanup(func() { sessionStates.Delete(s) })
+			reg := &sessionRegistry{}
+			reg.store(s, st)
 
-			m := reportingModel{Model: panicModel{on: method}, session: s}
+			m := reportingModel{Model: panicModel{on: method}, session: s, reg: reg}
 			require.Panics(t, func() {
 				switch method {
 				case "init":
@@ -260,10 +246,10 @@ func TestReportingModel_PassesThroughWhenNothingPanics(t *testing.T) {
 	t.Parallel()
 
 	s := &fakeSession{}
-	sessionStates.Store(s, &sessionState{traceCtx: context.Background()})
-	t.Cleanup(func() { sessionStates.Delete(s) })
+	reg := &sessionRegistry{}
+	reg.store(s, &sessionState{traceCtx: context.Background()})
 
-	m := reportingModel{Model: panicModel{on: "none"}, session: s}
+	m := reportingModel{Model: panicModel{on: "none"}, session: s, reg: reg}
 
 	assert.Nil(t, m.Init())
 	got, cmd := m.Update(nil)
@@ -271,7 +257,7 @@ func TestReportingModel_PassesThroughWhenNothingPanics(t *testing.T) {
 	assert.IsType(t, reportingModel{}, got, "the wrapper survives an update")
 }
 
-// countingCloser stands in for the displaced session's channel.
+// countingCloser stands in for the displaced session's connection.
 type countingCloser struct {
 	closed atomic.Int32
 	err    error

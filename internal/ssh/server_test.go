@@ -57,14 +57,17 @@ func setupTestEnvironment(t *testing.T) testEnv {
 
 	deps := ServerDependencies{
 		Config: &config.Config{
-			ServerPort:      listener.Addr().(*net.TCPAddr).Port,
-			SSHKeyPath:      t.TempDir() + "/id_ed25519",
-			RateLimitCount:  5,
-			RateLimitWindow: time.Second,
+			ServerPort:         listener.Addr().(*net.TCPAddr).Port,
+			SSHKeyPath:         t.TempDir() + "/id_ed25519",
+			RateLimitCount:     5,
+			RateLimitWindow:    time.Second,
+			RegistrationLimit:  5,
+			RegistrationWindow: time.Hour,
 		},
 		UserRepository: userRepo,
 		LobbyManager:   lobby.NewManager(context.Background(), matchRepo),
 		GameRegistry:   game.NewRegistry(),
+		Tracker:        NewSessionTracker(0),
 	}
 
 	server, err := SetupServer(deps)

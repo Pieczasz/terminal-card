@@ -30,10 +30,22 @@ func TestSetupServer_Errors(t *testing.T) {
 	t.Parallel()
 
 	deps := ServerDependencies{
-		Config: &config.Config{SSHKeyPath: "/invalid/path/that/doesnt/exist"},
+		Config:  &config.Config{SSHKeyPath: "/invalid/path/that/doesnt/exist"},
+		Tracker: NewSessionTracker(0),
 	}
 	_, err := SetupServer(deps)
 	assert.ErrorContains(t, err, "error while saving keypair")
+}
+
+// The tracker is shared with the stats API, which counts who is online from it. A
+// server that quietly built its own would leave that count at zero forever.
+func TestSetupServer_RequiresATracker(t *testing.T) {
+	t.Parallel()
+
+	_, err := SetupServer(ServerDependencies{
+		Config: &config.Config{SSHKeyPath: t.TempDir() + "/id_ed25519", RateLimitCount: 5, RateLimitWindow: time.Second},
+	})
+	require.ErrorIs(t, err, ErrNoTracker)
 }
 
 func TestSetupServer_SetsConnectionTimeouts(t *testing.T) {
@@ -45,6 +57,7 @@ func TestSetupServer_SetsConnectionTimeouts(t *testing.T) {
 			RateLimitCount:  5,
 			RateLimitWindow: time.Second,
 		},
+		Tracker: NewSessionTracker(0),
 	}
 
 	server, err := SetupServer(deps)
@@ -315,15 +328,16 @@ func TestSessionModel_RefusalPaths(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
+			reg := &sessionRegistry{}
 			if tt.storeState {
-				sessionStates.Store(tt.session, &sessionState{traceCtx: context.Background()})
-				t.Cleanup(func() { sessionStates.Delete(tt.session) })
+				reg.store(tt.session, &sessionState{traceCtx: context.Background()})
 			}
 			before := tt.tracker.Count()
 
 			deps := newSessionDeps(tt.repo)
-			limiter := ratelimit.NewSlidingWindowLimiter(registrationLimit, registrationWindow)
-			model, opts := sessionModel(deps, tt.tracker, limiter)(tt.session)
+			deps.Tracker = tt.tracker
+			limiter := ratelimit.NewSlidingWindowLimiter(5, time.Hour)
+			model, opts := sessionModel(deps, reg, limiter)(tt.session)
 
 			assert.Nil(t, model, "a refused session must not be handed to bubbletea")
 			assert.Nil(t, opts)
@@ -361,14 +375,15 @@ func TestSessionModel_AcceptedSessionIsFullyRegistered(t *testing.T) {
 	user := &db.User{ID: testutil.UID(42), Username: "player"}
 	s := &stubSession{addr: stubAddr{"10.0.0.9:1"}, pubKey: testPublicKey(t), user: "player"}
 	st := &sessionState{traceCtx: context.Background()}
-	sessionStates.Store(s, st)
-	t.Cleanup(func() { sessionStates.Delete(s) })
+	reg := &sessionRegistry{}
+	reg.store(s, st)
 
 	tracker := NewSessionTracker(0)
 	deps := newSessionDeps(stubUserRepo{user: user})
-	limiter := ratelimit.NewSlidingWindowLimiter(registrationLimit, registrationWindow)
+	limiter := ratelimit.NewSlidingWindowLimiter(5, time.Hour)
 
-	model, _ := sessionModel(deps, tracker, limiter)(s)
+	deps.Tracker = tracker
+	model, _ := sessionModel(deps, reg, limiter)(s)
 	require.NotNil(t, model)
 	t.Cleanup(func() { st.model.Close() })
 
@@ -386,12 +401,13 @@ func TestSessionProgram_RefusedSessionGetsNoProgram(t *testing.T) {
 	t.Parallel()
 
 	s := &stubSession{addr: stubAddr{"10.0.0.10:1"}}
-	sessionStates.Store(s, &sessionState{traceCtx: context.Background()})
-	t.Cleanup(func() { sessionStates.Delete(s) })
+	reg := &sessionRegistry{}
+	reg.store(s, &sessionState{traceCtx: context.Background()})
 
 	deps := newSessionDeps(stubUserRepo{user: &db.User{ID: testutil.UID(5)}})
-	program := sessionProgram(deps, NewSessionTracker(0),
-		ratelimit.NewSlidingWindowLimiter(registrationLimit, registrationWindow))
+	deps.Tracker = NewSessionTracker(0)
+	program := sessionProgram(deps, reg,
+		ratelimit.NewSlidingWindowLimiter(5, time.Hour))
 
 	assert.Nil(t, program(s), "a refused session must not get a bubbletea program")
 }
@@ -406,10 +422,10 @@ func TestReportingModel_TellsTheClientAboutThePanic(t *testing.T) {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
 			s := &stubSession{addr: stubAddr{"10.0.0.11:1"}}
-			sessionStates.Store(s, &sessionState{traceCtx: context.Background()})
-			t.Cleanup(func() { sessionStates.Delete(s) })
+			reg := &sessionRegistry{}
+			reg.store(s, &sessionState{traceCtx: context.Background()})
 
-			m := reportingModel{Model: panicModel{on: method}, session: s}
+			m := reportingModel{Model: panicModel{on: method}, session: s, reg: reg}
 			require.Panics(t, func() {
 				switch method {
 				case "init":
