@@ -62,6 +62,7 @@ func settleAndAdvance(state *game.State, extra *State) error {
 		extra.PlayerBets[p.ID] = 0
 		extra.ActedThisRound[p.ID] = false
 	}
+	clear(extra.LastBetLevel)
 	extra.CurrentBet = 0
 	extra.MinRaise = extra.BigBlind
 
@@ -83,6 +84,17 @@ func settleAndAdvance(state *game.State, extra *State) error {
 	}
 	if canStillBet < 2 {
 		return runOutBoard(state, extra)
+	}
+	return nil
+}
+
+// settleOrUnwind is settleAndAdvance for callers that cannot finish the hand on a
+// failure: a street that cannot be dealt leaves chips no showdown will ever award, so
+// the pool goes back to whoever put it in before the error is passed on.
+func settleOrUnwind(state *game.State, extra *State) error {
+	if err := settleAndAdvance(state, extra); err != nil {
+		refundContributions(extra)
+		return err
 	}
 	return nil
 }
@@ -158,7 +170,7 @@ func runShowdown(state *game.State, extra *State) error {
 func contenders(state *game.State, extra *State) []*game.Player {
 	out := activePlayers(state, extra)
 	for _, p := range state.LeftPlayers {
-		if !isFolded(extra, p.ID) && extra.PlayersAllIn[p.ID] {
+		if !extra.Folded[p.ID] && extra.PlayersAllIn[p.ID] {
 			out = append(out, p)
 		}
 	}
@@ -317,21 +329,15 @@ func handScores(players []*game.Player, extra *State) map[string]int {
 	return scores
 }
 
-// awardUncontested pays the last live player when everyone else folded or left. A
-// player can only win from an opponent what they risked themselves, so anything
-// nobody matched goes back first - refundUncalled does the same job on the showdown
-// path, and without this the fold-out path pays the winner chips no one called.
+// awardUncontested pays the last live player when everyone else folded or left. The
+// pot is split the way the showdown path splits it: refundUncalled hands back the one
+// slice nobody matched - the top contributor's excess over the second-highest - and
+// everything else, dead money from folders included, goes to the winner, just as
+// buildSidePots rides it with the last live layer. Refunding each folder their excess
+// over the winner instead would let a player who called and folded take back chips
+// the showdown path would have paid out.
 func awardUncontested(extra *State, winner *game.Player) {
-	matched := extra.TotalContributed[winner.ID]
-	for id, contributed := range extra.TotalContributed {
-		if id == winner.ID || contributed <= matched {
-			continue
-		}
-		uncalled := contributed - matched
-		extra.PlayerChips[id] += uncalled
-		extra.MainPool -= uncalled
-	}
-
+	refundUncalled(extra)
 	extra.PlayerChips[winner.ID] += extra.MainPool
 	extra.MainPool = 0
 	extra.Pots = nil
@@ -392,8 +398,16 @@ func resultOrder(state *game.State, extra *State) func(a, b *game.Player) int {
 // decided by the stack a player walks away with; everyone who busted is level on
 // chips, so how long they lasted is what separates them. The hand-level keys only
 // matter for players who finished holding equal stacks. Zero is a genuine draw.
+//
+// Hand score counts only for a hand that was shown down between two players still
+// seated: a pot won face-down was never contested on the cards, and a leaver's hand
+// was never played out, so ranking on either splits a draw by cards nobody showed.
 func resultLevel(state *game.State, extra *State) func(a, b *game.Player) int {
 	scores := handScores(slices.Concat(state.Players, state.LeftPlayers), extra)
+	seated := make(map[string]bool, len(state.Players))
+	for _, p := range state.Players {
+		seated[p.ID] = true
+	}
 	return func(a, b *game.Player) int {
 		if c := cmp.Compare(extra.PlayerChips[b.ID], extra.PlayerChips[a.ID]); c != 0 {
 			return c
@@ -401,14 +415,14 @@ func resultLevel(state *game.State, extra *State) func(a, b *game.Player) int {
 		if c := cmp.Compare(extra.BustedAtHand[b.ID], extra.BustedAtHand[a.ID]); c != 0 {
 			return c
 		}
-		fa, fb := isFolded(extra, a.ID), isFolded(extra, b.ID)
+		fa, fb := extra.Folded[a.ID], extra.Folded[b.ID]
 		if fa != fb {
 			if fa {
 				return 1
 			}
 			return -1
 		}
-		if !fa && len(extra.Table) >= 3 {
+		if !fa && extra.ReachedShowdown && seated[a.ID] && seated[b.ID] {
 			return cmp.Compare(scores[b.ID], scores[a.ID])
 		}
 		return 0

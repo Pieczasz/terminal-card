@@ -203,6 +203,7 @@ func TestBetting_AllInShortStackSidePotAward(t *testing.T) {
 		PlayerBets:       map[string]uint{"short": 0, "mid": 0, "big": 0},
 		TotalContributed: map[string]uint{"short": 0, "mid": 0, "big": 0},
 		ActedThisRound:   map[string]bool{"short": false, "mid": false, "big": false},
+		LastBetLevel:     map[string]uint{},
 	}
 	state.Extra = extra
 
@@ -531,6 +532,11 @@ func TestChipsAreConservedAcrossRandomHands(t *testing.T) {
 			order := rapid.IntRange(0, 4).Draw(rt, fmt.Sprintf("pick%d", step))
 
 			actions := candidateActions(raiseTo)
+			// The top of the legal band is where a short opponent gets put all-in for
+			// less than a full raise - a raise amount the biased draw above never hits.
+			var top uint
+			engine.WithState(func(s *game.State) { _, top, _ = RaiseBounds(s, id) })
+			actions = append(actions, ActionRaiseTo{Amount: top})
 			acted := false
 			for i := range actions {
 				act := actions[(order+i)%len(actions)]
@@ -633,6 +639,7 @@ func sidePotState(t testingT, contributed map[string]uint, folded ...string) (*g
 		PlayerBets:       map[string]uint{},
 		TotalContributed: maps.Clone(contributed),
 		ActedThisRound:   map[string]bool{},
+		LastBetLevel:     map[string]uint{},
 	}
 	for _, id := range folded {
 		extra.Folded[id] = true
@@ -732,6 +739,7 @@ func TestRunShowdown_NamesTheWinnersItPaid(t *testing.T) {
 		PlayerBets:       map[string]uint{},
 		TotalContributed: map[string]uint{"p0": 100, "p1": 500, "p2": 500},
 		ActedThisRound:   map[string]bool{},
+		LastBetLevel:     map[string]uint{},
 	}
 	state.Extra = extra
 	before := maps.Clone(extra.PlayerChips)
@@ -977,6 +985,7 @@ func TestRunShowdown_UncalledBetComesBackToADepartedOverBettor(t *testing.T) {
 		PlayerBets:       map[string]uint{},
 		TotalContributed: map[string]uint{"a": 100, "b": 1100, "d": 100},
 		ActedThisRound:   map[string]bool{},
+		LastBetLevel:     map[string]uint{},
 		MainPool:         1300,
 	}
 	state.Extra = extra
@@ -1013,6 +1022,7 @@ func TestSettleFailure_HandsThePotBack(t *testing.T) {
 
 		require.Error(t, (&Rules{}).afterBettingAction(state, extra))
 
+		assert.True(t, extra.HandComplete, "the same unwind as a leave: the hand is closed")
 		assert.Equal(t, uint(1000), extra.PlayerChips["a"])
 		assert.Equal(t, uint(1000), extra.PlayerChips["b"])
 		assert.Zero(t, extra.MainPool)
@@ -1108,6 +1118,7 @@ func TestLeave_TheOnlyPlayerWithChipsBehindStillPaysTheAllIns(t *testing.T) {
 		PlayerBets:       map[string]uint{},
 		TotalContributed: map[string]uint{"a": 300, "b": 300, "c": 300},
 		ActedThisRound:   map[string]bool{"a": true, "b": true, "c": true},
+		LastBetLevel:     map[string]uint{},
 		MainPool:         900,
 	}
 	state.Extra = extra
@@ -1125,4 +1136,79 @@ func TestLeave_TheOnlyPlayerWithChipsBehindStillPaysTheAllIns(t *testing.T) {
 	assert.Equal(t, uint(900), extra.PlayerChips["a"]+extra.PlayerChips["b"],
 		"the departed player's called chips stay in the pot")
 	assert.Equal(t, uint(400), extra.PlayerChips["c"], "leaving forfeits the pot, not the stack behind it")
+}
+
+// Only the top contributor's excess over the second-highest contribution was never
+// matched; everything below that line is dead money from players who folded, and it
+// goes to the winner exactly as buildSidePots rides it with the last live layer (D-2).
+// A (500) bet and left, C (300) called and folded, W (100) is the last one standing:
+// A gets back the 200 nobody matched, C gets nothing back.
+func TestAwardUncontested_DeadMoneyGoesToTheWinner(t *testing.T) {
+	t.Parallel()
+	winner := &game.Player{ID: "w"}
+	extra := &State{
+		PlayerChips:      map[string]uint{"w": 0, "a": 0, "c": 0},
+		TotalContributed: map[string]uint{"w": 100, "a": 500, "c": 300},
+		MainPool:         900,
+	}
+
+	awardUncontested(extra, winner)
+
+	assert.Equal(t, uint(200), extra.PlayerChips["a"], "only the unmatched top of A's bet comes back")
+	assert.Zero(t, extra.PlayerChips["c"], "C's folded 300 is dead money")
+	assert.Equal(t, uint(700), extra.PlayerChips["w"])
+	assert.Zero(t, extra.MainPool)
+}
+
+// Hole cards only separate two equal stacks when they were actually shown down, and
+// only between players still at the table: a pot won face-down and a leaver's hand
+// were never contested, so ranking on them splits a draw by cards nobody played.
+func TestStandingScore_HandsOnlySeparateSeatedShowdowns(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+
+	tests := []struct {
+		name      string
+		showdown  bool
+		leave     bool
+		wantShare bool
+	}{
+		{name: "two leavers at 1000 share a place", showdown: true, leave: true, wantShare: true},
+		{name: "a hand won face-down does not rank the cards", showdown: false, wantShare: true},
+		{name: "a seated showdown still ranks the better hand higher", showdown: true, wantShare: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state := createTestState()
+			extra := state.Extra.(*State)
+			// Ace-high for everyone; the kickers are K, Q and J, so every hand differs.
+			extra.Table = []deck.Card{
+				{Rank: deck.Ace, Suit: deck.Hearts}, {Rank: deck.Nine, Suit: deck.Diamonds},
+				{Rank: deck.Seven, Suit: deck.Spades}, {Rank: deck.Five, Suit: deck.Clubs},
+				{Rank: deck.Eight, Suit: deck.Hearts},
+			}
+			extra.ReachedShowdown = tt.showdown
+			extra.PlayerChips["p1"] = 500 // out of the tie, first either way
+			if tt.leave {
+				state.LeftPlayers = state.Players[1:]
+				state.Players = state.Players[:1]
+			}
+			p2, p3 := findPlayer(state, "p2"), findPlayer(state, "p3")
+
+			shared := rules.StandingScore(state, p2) == rules.StandingScore(state, p3)
+
+			assert.Equal(t, tt.wantShare, shared)
+		})
+	}
+}
+
+func findPlayer(state *game.State, id string) *game.Player {
+	for _, p := range slices.Concat(state.Players, state.LeftPlayers) {
+		if p.ID == id {
+			return p
+		}
+	}
+	return nil
 }

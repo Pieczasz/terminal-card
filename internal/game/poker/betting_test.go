@@ -18,6 +18,7 @@ type seat struct {
 	chips  uint
 	bet    uint
 	acted  bool
+	level  uint // the CurrentBet an acted seat acted on
 	folded bool
 	allIn  bool
 }
@@ -36,12 +37,14 @@ func seatedRound(currentBet uint, seats ...seat) (*game.State, *State) {
 		PlayerBets:       map[string]uint{},
 		TotalContributed: map[string]uint{},
 		ActedThisRound:   map[string]bool{},
+		LastBetLevel:     map[string]uint{},
 	}
 	for _, s := range seats {
 		players = append(players, &game.Player{ID: s.id})
 		extra.PlayerChips[s.id] = s.chips
 		extra.PlayerBets[s.id] = s.bet
 		extra.ActedThisRound[s.id] = s.acted
+		extra.LastBetLevel[s.id] = s.level
 		extra.Folded[s.id] = s.folded
 		extra.PlayersAllIn[s.id] = s.allIn
 	}
@@ -471,6 +474,7 @@ func TestRankPlayers_Order(t *testing.T) {
 	t.Run("level stacks are separated by the hand", func(t *testing.T) {
 		t.Parallel()
 		state, extra := tableWithChips(500, 500)
+		extra.ReachedShowdown = true
 		state.Players[0].Cards = []deck.Card{
 			{Rank: deck.Two, Suit: deck.Clubs}, {Rank: deck.Three, Suit: deck.Diamonds},
 		}
@@ -552,6 +556,15 @@ func TestValidateRaiseTo(t *testing.T) {
 		{
 			name:       "the opponent's own street bet counts towards what they can cover",
 			currentBet: 100, minRaise: 50, chips: 1000, oppChips: 200, oppBet: 100, amount: 300,
+		},
+		{
+			name:       "an opponent too short for a full raise can still be put all-in",
+			currentBet: 0, minRaise: 50, chips: 1000, oppChips: 30, amount: 30,
+		},
+		{
+			name:       "but not for less than their stack",
+			currentBet: 0, minRaise: 50, chips: 1000, oppChips: 30, amount: 29,
+			wantErr: "minimum raise is 30",
 		},
 		{
 			name:       "nothing can be raised past an opponent who is already all-in for less",
@@ -689,9 +702,9 @@ func TestValidateAction_NoRaiseWhenBettingIsNotReopened(t *testing.T) {
 	// minimum of 150 - and the action came back round to "a".
 	notReopened := func() (*game.State, *State) {
 		state, extra := seatedRound(250,
-			seat{id: "a", chips: 800, bet: 200, acted: true},
-			seat{id: "b", chips: 0, bet: 250, acted: true, allIn: true},
-			seat{id: "c", chips: 800, bet: 200, acted: true},
+			seat{id: "a", chips: 800, bet: 200, acted: true, level: 200},
+			seat{id: "b", chips: 0, bet: 250, acted: true, level: 250, allIn: true},
+			seat{id: "c", chips: 800, bet: 200, acted: true, level: 200},
 		)
 		extra.MinRaise = 150
 		state.CurrentTurn = 0
@@ -877,4 +890,106 @@ func TestRules_TurnTimeout_ForeignStateFallsBackToTheDefault(t *testing.T) {
 	state := game.NewState(&Rules{}, nil, deck.StandardDeck())
 
 	assert.Zero(t, (&Rules{}).TurnTimeout(state))
+}
+
+// Short all-ins that are each below a full raise but together reach one reopen the
+// betting for a player who already acted (the TDA rule): what they face is measured
+// against the bet they last acted on, not against the last shove alone.
+func TestValidateAction_ShortAllInsThatAddUpToAFullRaiseReopen(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		cAction  game.Action
+		wantOpen bool
+	}{
+		{name: "150 then 220 is 120 over the 100 a bet, a full raise", cAction: ActionAllIn{}, wantOpen: true},
+		{name: "150 alone is 50 over the 100 a bet, still short", cAction: ActionFold{}, wantOpen: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			rules := &Rules{}
+			state, extra := seatedRound(0,
+				seat{id: "a", chips: 1000},
+				seat{id: "b", chips: 150},
+				seat{id: "c", chips: 220},
+				seat{id: "d", chips: 1000},
+			)
+			act := func(seat int, action game.Action) {
+				state.CurrentTurn = seat
+				require.NoError(t, rules.ValidateAction(state, action))
+				require.NoError(t, rules.ApplyAction(state, action))
+			}
+
+			act(0, ActionRaiseTo{Amount: 100})
+			act(1, ActionAllIn{})
+			act(2, tt.cAction)
+			act(3, ActionCall{})
+			state.CurrentTurn = 0
+
+			err := rules.ValidateAction(state, ActionRaiseTo{Amount: extra.CurrentBet + extra.MinRaise})
+			if tt.wantOpen {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, "betting is not reopened")
+		})
+	}
+}
+
+// RaiseBounds is what the view builds its prompt from, so every amount in the band
+// has to pass ValidateAction and nothing just outside it may.
+func TestRaiseBounds(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name           string
+		currentBet     uint
+		hero, opp      seat
+		wantLo, wantHi uint
+		wantOK         bool
+	}{
+		{
+			name: "a full raise up to the stack", currentBet: 50,
+			hero: seat{id: "a", chips: 1000}, opp: seat{id: "b", chips: 1000},
+			wantLo: 100, wantHi: 1000, wantOK: true,
+		},
+		{
+			name: "capped by what the opponent can call", currentBet: 0,
+			hero: seat{id: "a", chips: 1000}, opp: seat{id: "b", chips: 30},
+			wantLo: 30, wantHi: 30, wantOK: true,
+		},
+		{
+			name: "an opponent all-in for the bet leaves nothing to raise", currentBet: 50,
+			hero: seat{id: "a", chips: 1000}, opp: seat{id: "b", bet: 50, allIn: true},
+		},
+		{
+			name: "betting not reopened", currentBet: 70,
+			hero: seat{id: "a", chips: 1000, bet: 50, acted: true, level: 50}, opp: seat{id: "b", chips: 1000},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			state, _ := seatedRound(tt.currentBet, tt.hero, tt.opp)
+			state.CurrentTurn = 0
+
+			lo, hi, ok := RaiseBounds(state, "a")
+
+			require.Equal(t, tt.wantOK, ok)
+			if !ok {
+				return
+			}
+			assert.Equal(t, tt.wantLo, lo)
+			assert.Equal(t, tt.wantHi, hi)
+			rules := &Rules{}
+			require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: lo}))
+			require.NoError(t, rules.ValidateAction(state, ActionRaiseTo{Amount: hi}))
+			require.Error(t, rules.ValidateAction(state, ActionRaiseTo{Amount: lo - 1}))
+			require.Error(t, rules.ValidateAction(state, ActionRaiseTo{Amount: hi + 1}))
+		})
+	}
 }
