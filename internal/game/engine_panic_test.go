@@ -35,7 +35,7 @@ func endedEvent(t *testing.T, events []Event) Event {
 func TestEngine_SubmitAction_RulesPanicEndsTheTable(t *testing.T) {
 	t.Parallel()
 	engine := newTimeoutEngine(t, &applyPanicRules{&timeoutRules{safe: namedAction{name: "safe"}}}, "a", "b")
-	events, err := engine.Broadcaster().Subscribe()
+	events, err := engine.Subscribe()
 	require.NoError(t, err)
 
 	var submitErr error
@@ -45,14 +45,14 @@ func TestEngine_SubmitAction_RulesPanicEndsTheTable(t *testing.T) {
 
 	require.Error(t, submitErr, "the view has to be told its move did not land")
 	assert.True(t, engine.IsFinished())
-	assert.True(t, engine.TurnDeadline().IsZero(), "a finished table must not auto-play")
+	assert.True(t, engine.turnDeadline().IsZero(), "a finished table must not auto-play")
 	assert.Equal(t, EndReasonRulesError, endedEvent(t, drainEvents(events)).Reason)
 }
 
 func TestEngine_TurnTimeout_PanickingStandingsDoesNotEscape(t *testing.T) {
 	t.Parallel()
 	engine := newTimeoutEngine(t, &standingsPanicRules{&timeoutRules{safe: namedAction{name: "safe"}}}, "a", "b")
-	events, err := engine.Broadcaster().Subscribe()
+	events, err := engine.Subscribe()
 	require.NoError(t, err)
 
 	require.NotPanics(t, func() { fireTurnTimeout(t, engine) })
