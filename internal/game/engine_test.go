@@ -95,9 +95,9 @@ func TestEngine_Start(t *testing.T) {
 	m.AssertExpectations(t)
 }
 
-// A start that fails must leave a table somebody can start again, not one parked in a
-// phase no player can act in.
-func TestEngine_Start_FailureLeavesTheTableStartable(t *testing.T) {
+// A start that fails reports it. The engine is not reused - the lobby builds a new one
+// per attempt - and its seats are its own, so the caller's players stay undealt.
+func TestEngine_Start_Failures(t *testing.T) {
 	t.Parallel()
 
 	t.Run("a second start is refused", func(t *testing.T) {
@@ -111,14 +111,12 @@ func TestEngine_Start_FailureLeavesTheTableStartable(t *testing.T) {
 	t.Run("too few cards to deal", func(t *testing.T) {
 		t.Parallel()
 		m := setupMockRules()
-		engine := NewEngine(m, []*Player{{ID: "p1"}, {ID: "p2"}}, deck.StandardDeck()[:4])
+		players := []*Player{{ID: "p1"}, {ID: "p2"}}
+		engine := NewEngine(m, players, deck.StandardDeck()[:4])
 		t.Cleanup(engine.Close)
 
 		require.ErrorContains(t, engine.Start(), "insufficient number of cards")
-		engine.WithState(func(state *State) {
-			assert.Equal(t, Waiting, state.Phase)
-			assert.Empty(t, state.Players[0].Cards, "a deal that could not finish deals nobody in")
-		})
+		assert.Empty(t, players[0].Cards, "a failed deal never reaches the caller's seats")
 	})
 
 	t.Run("rules that cannot set the game up", func(t *testing.T) {
@@ -130,7 +128,7 @@ func TestEngine_Start_FailureLeavesTheTableStartable(t *testing.T) {
 		t.Cleanup(engine.Close)
 
 		require.ErrorContains(t, engine.Start(), "failed to setup game")
-		engine.WithState(func(state *State) { assert.Equal(t, Waiting, state.Phase) })
+		assert.True(t, engine.TurnDeadline().IsZero(), "a table that never opened arms no clock")
 	})
 }
 
@@ -519,7 +517,7 @@ func TestEngine_Standings_PlacesPlayersWhoLeft(t *testing.T) {
 			state.LeftPlayers = []*Player{leftFirst, leftLast}
 		})
 
-		assert.Equal(t, []string{"p1", "p3", "p2"}, engine.StandingsIDs())
+		assert.Equal(t, []string{"p1", "p3", "p2"}, standingIDs(engine))
 	})
 
 	t.Run("players the rules placed themselves are not repeated", func(t *testing.T) {
@@ -535,7 +533,7 @@ func TestEngine_Standings_PlacesPlayersWhoLeft(t *testing.T) {
 		t.Cleanup(engine.Close)
 		engine.WithState(func(state *State) { state.LeftPlayers = []*Player{left} })
 
-		assert.Equal(t, []string{"p1", "p2"}, engine.StandingsIDs())
+		assert.Equal(t, []string{"p1", "p2"}, standingIDs(engine))
 	})
 }
 
@@ -623,20 +621,6 @@ func TestEngine_CloseClosesTheBroadcaster(t *testing.T) {
 	assert.ErrorIs(t, err, broadcaster.ErrClosed)
 }
 
-func TestCryptoIntN(t *testing.T) {
-	t.Parallel()
-
-	// An empty table must not reach crypto/rand, which panics on a non-positive bound.
-	for _, n := range []int{0, -1} {
-		_, err := cryptoIntN(n)
-		require.Errorf(t, err, "cryptoIntN(%d) must refuse rather than panic", n)
-	}
-
-	v, err := cryptoIntN(1)
-	require.NoError(t, err)
-	assert.Zero(t, v, "the only seat available")
-}
-
 // TestEngine_ConcurrentOperations hammers the engine from many goroutines to prove there is
 // no data race or panic and that the engine finishes in a valid, consistent state.
 func TestEngine_ConcurrentOperations(t *testing.T) {
@@ -683,7 +667,6 @@ func TestEngine_ConcurrentOperations(t *testing.T) {
 				_ = engine.CurrentPlayerID()
 				_ = engine.Snapshot()
 				_, _ = engine.StandingsWithPlaces()
-				_ = engine.StandingsIDs()
 			}
 		})
 	}
@@ -797,6 +780,15 @@ func TestEngine_Places_LeaversWithEqualScoreShareAPlace(t *testing.T) {
 // drainEvents takes everything already published. Broadcast is synchronous under the
 // engine mutex, so once the call that caused it has returned the events are either in
 // the buffer or were never sent; waiting would only hide a missing one.
+func standingIDs(e *Engine) []string {
+	standings, _ := e.StandingsWithPlaces()
+	ids := make([]string, 0, len(standings))
+	for _, p := range standings {
+		ids = append(ids, p.ID)
+	}
+	return ids
+}
+
 func drainEvents(ch <-chan Event) []Event {
 	var out []Event
 	for {

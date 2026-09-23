@@ -280,47 +280,36 @@ func TestRules_AfterAction_Play_LedSuitIsTheFirstCardNotTheLast(t *testing.T) {
 	assert.Equal(t, 2, *state.OverrideNextTurn, "the trick winner leads the next one")
 }
 
-func TestThreeLowestCards(t *testing.T) {
+// Passing the lowest cards kept the Q♠ and the high spades that catch it, which is the
+// worst pass there is. An absent player sheds the danger instead.
+func TestThreeMostDangerous(t *testing.T) {
 	t.Parallel()
+	qs := deck.Card{Rank: deck.Queen, Suit: deck.Spades}
+	as := deck.Card{Rank: deck.Ace, Suit: deck.Spades}
+	ks := deck.Card{Rank: deck.King, Suit: deck.Spades}
+	ah := deck.Card{Rank: deck.Ace, Suit: deck.Hearts}
+	th := deck.Card{Rank: deck.Ten, Suit: deck.Hearts}
+	ac := deck.Card{Rank: deck.Ace, Suit: deck.Clubs}
+	kd := deck.Card{Rank: deck.King, Suit: deck.Diamonds}
+	kc := deck.Card{Rank: deck.King, Suit: deck.Clubs}
+	low := deck.Card{Rank: deck.Two, Suit: deck.Clubs}
 
-	t.Run("picks the three lowest by rank", func(t *testing.T) {
-		t.Parallel()
-		hand := []deck.Card{
-			{Rank: deck.King, Suit: deck.Spades},
-			{Rank: deck.Three, Suit: deck.Hearts},
-			{Rank: deck.Ace, Suit: deck.Clubs},
-			{Rank: deck.Two, Suit: deck.Diamonds},
-			{Rank: deck.Ten, Suit: deck.Clubs},
-			{Rank: deck.Four, Suit: deck.Spades},
-		}
-		got := threeLowestCards(hand)
-		assert.Equal(t, []deck.Card{
-			{Rank: deck.Two, Suit: deck.Diamonds},
-			{Rank: deck.Three, Suit: deck.Hearts},
-			{Rank: deck.Four, Suit: deck.Spades},
-		}, got, "ace is high in Hearts, so it is never among the lowest")
-	})
-
-	t.Run("same-rank cards break the tie on suit", func(t *testing.T) {
-		t.Parallel()
-		hand := []deck.Card{
-			{Rank: deck.Three, Suit: deck.Hearts},
-			{Rank: deck.Two, Suit: deck.Clubs},
-			{Rank: deck.King, Suit: deck.Spades},
-			{Rank: deck.Two, Suit: deck.Diamonds},
-		}
-		assert.Equal(t, []deck.Card{
-			{Rank: deck.Two, Suit: deck.Diamonds},
-			{Rank: deck.Two, Suit: deck.Clubs},
-			{Rank: deck.Three, Suit: deck.Hearts},
-		}, threeLowestCards(hand), "equal ranks order by suit, so the pass is deterministic")
-	})
-
-	t.Run("a short hand passes whatever it has", func(t *testing.T) {
-		t.Parallel()
-		hand := []deck.Card{{Rank: deck.King, Suit: deck.Spades}, {Rank: deck.Two, Suit: deck.Clubs}}
-		assert.Equal(t, hand, threeLowestCards(hand))
-	})
+	tests := []struct {
+		name string
+		hand []deck.Card
+		want []deck.Card
+	}{
+		{name: "the queen and her catchers first", hand: []deck.Card{low, ah, ks, ac, qs, as}, want: []deck.Card{qs, as, ks}},
+		{name: "then the highest hearts", hand: []deck.Card{th, low, ac, ah, ks}, want: []deck.Card{ks, ah, th}},
+		{name: "then the highest cards, ties on suit", hand: []deck.Card{low, kc, ac, kd}, want: []deck.Card{ac, kd, kc}},
+		{name: "a short hand passes whatever it has", hand: []deck.Card{low, ks}, want: []deck.Card{low, ks}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, threeMostDangerous(tt.hand))
+		})
+	}
 }
 
 func TestRules_CheckWinCondition_AndStandings(t *testing.T) {
@@ -433,6 +422,30 @@ func TestRules_OnPlayerLeave_EndsMatch(t *testing.T) {
 	rules.OnPlayerLeave(state, "p2")
 	assert.True(t, state.Extra.(*State).MatchComplete)
 	assert.True(t, rules.CheckWinCondition(state))
+	assert.True(t, state.Interrupted, "the match ended on a leave, not on the score")
+}
+
+// Hearts cannot go on three-handed, so one leave ends the match for everyone. That is
+// not a result the seats still playing earned, and the engine has to say so.
+func TestRules_LeaveEndsTheMatchAsInterrupted(t *testing.T) {
+	t.Parallel()
+	players := []*game.Player{{ID: "p1"}, {ID: "p2"}, {ID: "p3"}, {ID: "p4"}}
+	engine := game.NewEngine(&Rules{}, players, deck.StandardDeck())
+	require.NoError(t, engine.Start())
+	t.Cleanup(engine.Close)
+	events, err := engine.Broadcaster().Subscribe()
+	require.NoError(t, err)
+
+	engine.RemovePlayer("p2")
+
+	require.True(t, engine.IsFinished())
+	reason := game.EndReasonUnknown
+	for len(events) > 0 {
+		if ev := <-events; ev.Type == game.EventGameEnded {
+			reason = ev.Reason
+		}
+	}
+	assert.Equal(t, game.EndReasonInterrupted, reason)
 }
 
 func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
@@ -455,7 +468,7 @@ func TestSmoke_FullHandConservesTheDeck(t *testing.T) {
 		engine.WithState(func(s *game.State) {
 			for _, p := range s.Players {
 				if p.ID == id {
-					cards = threeLowestCards(p.Cards)
+					cards = threeMostDangerous(p.Cards)
 					break
 				}
 			}
@@ -728,14 +741,14 @@ func TestRules_StandingScore_CountsTheLiveHandExactlyOnce(t *testing.T) {
 		extra := s.Extra.(*State)
 		extra.CumulativeScores = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 0}
 		extra.HandPoints = map[string]int{"p1": 0, "p2": 0, "p3": 0, "p4": 25}
-		extra.HandComplete = false
+		extra.Stage = StageTrickPlay
 
 		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "mid-hand, the live hand counts")
 		assert.Equal(t, 0, rules.StandingScore(s, s.Players[0]))
 
 		// scoreHand has run: totals now hold the hand, and HandPoints still does too.
 		extra.CumulativeScores["p4"] = 25
-		extra.HandComplete = true
+		extra.Stage = StageHandOver
 		assert.Equal(t, 25, rules.StandingScore(s, s.Players[3]), "scored once, not twice")
 	})
 }
@@ -795,7 +808,6 @@ func TestStandings_MidHandLeaveCountsTheLiveHand(t *testing.T) {
 	engine.WithState(func(s *game.State) {
 		extra := s.Extra.(*State)
 		extra.Stage = StageTrickPlay
-		extra.HandComplete = false
 		extra.CumulativeScores = map[string]int{"p1": 10, "p2": 0, "p3": 10, "p4": 10}
 		// p3 took the queen this hand, so on the totals alone they would tie p1 and p4
 		// and place ahead of both on seat order.

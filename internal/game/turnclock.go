@@ -10,9 +10,19 @@ import (
 const (
 	DefaultTurnTimeout = 30 * time.Second
 	MaxMissedTurns     = 3
+	// minTurnRemaining is the least a seat keeping the turn is left with, so a turn
+	// that carries on (gin's draw then discard, an auto-play, a leave elsewhere) never
+	// lands on a clock already at zero.
+	minTurnRemaining = 10 * time.Second
 )
 
+// armTurnTimerLocked (re)starts the clock for the seat on turn. The same seat with the
+// same turn length is the same turn carrying on - gin's draw then discard, a re-armed
+// auto-play, somebody else leaving - and keeps its running deadline, floored at
+// minTurnRemaining. Anything else is a fresh turn with the full length, and only a
+// fresh turn can be charged a new miss.
 func (e *Engine) armTurnTimerLocked() {
+	prevDeadline, prevPlayer, prevLength := e.turnDeadline, e.turnPlayerID, e.turnLength
 	e.stopTurnTimerLocked()
 
 	if e.closed || e.turnTimeout <= 0 || e.state.Phase != Playing || len(e.state.Players) == 0 {
@@ -29,9 +39,21 @@ func (e *Engine) armTurnTimerLocked() {
 		}
 	}
 
+	playerID := ""
+	if current := e.currentPlayerLocked(); current != nil {
+		playerID = current.ID
+	}
+	wait := timeout
+	if !prevDeadline.IsZero() && playerID == prevPlayer && timeout == prevLength {
+		wait = max(time.Until(prevDeadline), min(minTurnRemaining, timeout))
+	} else {
+		e.turnMissCharged = false
+	}
+	e.turnPlayerID, e.turnLength = playerID, timeout
+
 	seq := e.turnSeq
-	e.turnDeadline = time.Now().Add(timeout)
-	e.turnTimer = time.AfterFunc(timeout, func() { e.onTurnTimeout(seq) })
+	e.turnDeadline = time.Now().Add(wait)
+	e.turnTimer = time.AfterFunc(wait, func() { e.onTurnTimeout(seq) })
 }
 
 func (e *Engine) stopTurnTimerLocked() {
@@ -43,18 +65,14 @@ func (e *Engine) stopTurnTimerLocked() {
 	e.turnDeadline = time.Time{}
 }
 
-func (e *Engine) rearmTurnTimer() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	e.armTurnTimerLocked()
-}
-
+// TurnDeadline is a test seam; views read the remaining time from Frame.
 func (e *Engine) TurnDeadline() time.Time {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return e.turnDeadline
 }
 
+// MissedTurns is a test seam: the idle count is the engine's own business.
 func (e *Engine) MissedTurns(playerID string) int {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -84,12 +102,14 @@ func (e *Engine) onTurnTimeout(seq uint64) {
 		// The player acted for themselves while the lock was dropped: their action
 		// armed a fresh clock, so re-arming would hand the next player a double turn.
 		return
-	default:
-		// TimeoutAction returned a move ValidateAction refuses: a rules bug. The seat
-		// is taken on the next expiry instead.
+	case errors.Is(err, errActionRefused):
+		// TimeoutAction returned a move ValidateAction refuses: a rules bug. The clock
+		// was re-armed under the lock, and each expiry still counts a miss.
 		slog.Warn("auto-play for an expired turn was refused",
 			"error", err, "player_id", playerID, "action", action.Name())
-		e.rearmTurnTimer()
+	default:
+		slog.Error("auto-play ended the table on a rules error",
+			"error", err, "player_id", playerID, "action", action.Name())
 	}
 }
 
@@ -100,13 +120,30 @@ func (e *Engine) recoverRulesPanic() {
 	if r == nil {
 		return
 	}
-	slog.Error("rules panicked during auto-play; ending the table as a rules error",
-		"panic", r, "stack", string(debug.Stack()))
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	if e.state.Phase == Playing && !e.closed {
-		e.finishGameLocked(nil, EndReasonRulesError)
+	e.endOnRulesPanicLocked(r)
+}
+
+// endOnRulesPanicLocked is the shared body of both recovers. It does not check for
+// Playing: a panic inside finishGameLocked's Standings call has already set Finished
+// without announcing it, and every rules hook runs only on a table that was Playing.
+func (e *Engine) endOnRulesPanicLocked(r any) {
+	slog.Error("rules panicked; ending the table as a rules error",
+		"panic", r, "stack", string(debug.Stack()))
+	if !e.closed {
+		e.finishAfterPanicLocked()
 	}
+}
+
+// finishAfterPanicLocked ends the table without asking the rules anything: the state a
+// hook panicked on cannot be trusted to rank a winner, and a second panic from
+// Standings inside a recover would take the process down. finishGameLocked is the
+// normal path and stays untouched.
+func (e *Engine) finishAfterPanicLocked() {
+	e.state.Phase = Finished
+	e.stopTurnTimerLocked()
+	e.broadcaster.Broadcast(Event{Type: EventGameEnded, Reason: EndReasonRulesError})
 }
 
 func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action, takeSeat bool) {
@@ -122,7 +159,12 @@ func (e *Engine) resolveTurnTimeout(seq uint64) (playerID string, action Action,
 		return "", nil, false
 	}
 
-	e.missedTurns[current.ID]++
+	// One miss per seat-turn, not per expiry: a turn that carries on after an
+	// auto-play (gin's draw, then its discard) is still the one turn missed.
+	if !e.turnMissCharged {
+		e.missedTurns[current.ID]++
+		e.turnMissCharged = true
+	}
 	if e.missedTurns[current.ID] >= MaxMissedTurns {
 		return current.ID, nil, true
 	}

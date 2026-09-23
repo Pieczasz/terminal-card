@@ -2,30 +2,49 @@ package game
 
 import (
 	"errors"
+	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
 )
 
-// Internal: reaching it is a bug in the caller, not a state a game recovers from.
-var errStockNotEmpty = errors.New("stock is not empty")
-
 // ReshuffleDiscardIntoStock moves the discard pile, except the card in play, back into
-// an empty stock and shuffles, conserving every card. It refuses a non-empty stock:
-// that is a caller reshuffling too early, and merging two piles would lose the order of
-// the one still in play.
-func ReshuffleDiscardIntoStock(state *State) error {
+// an empty stock and shuffles, conserving every card. A non-empty stock is left alone:
+// merging two piles would lose the order of the one still in play.
+func ReshuffleDiscardIntoStock(state *State) {
 	if !state.Deck.IsEmpty() {
-		return errStockNotEmpty
+		return
 	}
 	top, ok := state.Discard.Draw()
 	if !ok {
-		return nil
+		return
 	}
 	rest := state.Discard.Cards()
 	state.Discard = deck.New([]deck.Card{top})
 	state.Deck.AddCard(rest...)
 	state.Deck.Shuffle()
-	return nil
+}
+
+// ValidateShedPlay is the half of a shedding game's play check both games share: a card
+// in play to match against, and the played card in the hand of the seat on turn. match
+// is the game's own rule against the top card. A draw is always legal and never gets
+// here: gating it on the discard would freeze a seat on a board that has none.
+func ValidateShedPlay(state *State, card deck.Card, match func(top deck.Card) error) error {
+	top, ok := state.Discard.Peek()
+	if !ok {
+		return errors.New("no cards in discard pile")
+	}
+	if !slices.Contains(state.Players[state.CurrentTurn].Cards, card) {
+		return errors.New("you don't have that card")
+	}
+	return match(top)
+}
+
+// DrawWithReshuffle is a shedding game's draw: off the stock, refilled from under the
+// card in play when it runs out. false means both piles are spent, which the caller
+// counts as a forced pass.
+func DrawWithReshuffle(state *State) (deck.Card, bool) {
+	ReshuffleDiscardIntoStock(state)
+	return state.Deck.Draw()
 }
 
 // ReturnHandToStock keeps the deck whole when a player leaves, reshuffling so the cards

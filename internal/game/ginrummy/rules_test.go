@@ -375,7 +375,7 @@ func TestRules_Wall_AfterDiscard(t *testing.T) {
 	state.Players[0].Cards = append(state.Players[0].Cards, c(deck.Ace, deck.Diamonds)) // 11 cards
 	rules.ApplyAction(state, ActionDiscard{Card: card})
 	require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: card}))
-	assert.True(t, extra.HandComplete)
+	assert.True(t, extra.HandComplete())
 	require.NotNil(t, extra.LastHandResult)
 	assert.True(t, extra.LastHandResult.Wall)
 	assert.Equal(t, 0, extra.CumulativeScores["p1"])
@@ -394,7 +394,7 @@ func TestRules_Wall_StockThreeDoesNotTrigger(t *testing.T) {
 	state.Players[0].Cards = append(state.Players[0].Cards, c(deck.Ace, deck.Diamonds))
 	rules.ApplyAction(state, ActionDiscard{Card: card})
 	require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: card}))
-	assert.False(t, extra.HandComplete)
+	assert.False(t, extra.HandComplete())
 	assert.Equal(t, AwaitingDraw, extra.HandPhase)
 }
 
@@ -419,6 +419,31 @@ func TestRules_CheckWinCondition(t *testing.T) {
 	assert.True(t, rules.CheckWinCondition(state))
 }
 
+// An absent player holding gin must not discard it away: gin scores the bonus and
+// cannot be undercut, so knocking is strictly the better auto-play.
+func TestRules_TimeoutAction_KnocksOnGin(t *testing.T) {
+	t.Parallel()
+	rules := &Rules{}
+	state, extra := startedState(t)
+	// Every card melds, and dropping the 2♥ still leaves the 3-6♥ run.
+	state.Players[state.CurrentTurn].Cards = []deck.Card{
+		c(deck.Two, deck.Hearts), c(deck.Three, deck.Hearts), c(deck.Four, deck.Hearts),
+		c(deck.Five, deck.Hearts), c(deck.Six, deck.Hearts),
+		c(deck.Jack, deck.Spades), c(deck.Jack, deck.Hearts), c(deck.Jack, deck.Diamonds),
+		c(deck.Ace, deck.Clubs), c(deck.Ace, deck.Spades), c(deck.Ace, deck.Hearts),
+	}
+	extra.HandPhase = AwaitingDiscard
+
+	action := rules.TimeoutAction(state)
+
+	knock, ok := action.(ActionKnock)
+	require.True(t, ok, "a gin hand knocks, got %T", action)
+	require.NoError(t, rules.ValidateAction(state, knock))
+	require.NoError(t, rules.ApplyAction(state, knock))
+	require.NotNil(t, extra.LastHandResult)
+	assert.True(t, extra.LastHandResult.Gin)
+}
+
 func TestRules_TimeoutAction_DrawStock(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
@@ -430,7 +455,7 @@ func TestRules_TimeoutAction_NextHand(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
 	state, extra := startedState(t)
-	extra.HandComplete = true
+	extra.HandPhase = HandOver
 	assert.Equal(t, ActionNextHand{}, rules.TimeoutAction(state))
 }
 
@@ -438,7 +463,7 @@ func TestRules_TimeoutAction_MatchOver(t *testing.T) {
 	t.Parallel()
 	rules := &Rules{}
 	state, extra := startedState(t)
-	extra.HandComplete = true
+	extra.HandPhase = HandOver
 	extra.MatchComplete = true
 	assert.Nil(t, rules.TimeoutAction(state))
 }
@@ -529,7 +554,7 @@ func TestMatch_RepeatedWallsEndTheMatch(t *testing.T) {
 		card := state.Players[state.CurrentTurn].Cards[0]
 		rules.ApplyAction(state, ActionDiscard{Card: card})
 		require.NoError(t, rules.AfterAction(state, ActionDiscard{Card: card}))
-		require.True(t, extra.HandComplete)
+		require.True(t, extra.HandComplete())
 		require.True(t, extra.LastHandResult.Wall)
 
 		if extra.MatchComplete {
@@ -641,7 +666,9 @@ func TestRules_TurnTimeout(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			state, extra := startedState(t)
-			extra.HandComplete = tt.handComplete
+			if tt.handComplete {
+				extra.HandPhase = HandOver
+			}
 			assert.Equal(t, tt.want, (&Rules{}).TurnTimeout(state))
 		})
 	}

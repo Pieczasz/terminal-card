@@ -3,7 +3,6 @@ package uno
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"slices"
 
 	"github.com/Pieczasz/terminal-card/internal/deck"
@@ -93,46 +92,42 @@ func (r *Rules) ValidateAction(state *game.State, action game.Action) error {
 
 	switch a := action.(type) {
 	case ActionPlayCard:
-		// Peeked here, not above the switch: a draw is legal whatever is on the pile,
-		// and TimeoutAction plays a draw, so making it depend on the top card is what
-		// would freeze a seat on a board that somehow has no discard.
-		topCard, ok := state.Discard.Peek()
-		if !ok {
-			return errors.New("no cards in discard")
-		}
-		hand := state.Players[state.CurrentTurn].Cards
-		if !slices.Contains(hand, a.Card) {
-			return errors.New("you don't have that card")
-		}
-		if isWild(a.Card.Rank) {
-			if !deck.IsSuit(a.ChosenColor) {
-				return errors.New("must choose a valid color")
-			}
-			// A Wild Draw Four is the one card the official rules gate on the hand
-			// behind it: it may only be played by someone with nothing of the
-			// current colour to play instead.
-			//
-			// Deviation: the paper game lets the next player challenge a suspect
-			// WD4 and inspect the hand. Here the server holds every hand already,
-			// so the gate is enforced up front instead - the illegal play is
-			// refused rather than punished, and there is nothing to challenge.
-			if a.Card.Rank == WildDrawFour && hasColor(hand, extra.CurrentColor) {
-				return errors.New("wild draw four needs a hand with no card of the current color")
-			}
-			return nil
-		}
-		if a.Card.Suit == extra.CurrentColor {
-			return nil
-		}
-		if a.Card.Rank == topCard.Rank && !isWild(topCard.Rank) {
-			return nil
-		}
-		return errors.New("card doesn't match color, number, or symbol")
+		//nolint:wrapcheck // player-facing prose; the engine already prefixes it
+		return game.ValidateShedPlay(state, a.Card, func(topCard deck.Card) error {
+			return validatePlay(state.Players[state.CurrentTurn].Cards, extra, a, topCard)
+		})
 
 	case ActionDrawCard:
 		return nil
 	}
 	return errors.New("unknown action")
+}
+
+func validatePlay(hand []deck.Card, extra *State, a ActionPlayCard, topCard deck.Card) error {
+	if isWild(a.Card.Rank) {
+		if !deck.IsSuit(a.ChosenColor) {
+			return errors.New("must choose a valid color")
+		}
+		// A Wild Draw Four is the one card the official rules gate on the hand
+		// behind it: it may only be played by someone with nothing of the
+		// current colour to play instead.
+		//
+		// Deviation: the paper game lets the next player challenge a suspect
+		// WD4 and inspect the hand. Here the server holds every hand already,
+		// so the gate is enforced up front instead - the illegal play is
+		// refused rather than punished, and there is nothing to challenge.
+		if a.Card.Rank == WildDrawFour && hasColor(hand, extra.CurrentColor) {
+			return errors.New("wild draw four needs a hand with no card of the current color")
+		}
+		return nil
+	}
+	if a.Card.Suit == extra.CurrentColor {
+		return nil
+	}
+	if a.Card.Rank == topCard.Rank && !isWild(topCard.Rank) {
+		return nil
+	}
+	return errors.New("card doesn't match color, number, or symbol")
 }
 
 func (r *Rules) ApplyAction(state *game.State, action game.Action) error {
@@ -228,13 +223,7 @@ func drawCardsInto(state *game.State, playerIdx, n int) bool {
 	p := state.Players[playerIdx]
 	drew := 0
 	for range n {
-		if state.Deck.IsEmpty() {
-			if err := game.ReshuffleDiscardIntoStock(state); err != nil {
-				slog.Error("uno reshuffle failed", "error", err)
-				break
-			}
-		}
-		card, ok := state.Deck.Draw()
+		card, ok := game.DrawWithReshuffle(state)
 		if !ok {
 			break
 		}
@@ -296,7 +285,3 @@ func (r *Rules) AfterPlayerRemoved(state *game.State, removedIndex int) {
 func (r *Rules) Standings(state *game.State) []*game.Player { return game.ShedStandings(state) }
 
 func (r *Rules) StandingScore(_ *game.State, p *game.Player) int { return game.ShedScore(p) }
-
-// Compile-time proof of the optional hook: without it, deleting StandingScore still
-// compiles and the engine silently splits every draw by seat order.
-var _ game.StandingScorer = (*Rules)(nil)

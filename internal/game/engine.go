@@ -2,10 +2,11 @@
 package game
 
 import (
-	"crypto/rand"
 	"errors"
 	"fmt"
-	"math/big"
+	"log/slog"
+	"math/rand/v2"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
@@ -22,6 +23,10 @@ var ErrInvalidState = errors.New("invalid state type")
 // the lock and the submit re-acquiring it. Internal: a non-event, not a failure.
 var errStaleTurn = errors.New("turn already settled")
 
+// errActionRefused is an auto-play ValidateAction refused: a rules bug, logged and
+// re-armed, where an apply failure has already ended the game.
+var errActionRefused = errors.New("auto-play refused")
+
 // Engine owns one mutex covering its clock fields and the State: they are always read
 // together, and a second lock would only add orderings to get wrong.
 type Engine struct {
@@ -35,6 +40,11 @@ type Engine struct {
 	turnTimer    *time.Timer
 	turnDeadline time.Time
 	missedTurns  map[string]int
+	// The seat and length the running deadline was armed for, and whether that
+	// seat-turn has been charged its miss: armTurnTimerLocked's continuation check.
+	turnPlayerID    string
+	turnLength      time.Duration
+	turnMissCharged bool
 }
 
 type EngineOption func(*Engine)
@@ -45,9 +55,23 @@ func WithTurnTimeout(d time.Duration) EngineOption {
 	}
 }
 
+// NewEngine seats copies of players, not the values themselves: a lobby hands the same
+// *Player to every engine it starts, and shared seats would let the next engine deal
+// into hands a finished one's viewers still read under a different lock. Nothing
+// compares seats by pointer (the lobby uses Player.Equal), and Ratings stays shared
+// because nothing writes it once the seat is taken. NewState keeps aliasing the
+// values, which is what rules tests building a State by hand rely on.
 func NewEngine(rules Rules, players []*Player, cards []deck.Card, opts ...EngineOption) *Engine {
+	seats := make([]*Player, len(players))
+	for i, p := range players {
+		if p != nil {
+			seat := *p
+			seat.Cards = nil
+			seats[i] = &seat
+		}
+	}
 	e := &Engine{
-		state: NewState(rules, players, cards),
+		state: NewState(rules, seats, cards),
 		// The argument is the subscriber cap, not a buffer size (that is fixed):
 		// headroom above the seat count for non-player subscribers (the
 		// ranked-finalize watcher) and for a reconnect overlapping the seat it
@@ -68,7 +92,8 @@ func (e *Engine) Broadcaster() *broadcaster.Broadcaster[Event] {
 }
 
 // WithState runs fn with the engine lock held. fn must not call back into the engine:
-// every Engine method takes the same lock, so it would deadlock.
+// every Engine method takes the same lock, so it would deadlock. A test seam: nothing
+// in production calls it, and views read through Frame.
 func (e *Engine) WithState(fn func(state *State)) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -135,6 +160,7 @@ func (e *Engine) Frame(playerID string, fn func(*State)) (StateSnapshot, []deck.
 	return snap, hand, remaining
 }
 
+// CurrentPlayerID is a test seam; views read the seat on turn from their Frame snapshot.
 func (e *Engine) CurrentPlayerID() string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -157,11 +183,20 @@ func (e *Engine) IsFinished() bool {
 // The *Player values alias live engine state, so only the fields nothing writes after
 // the seat was taken - ID, UserID, Name - are safe to read once the lock is gone.
 // Cards and anything the rules keep may change under a caller that holds them.
-func (e *Engine) StandingsWithPlaces() ([]*Player, []int) {
+//
+// A rules panic returns nil, nil, which finalize drops as unrecordable: the lobby's
+// finalize goroutine has nothing above it to recover.
+func (e *Engine) StandingsWithPlaces() (standings []*Player, places []int) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			slog.Error("rules panicked computing standings", "panic", r, "stack", string(debug.Stack()))
+			standings, places = nil, nil
+		}
+	}()
 
-	standings := e.standingsLocked()
+	standings = e.standingsLocked()
 	return standings, e.placesLocked(standings)
 }
 
@@ -193,6 +228,9 @@ func (e *Engine) placesLocked(standings []*Player) []int {
 	return places
 }
 
+// StandingsIDs is a test seam kept only for the poker match tests and the system test,
+// which live outside this package's owners; migrate them to StandingsWithPlaces and
+// delete it.
 func (e *Engine) StandingsIDs() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -229,9 +267,10 @@ func (e *Engine) standingsLocked() []*Player {
 	return out
 }
 
-// Start deals and opens the table. A failure hands the dealt cards back, so the lobby
-// can try again rather than sitting on a table stuck mid-deal.
-func (e *Engine) Start() (err error) {
+// Start deals and opens the table. A failed start leaves the engine half-dealt and
+// unusable: the lobby builds a new engine per attempt, and the seats are the engine's
+// own copies, so nothing outside it sees the partial deal.
+func (e *Engine) Start() error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
@@ -245,22 +284,6 @@ func (e *Engine) Start() (err error) {
 		return errors.New("cannot start game with no players")
 	}
 
-	// One rollback for every failure past this point: restoring a field a path never
-	// touched is a no-op, and per-path partial rollbacks leak dealt cards.
-	undealt := e.state.Deck.Cards()
-	defer func() {
-		if err == nil {
-			return
-		}
-		for _, p := range e.state.Players {
-			p.Cards = nil
-		}
-		e.state.Deck = deck.New(undealt)
-		e.state.Discard = nil
-		e.state.CurrentTurn = 0
-		e.state.Phase = Waiting
-	}()
-
 	e.state.Deck.Shuffle()
 
 	hands := make([][]deck.Card, len(e.state.Players))
@@ -272,16 +295,13 @@ func (e *Engine) Start() (err error) {
 		hands[playerIdx] = cards
 	}
 
-	startIdx, err := cryptoIntN(len(e.state.Players))
-	if err != nil {
-		return fmt.Errorf("selecting first player: %w", err)
-	}
-
 	for playerIdx, hand := range hands {
 		e.state.Players[playerIdx].Cards = hand
 	}
 	e.state.Phase = Playing
-	e.state.CurrentTurn = startIdx
+	// math/rand: who acts first is public the moment the table opens, so it is no
+	// secret worth crypto/rand, and there is no error to handle.
+	e.state.CurrentTurn = rand.IntN(len(e.state.Players)) //nolint:gosec // G404: not a secret, see above
 
 	if err := e.state.Rules.OnGameStart(e.state); err != nil {
 		return fmt.Errorf("failed to setup game: %w", err)
@@ -295,22 +315,22 @@ func (e *Engine) Start() (err error) {
 	return nil
 }
 
-func cryptoIntN(n int) (int, error) {
-	if n <= 0 {
-		return 0, errors.New("n must be positive")
-	}
-	v, err := rand.Int(rand.Reader, big.NewInt(int64(n)))
-	if err != nil {
-		return 0, fmt.Errorf("crypto/rand: %w", err)
-	}
-	return int(v.Int64()), nil
-}
-
 // SubmitAction applies action for playerID, who must be on turn. Acting for yourself
 // clears your missed-turn count.
-func (e *Engine) SubmitAction(playerID string, action Action) error {
+//
+// A rules panic ends the table as a rules error and comes back as an error rather than
+// unwinding into the session, whose recover would leave the table running on
+// half-applied state. The recover is a direct defer and runs before the unlock, so the
+// lock is still held.
+func (e *Engine) SubmitAction(playerID string, action Action) (err error) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	defer func() {
+		if r := recover(); r != nil {
+			e.endOnRulesPanicLocked(r)
+			err = errors.New("the game hit an internal error and has ended")
+		}
+	}()
 	return e.submitActionLocked(playerID, action, true)
 }
 
@@ -323,7 +343,19 @@ func (e *Engine) submitTimedOutAction(playerID string, action Action, seq uint64
 	if seq != e.turnSeq {
 		return errStaleTurn
 	}
-	return e.submitActionLocked(playerID, action, false)
+	err := e.submitActionLocked(playerID, action, false)
+	if err != nil && e.state.Phase == Playing {
+		// Still playing after a failure means ValidateAction refused the move: an apply
+		// failure ends the game, and seq rules out a wrong seat. Re-armed on this lock
+		// hold, because after it is dropped a player's own move may already have armed
+		// the next seat's clock, and re-arming then would reset it. The re-armed turn
+		// is chargeable again, or a rules set that always refuses would never lose
+		// the seat.
+		e.turnMissCharged = false
+		e.armTurnTimerLocked()
+		return fmt.Errorf("%w: %w", errActionRefused, err)
+	}
+	return err
 }
 
 // playerPresent is false when playing for an absent player: that timeout is already
@@ -471,7 +503,11 @@ func (e *Engine) removePlayerLocked(playerID string) {
 	}
 
 	if e.state.Rules.CheckWinCondition(e.state) {
-		e.finishGameLocked(nil, EndReasonWin)
+		reason := EndReasonWin
+		if e.state.Interrupted {
+			reason = EndReasonInterrupted
+		}
+		e.finishGameLocked(nil, reason)
 		return
 	}
 

@@ -266,7 +266,6 @@ func (r *Rules) afterPlay(state *game.State, extra *State) error {
 
 	scoreHand(extra, state.Players)
 	extra.Stage = StageHandOver
-	extra.HandComplete = true
 
 	if game.AnyScoreAtLeast(extra.CumulativeScores, extra.TargetScore) {
 		extra.MatchComplete = true
@@ -309,7 +308,7 @@ func (r *Rules) TimeoutAction(state *game.State) game.Action {
 		return ActionNextHand{}
 	case StagePassing:
 		p := state.Players[state.CurrentTurn]
-		return ActionPassCards{Cards: threeLowestCards(p.Cards)}
+		return ActionPassCards{Cards: threeMostDangerous(p.Cards)}
 	case StageTrickPlay:
 		p := state.Players[state.CurrentTurn]
 		if card, ok := firstLegalCard(extra, p); ok {
@@ -339,9 +338,12 @@ func (r *Rules) TurnTimeout(state *game.State) time.Duration {
 	}
 }
 
+// OnPlayerLeave ends the match: hearts does not play three-handed. Interrupted tells
+// the engine, and through it finalize, that the seats still playing did not finish it.
 func (r *Rules) OnPlayerLeave(state *game.State, _ string) {
 	if extra, ok := state.Extra.(*State); ok {
 		extra.MatchComplete = true
+		state.Interrupted = true
 	}
 }
 
@@ -356,12 +358,8 @@ func (r *Rules) StandingScore(state *game.State, p *game.Player) int {
 	if !ok {
 		return 0
 	}
-	if extra.HandComplete {
+	if extra.HandComplete() {
 		return extra.CumulativeScores[p.ID]
 	}
 	return extra.CumulativeScores[p.ID] + extra.HandPoints[p.ID]
 }
-
-// Compile-time proof of the optional hook: without it, deleting StandingScore still
-// compiles and the engine silently splits every draw by seat order.
-var _ game.StandingScorer = (*Rules)(nil)

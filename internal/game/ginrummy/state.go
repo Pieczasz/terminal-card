@@ -44,18 +44,21 @@ type State struct {
 
 	HandNumber int
 
-	// TurnsThisHand counts completed draw-and-discard turns, bounded by MaxHandTurns.
+	// TurnsThisHand counts completed draw-and-discard turns, bounded by maxHandTurns.
 	TurnsThisHand int
 
 	// CumulativeScores: higher is better. Standings sorts descending.
 	CumulativeScores map[string]int
 
-	HandComplete  bool
 	MatchComplete bool
 
 	// LastHandResult: settle-up summary for the hand that just ended.
 	LastHandResult *HandResult
 }
+
+// HandComplete is derived from HandPhase rather than kept beside it, so the two cannot
+// disagree about whether the hand is over.
+func (s *State) HandComplete() bool { return s.HandPhase == HandOver }
 
 // HandResult is the settle-up summary shown between hands.
 type HandResult struct {
