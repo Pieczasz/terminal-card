@@ -207,7 +207,7 @@ func TestSubmitPass_RefusesAnythingButThreeCards(t *testing.T) {
 	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeySpace, Text: " "})
 
 	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	require.ErrorIs(t, m.lastActionErr, errNeedThreeCards)
+	require.ErrorIs(t, m.ActionErr, errNeedThreeCards)
 	assert.Len(t, m.passSelected, 1, "the staging survives a refused pass")
 }
 
@@ -231,7 +231,7 @@ func TestHandleEnter_MeansWhateverTheScreenSays(t *testing.T) {
 
 		_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		assert.Nil(t, cmd)
-		assert.NoError(t, m.lastActionErr, "waiting for another seat is not an error")
+		assert.NoError(t, m.ActionErr, "waiting for another seat is not an error")
 	})
 
 	t.Run("off turn nothing is played", func(t *testing.T) {
@@ -241,7 +241,7 @@ func TestHandleEnter_MeansWhateverTheScreenSays(t *testing.T) {
 		m.Base.MyTurn = false
 
 		_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-		assert.NoError(t, m.lastActionErr, "the play never reaches the engine")
+		assert.NoError(t, m.ActionErr, "the play never reaches the engine")
 	})
 }
 
@@ -257,7 +257,10 @@ func TestHandleKey_CursorAndEscape(t *testing.T) {
 	require.Equal(t, 4, m.Selected)
 
 	_, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	assert.NotNil(t, cmd, "esc leaves the table")
+	require.Nil(t, cmd, "esc asks before forfeiting")
+	assert.Contains(t, m.View().Content, "forfeit")
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	assert.NotNil(t, cmd, "y leaves the table")
 }
 
 func TestInit_ArmsBothTheFeedAndTheClock(t *testing.T) {

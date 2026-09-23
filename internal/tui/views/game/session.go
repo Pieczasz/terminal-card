@@ -13,10 +13,16 @@ import (
 	"github.com/Pieczasz/terminal-card/internal/tui/views"
 
 	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 )
 
-// EventMsg carries an engine event into the bubbletea loop.
-type EventMsg game.Event
+// EventMsg carries an engine event into the bubbletea loop. Source is the feed that
+// delivered it: a listener in flight when the router replaced a view hands its event
+// to the next view, and handling it there re-armed it beside that view's own listener.
+type EventMsg struct {
+	game.Event
+	Source <-chan game.Event
+}
 
 // Session is the plumbing every game view repeats: the engine binding, the event
 // subscription, the cached base state and the hand cursor.
@@ -33,6 +39,13 @@ type Session struct {
 	Base BaseState
 	// Selected indexes Base.Hand and is clamped by Sync as the hand shrinks.
 	Selected int
+
+	// ActionErr is the last move the engine rejected, or why this view cannot play at
+	// all. Submit keeps it, so the hero band renders it without a copy in every view.
+	ActionErr error
+
+	// confirmLeave is the armed forfeit prompt (HandleLeaveKey).
+	confirmLeave bool
 }
 
 // NewSession binds engine to the session player and subscribes to its events. The error
@@ -50,14 +63,22 @@ func NewSession(global router.GlobalContext, engine *game.Engine, gameName strin
 	if err != nil {
 		slog.Error("game view could not subscribe to engine events",
 			"error", err, "game", gameName, "player_id", playerID)
-		return s, fmt.Errorf("live table updates unavailable, leave and rejoin: %w", err)
+		s.ActionErr = fmt.Errorf("live table updates unavailable, leave and rejoin: %w", err)
+		return s, s.ActionErr
 	}
 	s.Events = ch
 	return s, nil
 }
 
 func (s *Session) Listen() tea.Cmd {
-	return views.ListenOn(s.Events, func(ev game.Event) tea.Msg { return EventMsg(ev) })
+	ch := s.Events
+	return views.ListenOn(ch, func(ev game.Event) tea.Msg { return EventMsg{Event: ev, Source: ch} })
+}
+
+// ClockTick starts this session's countdown before any deadline is known, which is
+// what a view's Init has to work with.
+func (s *Session) ClockTick() tea.Cmd {
+	return clockTickFrom(s.Events, 0, false)
 }
 
 // IdleRemoved is this session's own player losing their seat; anyone else's removal is
@@ -85,10 +106,18 @@ func (s *Session) HandleFrame(msg tea.Msg, sync func(), onEvent func()) (tea.Cmd
 		return cmd, true
 	}
 
+	// Something another session armed is consumed and dropped, never re-armed: that
+	// session's chain ended with it, and this one runs its own.
 	switch msg := msg.(type) {
 	case EventMsg:
-		return s.handleEvent(game.Event(msg), sync, onEvent), true
+		if msg.Source != s.Events {
+			return nil, true
+		}
+		return s.handleEvent(msg.Event, sync, onEvent), true
 	case ClockTickMsg:
+		if msg.Source != nil && msg.Source != s.Events {
+			return nil, true
+		}
 		return s.handleClockTick(sync), true
 	}
 
@@ -113,7 +142,7 @@ func (s *Session) handleEvent(ev game.Event, sync func(), onEvent func()) tea.Cm
 	// tick, so the clock has to be re-armed once the table starts playing or it never
 	// runs again for that player.
 	if !wasPlaying && s.Base.Phase == game.Playing {
-		cmds = append(cmds, ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn))
+		cmds = append(cmds, clockTickFrom(s.Events, s.Base.TurnRemaining, s.Base.MyTurn))
 	}
 	return tea.Batch(cmds...)
 }
@@ -123,26 +152,26 @@ func (s *Session) handleClockTick(sync func()) tea.Cmd {
 	if s.Base.Phase != game.Playing {
 		return nil
 	}
-	return ClockTickFor(s.Base.TurnRemaining, s.Base.MyTurn)
+	return clockTickFrom(s.Events, s.Base.TurnRemaining, s.Base.MyTurn)
 }
 
 var errNotSeated = errors.New("you are not seated at this table")
 
-// Submit sends action as this session's player. The error is rendered to the player
+// Submit sends action as this session's player and keeps the outcome in ActionErr, so
+// an accepted move clears the last complaint. The error is rendered to the player
 // as-is, hence no wrap.
-//
-//nolint:wrapcheck // engine errors are player-facing prose; a wrap adds call-site noise to the UI line.
 func (s *Session) Submit(action game.Action) error {
 	if s.Bound == nil {
-		return errNotSeated
+		s.ActionErr = errNotSeated
+		return s.ActionErr
 	}
-	err := s.Bound.Submit(action)
-	if err != nil {
+	s.ActionErr = s.Bound.Submit(action)
+	if s.ActionErr != nil {
 		// Background, not the session context: a rejection counts even when the
 		// disconnect itself caused it.
 		observability.ActionRejected(context.Background(), s.gameName)
 	}
-	return err
+	return s.ActionErr
 }
 
 func (s *Session) SelectedCard() (deck.Card, bool) {
@@ -179,6 +208,60 @@ func (s *Session) Unsubscribe() {
 // Close implements router.Closer.
 func (s *Session) Close() {
 	s.Unsubscribe()
+}
+
+// IdleExempt implements router.IdleExempt. A seat watching other players act is not
+// idle, and the engine's own turn clock removes one that stopped playing; a game-over
+// screen is a menu like any other.
+func (s *Session) IdleExempt() bool {
+	return s.Base.Phase == game.Playing
+}
+
+var _ router.IdleExempt = (*Session)(nil)
+
+// HandleLeaveKey owns the keys that leave a table, and a view calls it before its own
+// bindings - after closing any prompt of its own on esc (decision D-8). Mid-game one
+// esc used to forfeit, a ranked loss on a stray key, so while playing esc only arms a
+// confirmation: y then leaves, and any other key disarms and is swallowed rather than
+// also playing a card. Once the game is over esc and enter leave at once. It reports
+// whether the key was consumed.
+func (s *Session) HandleLeaveKey(key string) (tea.Cmd, bool) {
+	armed := s.confirmingLeave()
+	s.confirmLeave = false
+	switch {
+	case armed && key == "y":
+		return s.Leave(), true
+	case armed:
+		return nil, true
+	case key == "esc" && s.Base.Phase == game.Playing:
+		s.confirmLeave = true
+		return nil, true
+	case key == "esc", key == "enter" && s.Base.Phase == game.Finished:
+		return s.Leave(), true
+	}
+	return nil, false
+}
+
+// confirmingLeave drops a prompt the game outlived: a finished table has nothing left
+// to forfeit.
+func (s *Session) confirmingLeave() bool {
+	return s.confirmLeave && s.Base.Phase == game.Playing
+}
+
+// LeaveConfirmScreen is the forfeit prompt while it is armed; a view returns it from
+// View before anything else. It takes the whole screen rather than a row of the table
+// because every table already spends its full height, and the between-hands screens
+// have no hero band to put a row in.
+func (s *Session) LeaveConfirmScreen() (string, bool) {
+	if !s.confirmingLeave() {
+		return "", false
+	}
+	t := s.Global.Theme
+	return renderGameNotice(s.Global, lg.JoinVertical(lg.Center,
+		t.ErrorText.Render("Leave and forfeit this game?"),
+		"",
+		t.Muted.Render("y - leave and forfeit | any other key - keep playing"),
+	)), true
 }
 
 // Leave navigates away from the table: back to the lobby once the game has finished,

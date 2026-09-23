@@ -32,6 +32,9 @@ var colorChoices = []struct {
 }
 
 func (m *Model) View() tea.View {
+	if screen, ok := m.LeaveConfirmScreen(); ok {
+		return tea.NewView(screen)
+	}
 	if m.Base.Phase != game.Playing {
 		return tea.NewView(gameview.RenderWaitingScreen(m.Global, m.Base.Phase, m.Base.Winner))
 	}
@@ -107,7 +110,7 @@ func (m *Model) renderPlayerSection() string {
 	handView := gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, m.pickingColor,
 		handWidth, handRows)
 
-	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, colorRow, handView)
+	return gameview.RenderHeroBand(m.Global.Theme, m.ActionErr, statusView, colorRow, handView)
 }
 
 // renderHandColorRow paints a Uno color glyph above each card so four colors stay

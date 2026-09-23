@@ -23,6 +23,9 @@ const (
 )
 
 func (m *Model) View() tea.View {
+	if screen, ok := m.LeaveConfirmScreen(); ok {
+		return tea.NewView(screen)
+	}
 	if m.handComplete || m.matchComplete || m.stage == logic.StageHandOver {
 		return tea.NewView(styles.Clamp(m.Global.Width, m.Global.Height, m.renderHandOver()))
 	}
@@ -203,7 +206,7 @@ func (m *Model) renderPlayerSection() string {
 		handView = gameview.RenderHand(m.Global.Theme, m.Base.Hand, m.Selected, false, handWidth, handRows)
 	}
 
-	return gameview.RenderHeroBand(m.Global.Theme, m.lastActionErr, statusView, handView)
+	return gameview.RenderHeroBand(m.Global.Theme, m.ActionErr, statusView, handView)
 }
 
 func (m *Model) renderHandOver() string {

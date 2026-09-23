@@ -23,18 +23,16 @@ type Model struct {
 	stockSize        int
 	seatOrder        []string
 	seatNames        map[string]string
-
-	lastActionErr error
 }
 
 // New creates a Gin Rummy TUI view bound to the session player.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
-	session, err := gameview.NewSession(global, engine, "gin rummy")
+	// A subscribe failure is already in Session.ActionErr for the hero band.
+	session, _ := gameview.NewSession(global, engine, "gin rummy")
 	m := &Model{
 		Session:          session,
 		cumulativeScores: map[string]int{},
 		seatNames:        map[string]string{},
-		lastActionErr:    err,
 	}
 	m.syncState()
 	return m
@@ -58,5 +56,5 @@ func (m *Model) syncState() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.Listen(), gameview.ClockTick())
+	return tea.Batch(m.Listen(), m.ClockTick())
 }

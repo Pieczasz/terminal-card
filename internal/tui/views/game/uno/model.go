@@ -13,17 +13,17 @@ import (
 type Model struct {
 	gameview.Session
 
-	currentColor  deck.Suit
-	direction     int8
-	pickingColor  bool
-	colorCursor   int
-	lastActionErr error
+	currentColor deck.Suit
+	direction    int8
+	pickingColor bool
+	colorCursor  int
 }
 
 // New creates a Uno TUI view bound to the session player.
 func New(global router.GlobalContext, engine *game.Engine) tea.Model {
-	session, err := gameview.NewSession(global, engine, "uno")
-	m := &Model{Session: session, direction: 1, lastActionErr: err}
+	// A subscribe failure is already in Session.ActionErr for the hero band.
+	session, _ := gameview.NewSession(global, engine, "uno")
+	m := &Model{Session: session, direction: 1}
 	m.syncState()
 	return m
 }
@@ -44,5 +44,5 @@ func (m *Model) syncState() {
 }
 
 func (m *Model) Init() tea.Cmd {
-	return tea.Batch(m.Listen(), gameview.ClockTick())
+	return tea.Batch(m.Listen(), m.ClockTick())
 }

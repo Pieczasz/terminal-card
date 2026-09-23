@@ -1,14 +1,19 @@
 package game
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Pieczasz/terminal-card/internal/db"
 	"github.com/Pieczasz/terminal-card/internal/deck"
 	"github.com/Pieczasz/terminal-card/internal/game"
 	"github.com/Pieczasz/terminal-card/internal/game/crazyeight"
+	"github.com/Pieczasz/terminal-card/internal/lobby"
 	"github.com/Pieczasz/terminal-card/internal/tui/router"
+	"github.com/Pieczasz/terminal-card/internal/tui/styles"
 
+	tea "charm.land/bubbletea/v2"
+	lg "charm.land/lipgloss/v2"
 	"github.com/Pieczasz/terminal-card/internal/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,7 +31,44 @@ func TestSession_Listen_DeliversWhatTheEngineBroadcasts(t *testing.T) {
 	msg := s.Listen()()
 
 	require.IsType(t, EventMsg{}, msg)
-	assert.Equal(t, game.EventTurnAdvanced, game.Event(msg.(EventMsg)).Type)
+	assert.Equal(t, game.EventTurnAdvanced, msg.(EventMsg).Type)
+}
+
+// A listener or a clock tick in flight when the router replaced a view lands on the
+// next one. Handling it there re-armed it on the new view's feed, next to the chain
+// the new view already runs: two listeners racing for one channel, two clocks.
+func TestHandleFrame_DropsWhatAnotherSessionArmed(t *testing.T) {
+	t.Parallel()
+
+	mine, theirs := make(chan game.Event), make(chan game.Event)
+	s := &Session{Events: mine, Base: BaseState{Phase: game.Playing}}
+	synced := false
+	sync := func() { synced = true }
+
+	for name, msg := range map[string]tea.Msg{
+		"an event":     EventMsg{Event: game.Event{Type: game.EventTurnAdvanced}, Source: theirs},
+		"a clock tick": ClockTickMsg{Source: theirs},
+	} {
+		cmd, handled := s.HandleFrame(msg, sync, nil)
+		assert.True(t, handled, "%s is still consumed", name)
+		assert.Nil(t, cmd, "%s from another session must not re-arm anything", name)
+	}
+	assert.False(t, synced, "nor resync this one")
+
+	cmd, _ := s.HandleFrame(ClockTickMsg{Source: mine}, sync, nil)
+	assert.NotNil(t, cmd, "this session's own tick still keeps the clock going")
+}
+
+func TestSession_Listen_TagsItsOwnFeed(t *testing.T) {
+	t.Parallel()
+
+	events := make(chan game.Event, 1)
+	events <- game.Event{Type: game.EventTurnAdvanced}
+	s := Session{Events: events}
+
+	msg, ok := s.Listen()().(EventMsg)
+	require.True(t, ok)
+	assert.Equal(t, (<-chan game.Event)(events), msg.Source)
 }
 
 func TestSession_Listen_EndsQuietlyWithoutAFeed(t *testing.T) {
@@ -121,6 +163,17 @@ func TestSession_SubmitWithoutASeatIsRefused(t *testing.T) {
 	t.Parallel()
 	var s Session
 	require.ErrorIs(t, s.Submit(nil), errNotSeated)
+}
+
+// Only a live table holds the session past the router's idle limit: a finished one is
+// a game-over screen with nothing left to forfeit.
+func TestSession_IdleExemptOnlyWhilePlaying(t *testing.T) {
+	t.Parallel()
+
+	for phase, want := range map[game.Phase]bool{game.Waiting: false, game.Playing: true, game.Finished: false} {
+		s := Session{Base: BaseState{Phase: phase}}
+		assert.Equal(t, want, s.IdleExempt(), "phase %v", phase)
+	}
 }
 
 func TestSession_UnsubscribeIsIdempotent(t *testing.T) {
@@ -238,6 +291,137 @@ func TestSession_Leave(t *testing.T) {
 		msg := s.Leave()()
 		assert.Equal(t, router.RouteHome, msg.(router.ChangeViewMsg).ViewName)
 	})
+}
+
+// seatedSession is startedSession with alice also holding a lobby seat, so leaving
+// is observable: LeaveLobby is what a forfeit is.
+func seatedSession(t *testing.T) (*lobby.Manager, *game.Player, Session) {
+	t.Helper()
+	_, s := startedSession(t)
+	manager := lobby.NewManager(context.Background(), nil)
+	alice := lobby.NewPlayer(s.Global.User)
+	_, err := manager.New(alice, lobby.WithCardGame("Crazy Eights"))
+	require.NoError(t, err)
+	s.Global.LobbyManager = manager
+	s.Global.Theme = styles.NewTheme(true)
+	s.Sync(nil)
+	require.Equal(t, game.Playing, s.Base.Phase)
+	return manager, alice, s
+}
+
+// Decision D-8: a single esc used to forfeit a live game - a ranked loss on one stray
+// key. While playing, esc now asks first; only y leaves.
+func TestSession_HandleLeaveKey(t *testing.T) {
+	t.Parallel()
+
+	t.Run("one esc while playing only asks", func(t *testing.T) {
+		t.Parallel()
+		manager, alice, s := seatedSession(t)
+
+		cmd, handled := s.HandleLeaveKey("esc")
+
+		assert.True(t, handled)
+		assert.Nil(t, cmd, "asking does not navigate")
+		assert.NotNil(t, manager.FindLobbyByPlayer(alice), "and does not forfeit the seat")
+		_, showing := s.LeaveConfirmScreen()
+		assert.True(t, showing)
+	})
+
+	t.Run("esc then y leaves and forfeits", func(t *testing.T) {
+		t.Parallel()
+		manager, alice, s := seatedSession(t)
+
+		s.HandleLeaveKey("esc")
+		cmd, handled := s.HandleLeaveKey("y")
+
+		require.True(t, handled)
+		require.NotNil(t, cmd)
+		assert.Equal(t, router.RouteHome, cmd().(router.ChangeViewMsg).ViewName)
+		assert.Nil(t, manager.FindLobbyByPlayer(alice), "y is the forfeit")
+	})
+
+	t.Run("anything else disarms and is swallowed", func(t *testing.T) {
+		t.Parallel()
+		manager, alice, s := seatedSession(t)
+
+		s.HandleLeaveKey("esc")
+		cmd, handled := s.HandleLeaveKey("enter")
+
+		assert.True(t, handled, "the disarming key must not also play a card")
+		assert.Nil(t, cmd)
+		assert.NotNil(t, manager.FindLobbyByPlayer(alice))
+		_, showing := s.LeaveConfirmScreen()
+		assert.False(t, showing)
+
+		_, handled = s.HandleLeaveKey("y")
+		assert.False(t, handled, "a y with nothing armed is just a key")
+		assert.NotNil(t, manager.FindLobbyByPlayer(alice))
+	})
+
+	t.Run("other keys pass through while nothing is armed", func(t *testing.T) {
+		t.Parallel()
+		_, _, s := seatedSession(t)
+
+		for _, key := range []string{"enter", "d", "space", "y"} {
+			_, handled := s.HandleLeaveKey(key)
+			assert.False(t, handled, "%q belongs to the view", key)
+		}
+	})
+
+	t.Run("once finished esc and enter leave at once", func(t *testing.T) {
+		t.Parallel()
+		for _, key := range []string{"esc", "enter"} {
+			_, _, s := seatedSession(t)
+			s.Base.Phase = game.Finished
+
+			cmd, handled := s.HandleLeaveKey(key)
+
+			require.True(t, handled, key)
+			require.NotNil(t, cmd, "%s on a finished table leaves", key)
+			assert.Equal(t, router.RouteLobby, cmd().(router.ChangeViewMsg).ViewName)
+		}
+	})
+
+	// The game can end while the prompt is up; nothing is left to forfeit then, so the
+	// prompt goes and the key does what it does on a finished table.
+	t.Run("a game that ends under the prompt disarms it", func(t *testing.T) {
+		t.Parallel()
+		_, _, s := seatedSession(t)
+		s.HandleLeaveKey("esc")
+		s.Base.Phase = game.Finished
+
+		_, showing := s.LeaveConfirmScreen()
+		assert.False(t, showing, "no forfeit prompt over a finished game")
+		cmd, handled := s.HandleLeaveKey("esc")
+		require.True(t, handled)
+		assert.NotNil(t, cmd)
+	})
+}
+
+// The prompt takes the whole screen, so it has to fit every supported size.
+func TestSession_LeaveConfirmScreenFits(t *testing.T) {
+	t.Parallel()
+	for _, size := range [][2]int{{styles.MinWidth, styles.MinHeight}, {80, 24}, {120, 50}} {
+		_, _, s := seatedSession(t)
+		s.Global.Width, s.Global.Height = size[0], size[1]
+		s.HandleLeaveKey("esc")
+
+		out, ok := s.LeaveConfirmScreen()
+
+		require.True(t, ok)
+		assert.Contains(t, out, "forfeit")
+		assert.LessOrEqual(t, lg.Height(out), size[1], "%dx%d", size[0], size[1])
+		assert.LessOrEqual(t, lg.Width(out), size[0], "%dx%d", size[0], size[1])
+	}
+}
+
+// Submit keeps what the engine said, so no view has to copy it into a field of its own.
+func TestSession_SubmitRemembersTheRejection(t *testing.T) {
+	t.Parallel()
+	var s Session
+	err := s.Submit(nil)
+	require.ErrorIs(t, s.ActionErr, errNotSeated)
+	assert.Equal(t, err, s.ActionErr)
 }
 
 // One Frame, one hold of the engine lock: the per-game state a view reads has to

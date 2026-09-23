@@ -166,8 +166,8 @@ func TestInit_ArmsBothTheFeedAndTheClock(t *testing.T) {
 	assert.NotNil(t, m.Init())
 }
 
-// Esc is overloaded: it cancels the picker while one is open and leaves the table
-// otherwise. Collapsing the two would forfeit a seat on a mistyped cancel.
+// Esc is overloaded: it cancels the picker while one is open and asks to leave the
+// table otherwise. Collapsing the two would forfeit a seat on a mistyped cancel.
 func TestHandleEscape_CancelsThePickerBeforeLeavingTheTable(t *testing.T) {
 	t.Parallel()
 	_, m := tableOnTurn(t)
@@ -178,7 +178,11 @@ func TestHandleEscape_CancelsThePickerBeforeLeavingTheTable(t *testing.T) {
 	assert.False(t, m.pickingSuit)
 
 	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
-	assert.NotNil(t, cmd, "the second esc leaves the table")
+	require.Nil(t, cmd, "the second esc asks before forfeiting")
+	assert.Contains(t, m.View().Content, "forfeit")
+
+	_, cmd = m.Update(tea.KeyPressMsg{Code: 'y', Text: "y"})
+	assert.NotNil(t, cmd, "y leaves the table")
 }
 
 // An eight is the one card that needs a second decision, so enter opens the picker
@@ -199,7 +203,7 @@ func TestHandleEnter_AnEightOpensThePickerAndTheNextEnterCommits(t *testing.T) {
 	_, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	assert.False(t, m.pickingSuit, "committing closes the picker whatever the engine says")
 	// A rejected move has to surface a message rather than fail silently.
-	assert.Error(t, m.lastActionErr)
+	assert.Error(t, m.ActionErr)
 }
 
 func TestHandleEnter_AnOrdinaryCardIsPlayedStraightAway(t *testing.T) {
@@ -218,7 +222,7 @@ func TestHandleDraw_OnlyActsOnYourOwnTurn(t *testing.T) {
 
 	before := engine.Snapshot().DeckSize
 	_, _ = m.Update(tea.KeyPressMsg{Code: 'd', Text: "d"})
-	require.NoError(t, m.lastActionErr)
+	require.NoError(t, m.ActionErr)
 	require.Less(t, engine.Snapshot().DeckSize, before, "drawing takes a card off the stock")
 
 	m.syncState()

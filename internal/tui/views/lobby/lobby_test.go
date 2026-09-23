@@ -210,7 +210,7 @@ func TestHandleLobbyEvent_ClosedGoesHome(t *testing.T) {
 	t.Parallel()
 	m, _ := leaderView(t)
 
-	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventLobbyClosed}))
+	_, cmd := m.Update(lobbyMsg{Type: lobby.EventLobbyClosed, src: m.lobbyChan})
 	assert.Equal(t, router.RouteHome, routeOf(t, cmd))
 	assert.Nil(t, m.lobbyChan)
 }
@@ -225,7 +225,7 @@ func TestHandleLobbyEvent_UnknownGameKeepsListening(t *testing.T) {
 	engine := game.NewEngine(&crazyeight.Rules{},
 		[]*game.Player{{ID: "1"}, {ID: "2"}}, nil)
 
-	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventGameStarted, Payload: engine}))
+	_, cmd := m.Update(lobbyMsg{Type: lobby.EventGameStarted, Payload: engine, src: m.lobbyChan})
 	require.NotNil(t, cmd, "listener must stay armed")
 	assert.NotNil(t, m.lobbyChan, "subscription is retained")
 }
@@ -317,6 +317,22 @@ func TestInit_ArmsTheLobbyListener(t *testing.T) {
 	assert.Equal(t, lobby.EventSettingsUpdated, msg.Type)
 }
 
+// The router rebuilds this view on every visit, and a listener still in flight from
+// the last one hands its event to the new view. Handling it re-armed a listener on the
+// new feed beside the one Init already armed: two readers racing for one channel.
+func TestUpdate_DropsAnEventFromAnotherViewsFeed(t *testing.T) {
+	t.Parallel()
+	old, l := leaderView(t)
+	t.Cleanup(old.Close)
+	current, ok := New(old.global, l).(*model)
+	require.True(t, ok)
+	t.Cleanup(current.Close)
+
+	_, cmd := current.Update(lobbyMsg{Type: lobby.EventPlayersUpdated, src: old.lobbyChan})
+
+	assert.Nil(t, cmd, "a stale event must not arm a second listener")
+}
+
 // A reconnecting player whose seat survived the disconnect grace belongs back at the
 // table, not on a roster screen for a game that is already running.
 func TestInit_ReconnectIntoAnActiveGameRoutesToTheTable(t *testing.T) {
@@ -352,6 +368,17 @@ func TestSeatedIn(t *testing.T) {
 
 	taken := game.NewEngine(&crazyeight.Rules{}, []*game.Player{{ID: "7"}, {ID: "8"}}, nil)
 	assert.False(t, m.seatedIn(taken), "a seat the engine removed is not a seat")
+
+	// The lobby reopens a finished table on its own goroutine, so for a moment
+	// ActiveGame still hands it back. Routing there bounced the player onto a
+	// game-over screen whose esc brought them straight back here.
+	rules := &crazyeight.Rules{}
+	finished := game.NewEngine(rules, []*game.Player{{ID: testutil.SeatID(1)}, {ID: testutil.SeatID(2)}}, rules.InitialDeck())
+	t.Cleanup(finished.Close)
+	require.NoError(t, finished.Start())
+	finished.RemovePlayer(testutil.SeatID(2))
+	require.True(t, finished.IsFinished())
+	assert.False(t, m.seatedIn(finished), "a finished table has no seat to return to")
 }
 
 func TestGetElo(t *testing.T) {
@@ -421,7 +448,7 @@ func TestHandleLobbyEvent_GameStartedRoutesToTheGameView(t *testing.T) {
 	m, _ := leaderView(t)
 	engine := game.NewEngine(&crazyeight.Rules{}, []*game.Player{{ID: "1"}, {ID: "2"}}, nil)
 
-	_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventGameStarted, Payload: engine}))
+	_, cmd := m.Update(lobbyMsg{Type: lobby.EventGameStarted, Payload: engine, src: m.lobbyChan})
 
 	require.NotNil(t, cmd)
 	change, ok := cmd().(router.ChangeViewMsg)
@@ -448,7 +475,7 @@ func TestHandleLobbyEvent_BadGameStartedPayloadKeepsListening(t *testing.T) {
 			m, _ := leaderView(t)
 			t.Cleanup(m.Close)
 
-			_, cmd := m.Update(lobbyMsg(lobby.Event{Type: lobby.EventGameStarted, Payload: payload}))
+			_, cmd := m.Update(lobbyMsg{Type: lobby.EventGameStarted, Payload: payload, src: m.lobbyChan})
 
 			require.NotNil(t, cmd, "listener must stay armed")
 			assert.NotNil(t, m.lobbyChan, "and the subscription is retained")
@@ -472,7 +499,7 @@ func TestHandleLobbyEvent_RefreshesSettingsAndClampsTheCursor(t *testing.T) {
 			require.NoError(t, l.SetMaxPlayers(l.Leader(), 5, 2, 6))
 			m.cursor = cursorFirstGuest + 4 // a row for a guest who has since left
 
-			_, cmd := m.Update(lobbyMsg(lobby.Event{Type: evType}))
+			_, cmd := m.Update(lobbyMsg{Type: evType, src: m.lobbyChan})
 
 			require.NotNil(t, cmd, "the listener stays armed")
 			assert.True(t, m.isPrivate)
@@ -498,11 +525,11 @@ func TestHandleLobbyEvent_PlayerNoLongerInTheRosterGoesHomeOnce(t *testing.T) {
 
 	require.NoError(t, m.global.LobbyManager.Kick(l.Leader(), guest))
 
-	_, cmd := guestModel.Update(lobbyMsg(lobby.Event{Type: lobby.EventPlayersUpdated}))
+	_, cmd := guestModel.Update(lobbyMsg{Type: lobby.EventPlayersUpdated, src: guestModel.lobbyChan})
 	assert.Equal(t, router.RouteHome, routeOf(t, cmd))
 	assert.Nil(t, guestModel.lobbyChan)
 
-	_, cmd = guestModel.Update(lobbyMsg(lobby.Event{Type: lobby.EventPlayersUpdated}))
+	_, cmd = guestModel.Update(lobbyMsg{Type: lobby.EventPlayersUpdated, src: guestModel.lobbyChan})
 	assert.Nil(t, cmd, "the navigation is asked for once, not on every event")
 
 	m.Close()

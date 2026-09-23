@@ -24,12 +24,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "esc":
-		// Separate statement on purpose: m is returned by value and Leave mutates it
-		// through the pointer receiver; the order of those two in one return is unspecified.
-		cmd := m.Leave()
+	if cmd, ok := m.HandleLeaveKey(msg.String()); ok {
 		return m, cmd
+	}
+
+	switch msg.String() {
 	case "left", "h":
 		m.MoveCursor(-1)
 		return m, nil
@@ -70,13 +69,6 @@ func (m *Model) handleSpace() (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
-	if m.Base.Phase == game.Finished {
-		// Separate statement on purpose: m is returned by value and Leave mutates it
-		// through the pointer receiver; the order of those two in one return is unspecified.
-		cmd := m.Leave()
-		return m, cmd
-	}
-
 	if m.stage == logic.StageHandOver && !m.matchComplete {
 		if m.Base.MyTurn {
 			return m.submit(logic.ActionNextHand{})
@@ -101,7 +93,7 @@ func (m *Model) handleEnter() (tea.Model, tea.Cmd) {
 
 func (m *Model) submitPass() (tea.Model, tea.Cmd) {
 	if len(m.passSelected) != 3 {
-		m.lastActionErr = errNeedThreeCards
+		m.ActionErr = errNeedThreeCards
 		return m, nil
 	}
 	return m.submit(logic.ActionPassCards{Cards: slices.Collect(maps.Keys(m.passSelected))})
@@ -110,7 +102,7 @@ func (m *Model) submitPass() (tea.Model, tea.Cmd) {
 var errNeedThreeCards = errors.New("select exactly 3 cards (space to toggle)")
 
 func (m *Model) submit(action game.Action) (tea.Model, tea.Cmd) {
-	if m.lastActionErr = m.Submit(action); m.lastActionErr == nil {
+	if m.Submit(action) == nil {
 		m.passSelected = map[deck.Card]struct{}{}
 	}
 	return m, nil

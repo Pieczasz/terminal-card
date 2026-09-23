@@ -18,7 +18,12 @@ import (
 	lg "charm.land/lipgloss/v2"
 )
 
-type lobbyMsg lobby.Event
+// lobbyMsg carries the feed that delivered it: the router rebuilds this view on every
+// visit, and a listener in flight from the last one would otherwise re-arm itself here.
+type lobbyMsg struct {
+	lobby.Event
+	src <-chan lobby.Event
+}
 
 type model struct {
 	global       router.GlobalContext
@@ -39,7 +44,7 @@ type model struct {
 }
 
 func listenToLobbyBroadcaster(ch <-chan lobby.Event) tea.Cmd {
-	return views.ListenOn(ch, func(ev lobby.Event) tea.Msg { return lobbyMsg(ev) })
+	return views.ListenOn(ch, func(ev lobby.Event) tea.Msg { return lobbyMsg{Event: ev, src: ch} })
 }
 
 // New returns a new lobby model. We pass the current active lobby through Context.
@@ -94,7 +99,13 @@ func (m *model) Init() tea.Cmd {
 	return listenToLobbyBroadcaster(m.lobbyChan)
 }
 
+// seatedIn is a seat at a live table. A finished engine still lists its seats, and the
+// lobby reopens on its own goroutine, so ActiveGame can hand one back for a moment:
+// routing there shows a game-over screen whose esc lands straight back here.
 func (m *model) seatedIn(engine *game.Engine) bool {
+	if engine.IsFinished() {
+		return false
+	}
 	me := views.SessionPlayerID(m.global)
 	return slices.ContainsFunc(engine.Snapshot().Players, func(p game.PlayerSnapshot) bool {
 		return p.ID == me
@@ -165,7 +176,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.KeyPressMsg:
 		return m.handleKey(msg)
 	case lobbyMsg:
-		return m.handleLobbyEvent(lobby.Event(msg))
+		if msg.src != m.lobbyChan {
+			return m, nil
+		}
+		return m.handleLobbyEvent(msg.Event)
 	}
 	return m, nil
 }
